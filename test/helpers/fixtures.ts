@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { createDb, type Db } from '../../src/db/client.js';
+import { sql } from 'drizzle-orm';
+import { createDb, type Db, type DbHandle } from '../../src/db/client.js';
 import { mandates, merchants } from '../../src/db/schema.js';
 import { DEFAULT_STEERING } from '../../src/rules/steering.js';
 import { newId } from '../../src/ids.js';
@@ -9,6 +10,21 @@ export const rs = (n: number) => Math.round(n * 100);
 
 export async function testDb() {
   return createDb();
+}
+
+let shared: Promise<DbHandle> | undefined;
+
+/**
+ * One migrated PGlite per test file (booting WASM Postgres costs seconds), wiped between
+ * tests. Callers must not close() it — vitest tears the worker down after the file.
+ */
+export async function freshDb(): Promise<DbHandle> {
+  shared ??= createDb();
+  const h = await shared;
+  await h.db.execute(sql`
+    truncate merchants, vendors, mandates, debits, payments, payment_attempts,
+             checkout_quotes, savings_events, webhook_outbox cascade`);
+  return { db: h.db, close: async () => {} };
 }
 
 export async function seedMerchant(db: Db, overrides: Partial<typeof merchants.$inferInsert> = {}) {

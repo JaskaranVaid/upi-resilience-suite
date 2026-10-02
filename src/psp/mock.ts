@@ -57,6 +57,11 @@ export class MockPsp implements PspAdapter {
     this.script.push(...steps);
   }
 
+  /** Resolve an in-flight transaction (what a later status() call reports). */
+  settle(txnRef: string, result: PspResult): void {
+    this.ledger.set(txnRef, result);
+  }
+
   async sendPreDebitNotice(req: PreDebitNoticeRequest): Promise<NoticeResult> {
     this.calls.push({ op: 'notice', txnRef: req.noticeRef, amountPaise: req.amountPaise });
     if (this.opts.failNotices) return { ok: false, reason: 'PSP notice API unavailable' };
