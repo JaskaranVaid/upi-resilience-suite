@@ -2,7 +2,7 @@ import { and, desc, eq, isNull, lt, ne, or, sql } from 'drizzle-orm';
 import type { Clock } from '../clock.js';
 import type { PollingConfig } from '../config/polling.js';
 import type { Db, DbOrTx } from '../db/client.js';
-import { debits, paymentCases, payments, paymentTracking, udirComplaints } from '../db/schema.js';
+import { debits, paymentAttempts, paymentCases, payments, paymentTracking, udirComplaints } from '../db/schema.js';
 import { AppError } from '../errors.js';
 import { recordEvents, SYSTEM, type Actor } from '../events/record.js';
 import { newId } from '../ids.js';
@@ -239,6 +239,12 @@ export class TrackingService {
 
       let domainAfter = domainState;
       if (out.domainOutcome && t.subjectType === 'COLLECT') {
+        // Credit routing recovery if any earlier attempt on this payment was a technical decline.
+        const [td] = await tx
+          .select({ id: paymentAttempts.id })
+          .from(paymentAttempts)
+          .where(and(eq(paymentAttempts.paymentId, t.subjectId), eq(paymentAttempts.outcome, 'TECHNICAL_DECLINE'), ne(paymentAttempts.op, 'status')))
+          .limit(1);
         const result: PspResult =
           out.domainOutcome.to === 'SUCCEEDED'
             ? { kind: 'SUCCESS', pspTxnId: out.facts.npciTxnId ?? out.facts.upiRrn ?? t.txnRef ?? t.subjectId }
@@ -247,7 +253,7 @@ export class TrackingService {
           id: t.subjectId,
           result,
           pspId: t.pspId,
-          hadTechnicalDecline: false,
+          hadTechnicalDecline: Boolean(td),
           now,
           ...(out.domainOutcome.to === 'FAILED' ? { errorCode: out.domainOutcome.code } : {}),
         });

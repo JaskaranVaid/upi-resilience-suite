@@ -1,0 +1,1 @@
+CREATE INDEX "attempts_merchant_time" ON "payment_attempts" USING btree ("merchant_id","created_at");

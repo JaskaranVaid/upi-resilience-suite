@@ -130,7 +130,11 @@ export const paymentAttempts = pgTable(
     latencyMs: integer('latency_ms').notNull(),
     createdAt: createdAt(),
   },
-  (t) => [index('attempts_debit').on(t.debitId), index('attempts_payment').on(t.paymentId)],
+  (t) => [
+    index('attempts_debit').on(t.debitId),
+    index('attempts_payment').on(t.paymentId),
+    index('attempts_merchant_time').on(t.merchantId, t.createdAt),
+  ],
 );
 
 export const checkoutQuotes = pgTable('checkout_quotes', {

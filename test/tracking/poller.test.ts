@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { and, asc, eq } from 'drizzle-orm';
 import { FakeClock } from '../../src/clock.js';
 import { buildContext, type AppContext } from '../../src/context.js';
-import { debits, paymentCases, paymentEvents, payments, paymentTracking, webhookOutbox } from '../../src/db/schema.js';
+import { debits, paymentCases, paymentEvents, payments, paymentTracking, savingsEvents, webhookOutbox } from '../../src/db/schema.js';
 import { MockPsp } from '../../src/psp/mock.js';
 import type { PspResult, TransactionInquiry } from '../../src/psp/types.js';
 import { freshDb, ist, rs, seedMandate, seedMerchant } from '../helpers/fixtures.js';
@@ -99,6 +99,28 @@ describe('StatusPoller + TrackingService', () => {
     expect(c).toMatchObject({ status: 'RESOLVED', resolution: 'REVERSED_TO_CUSTOMER' });
     expect((await paymentRow(payment.id)).state).toBe('FAILED'); // payment outcome unchanged
     expect(await eventTypes(payment.id)).toEqual(expect.arrayContaining(['CUSTOMER_DEBIT_DETECTED', 'CASE_OPENED', 'REVERSAL_INITIATED', 'REVERSAL_COMPLETED', 'CASE_RESOLVED']));
+  });
+
+  it('credits routing recovery when a collect that first hit a technical decline is confirmed by the poller', async () => {
+    pspA.enqueue({ kind: 'TECHNICAL_DECLINE', code: 'TIMEOUT', settleAs: { kind: 'PENDING' } });
+    pspA.scriptNextInquiry([inq({ outcome: 'SUCCESS', customerDebit: 'DEBITED', capture: 'CAPTURED' })]);
+    const { payment } = await pay('td-then-pending');
+    await nextCheck(payment.id);
+    expect((await paymentRow(payment.id)).state).toBe('SUCCEEDED');
+    const savings = await ctx.db.select().from(savingsEvents).where(eq(savingsEvents.refId, payment.id));
+    expect(savings.map((s) => [s.type, s.amountPaise])).toEqual([['TD_RECOVERED', rs(2500)]]);
+  });
+
+  it('does not credit routing recovery for a collect that was simply pending (no technical decline)', async () => {
+    const pending = new MockPsp('pspA', { script: [{ kind: 'PENDING' }] });
+    const c2 = buildContext({ db: ctx.db, adapters: [pending], adminToken: 'x'.repeat(20), clock, sleep: clock.sleep, router: { random: () => 0.5 } });
+    pending.scriptNextInquiry([inq({ outcome: 'SUCCESS', customerDebit: 'DEBITED', capture: 'CAPTURED' })]);
+    const { payment } = await c2.payments.create(merchantId, { amountPaise: rs(100), payerVpa: 'ravi@okicici', idempotencyKey: 'plain-pending' });
+    const t = await tracking(payment.id);
+    clock.set(t.nextCheckAt!);
+    await c2.poller.runOnce();
+    expect((await paymentRow(payment.id)).state).toBe('SUCCEEDED');
+    expect(await ctx.db.select().from(savingsEvents).where(eq(savingsEvents.refId, payment.id))).toEqual([]);
   });
 
   it('resolves without a case when a failed collect turns out not to have been debited', async () => {
