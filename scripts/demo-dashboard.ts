@@ -60,13 +60,20 @@ const debited = (reversal: Extract<TransactionInquiry, { found: true }>['reversa
 async function main() {
   const { db, close } = await createDb('pglite://memory');
   const realNow = new Date();
-  const clock = new DemoClock(new Date(realNow.getTime() - 8 * 24 * 3600_000));
+  const HISTORY_DAYS = 30;
+  // History (30 days) + settling (3 days) + scenarios (~4.5 days, two 48h budgets) must end before now.
+  const clock = new DemoClock(new Date(realNow.getTime() - (HISTORY_DAYS + 10) * 24 * 3600_000));
   const pspA = new MockPsp('pspA', { seed: 3 });
   const pspB = new MockPsp('pspB', { seed: 5, complaintScript: ['IN_PROGRESS', 'IN_PROGRESS', 'RESOLVED_REVERSED'] });
   const ctx = buildContext({ db, adapters: [pspA, pspB], adminToken: 'demo-admin-token-0000', clock, sleep: clock.sleep });
   const app = buildApp(ctx);
 
-  const m = await app.inject({ method: 'POST', url: '/v1/merchants', headers: { authorization: 'Bearer demo-admin-token-0000' }, payload: { name: 'StreamCo OTT' } });
+  const m = await app.inject({
+    method: 'POST',
+    url: '/v1/merchants',
+    headers: { authorization: 'Bearer demo-admin-token-0000' },
+    payload: { name: 'StreamCo OTT', methodCosts: { NETBANKING: { percentBps: 0, flatPaise: 800 }, CARD: { percentBps: 180, flatPaise: 0 } } },
+  });
   const apiKey: string = m.json().apiKey;
   const merchantId: string = m.json().merchant.id;
   for (const u of DEMO_USERS) {
@@ -90,6 +97,48 @@ async function main() {
     pspA.enqueue(BANK_DOWN);
     pspB.enqueue(BANK_DOWN);
   };
+
+  // ── A month of ordinary traffic (feeds the Value pages) ─────────────────────────
+  // PSP A is moderately unreliable, PSP B healthy; random but seeded, so runs are reproducible.
+  console.log(`Seeding ${HISTORY_DAYS} days of history…`);
+  pspA.setRates({ bankUnavailable: 0.07, timeout: 0.04, timeoutActuallySucceeded: 0.5, businessDecline: 0.03 });
+  pspB.setRates({ bankUnavailable: 0.02, businessDecline: 0.03 });
+  const histMandate = await app.inject({ method: 'POST', url: '/v1/mandates', headers: { authorization: `Bearer ${apiKey}` }, payload: { mandateRef: 'UMN-HIST', customerVpa: 'subscriber@okaxis', maxAmountPaise: 200000 } });
+  const histMandateId = histMandate.json().id as string;
+  const amounts = [49900, 129900, 250000, 79900, 499900, 189900, 34900, 999900];
+  const cartAmounts = [150000, 320000, 540000, 899900, 1250000, 260000];
+  let q = 0;
+  // Steps cover the 13:00–17:00 off-peak window so deferred AutoPay debits execute on time.
+  const steps = ['09:10', '11:20', '13:05', '14:15', '15:30', '16:59', '19:40', '22:10'];
+  const firstDay = new Date(clock.now().getTime());
+  for (let d = 0; d < HISTORY_DAYS; d++) {
+    const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date(firstDay.getTime() + d * 86_400_000));
+    for (const [k, hm] of steps.entries()) {
+      clock.set(new Date(`${date}T${hm}:00+05:30`));
+      await ctx.worker.runOnce();
+      await ctx.poller.runOnce();
+      if (hm === '11:20') {
+        // The billing cron fires inside the morning peak; the scheduler defers it.
+        for (let j = 0; j < 2; j++) {
+          await ctx.scheduler.createDebit(merchantId, histMandateId, { amountPaise: [49900, 149900][j]!, idempotencyKey: `INV-${date}-${j}`, orderId: `INV-${date}-${j}` });
+        }
+      }
+      await collect(amounts[(d + k) % amounts.length]!);
+      // A checkout quote; when a steering offer is shown, about 40% of customers take it.
+      const quote = (await app.inject({ method: 'POST', url: '/v1/checkout/quote', headers: { authorization: `Bearer ${apiKey}` }, payload: { amountPaise: cartAmounts[(d + k) % cartAmounts.length] } })).json();
+      if (quote.offer && ++q % 5 < 2) {
+        await app.inject({ method: 'POST', url: `/v1/checkout/quotes/${quote.quoteId}/accept`, headers: { authorization: `Bearer ${apiKey}` }, payload: { method: quote.offer.method } });
+      }
+    }
+  }
+  // Let every history watch settle before the scripted scenarios, so none of them
+  // consumes a scenario's scripted PSP response.
+  for (let h = 0; h < 72; h++) {
+    clock.advance(3600_000);
+    await ctx.poller.runOnce();
+  }
+  pspA.setRates({});
+  pspB.setRates({});
 
   console.log('Seeding scenarios…');
   // Ordinary traffic.
@@ -136,6 +185,7 @@ async function main() {
 
   // Hand over to real time: a fresh debited payment the support user can work live,
   // plus a future-dated AutoPay debit.
+  if (clock.now() > realNow) console.warn('Warning: simulated seeding ran past real time; some records are future-dated.');
   clock.goLive();
   await ctx.scheduler.createDebit(merchantId, md, { amountPaise: 49900, idempotencyKey: 'INV-2026-10', orderId: 'INV-2026-10' });
   failBoth();
@@ -156,6 +206,8 @@ async function main() {
   console.log('Demo users (local only):');
   for (const u of DEMO_USERS) console.log(`  ${u.role.padEnd(8)} ${u.email}  /  ${u.password}`);
   console.log(`\nTry: search ${live.id} or order ORD-LIVE-1, then raise a UDIR complaint (simulated).`);
+  const historyMonth = new Intl.DateTimeFormat('en-IN', { month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata' }).format(new Date(realNow.getTime() - 20 * 86_400_000));
+  console.log(`Value tab: ~${HISTORY_DAYS} days of history; pick ${historyMonth} for the fullest month.`);
   console.log('All PSP traffic is MOCK. Ctrl+C to stop.');
 
   const stop = async () => {

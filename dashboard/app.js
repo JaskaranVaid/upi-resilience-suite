@@ -2,6 +2,7 @@ import { api } from './api/client.js';
 import { errorBox } from './components/panels.js';
 import { toast } from './components/ui.js';
 import { html, mount } from './lib/html.js';
+import { renderAnalytics } from './views/analytics.js';
 import { renderCaseDetail, renderCases } from './views/cases.js';
 import { renderLogin } from './views/login.js';
 import { renderOverview } from './views/overview.js';
@@ -17,6 +18,7 @@ const ROUTES = [
   { pattern: /^\/payments\/(?<type>collect|autopay)\/(?<id>[^/]+)$/, view: renderPaymentDetail, nav: 'payments' },
   { pattern: /^\/cases$/, view: renderCases, nav: 'cases' },
   { pattern: /^\/cases\/(?<id>[^/]+)$/, view: renderCaseDetail, nav: 'cases' },
+  { pattern: /^\/value$/, view: renderAnalytics, nav: 'value' },
   { pattern: /^\/users$/, view: renderUsers, nav: 'users' },
 ];
 
@@ -47,6 +49,7 @@ function shell(active) {
         ${link('overview', '#/overview', 'Overview')}
         ${link('payments', '#/payments', 'Payments')}
         ${link('cases', '#/cases', 'Dispute Desk')}
+        ${link('value', '#/value', 'Value')}
         ${me.user.role === 'ADMIN' ? link('users', '#/users', 'Team') : ''}
       </nav>
       <div class="me">
