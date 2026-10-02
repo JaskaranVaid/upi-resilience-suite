@@ -87,8 +87,14 @@ export class Router {
       const txnRef = `${req.baseRef}-${++seq}`;
 
       let r = await this.attempt(psp, req, txnRef, attempts);
-      if (r.kind === 'TECHNICAL_DECLINE' && r.code === 'TIMEOUT' && !outOfTime()) {
-        r = await this.resolveTimeout(psp, req, txnRef, attempts);
+      if (r.kind === 'TECHNICAL_DECLINE' && r.code === 'TIMEOUT') {
+        if (!outOfTime()) r = await this.resolveTimeout(psp, req, txnRef, attempts);
+      } else if (r.kind === 'TECHNICAL_DECLINE' && req.op === 'collect') {
+        // A collect request may exist at this PSP despite the error. Sending a second one via
+        // another PSP could let the customer pay twice, so only fail over once we've confirmed
+        // there's nothing live here — and if there's no time left to confirm, don't fail over.
+        if (outOfTime()) return this.outcome(r, pspId, txnRef, attempts);
+        r = await this.confirmBeforeFailover(psp, txnRef, r, attempts);
       }
       last = this.outcome(r, pspId, txnRef, attempts);
       if (r.kind !== 'TECHNICAL_DECLINE') return last;
@@ -107,6 +113,12 @@ export class Router {
       const r = await this.attempt(psp, req, txnRef, attempts);
       if (!(r.kind === 'TECHNICAL_DECLINE' && r.code === 'TIMEOUT')) return r;
     }
+  }
+
+  /** Returns the live/terminal status if the PSP has one, else the original decline (safe to fail over). */
+  private async confirmBeforeFailover(psp: PspAdapter, txnRef: string, decline: PspResult, attempts: AttemptRecord[]): Promise<PspResult> {
+    const s = await this.track(psp.id, txnRef, 'status', attempts, () => psp.status(txnRef));
+    return s.kind === 'SUCCESS' || s.kind === 'PENDING' || s.kind === 'BUSINESS_DECLINE' ? s : decline;
   }
 
   private attempt(psp: PspAdapter, req: RouteRequest, txnRef: string, attempts: AttemptRecord[]): Promise<PspResult> {

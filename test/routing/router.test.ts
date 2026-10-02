@@ -122,6 +122,78 @@ describe('Router', () => {
   });
 });
 
+describe('Router — collect failover (status check before failover)', () => {
+  const PSP_ERROR: PspResult = { kind: 'TECHNICAL_DECLINE', code: 'PSP_ERROR' };
+
+  function collectSetup(a: ConstructorParameters<typeof MockPsp>[1], b: ConstructorParameters<typeof MockPsp>[1] = {}, maxTotalMs?: number) {
+    const clock = new FakeClock('2026-10-15T08:00:00Z');
+    const pspA = new MockPsp('pspA', { sleep: clock.sleep, ...a });
+    const pspB = new MockPsp('pspB', { sleep: clock.sleep, ...b });
+    const router = new Router([pspA, pspB], new HealthTracker({}, clock), clock, clock.sleep, {
+      random: () => 0.5,
+      ...(maxTotalMs ? { maxTotalMs } : {}),
+    });
+    const run = () => router.execute({ op: 'collect', candidates: ['pspA', 'pspB'], amountPaise: 2500, payerVpa: 'a@ok', baseRef: 'pay_1' });
+    return { pspA, pspB, run };
+  }
+
+  it('returns PENDING instead of sending a second collect when the first PSP has a live request', async () => {
+    const { run, pspA, pspB } = collectSetup({ script: [{ ...PSP_ERROR, settleAs: { kind: 'PENDING' } }] }, { script: [OK()] });
+    const out = await run();
+    expect(out.result).toEqual({ kind: 'PENDING' });
+    expect(out.pspId).toBe('pspA');
+    expect(pspA.calls.map((c) => c.op)).toEqual(['collect', 'status']);
+    expect(pspB.calls).toHaveLength(0);
+  });
+
+  it('returns success without failover when the errored request actually succeeded', async () => {
+    const { run, pspB } = collectSetup({ script: [{ ...PSP_ERROR, settleAs: OK('a-late') }] }, { script: [OK()] });
+    const out = await run();
+    expect(out.result).toEqual(OK('a-late'));
+    expect(pspB.calls).toHaveLength(0);
+  });
+
+  it('fails over when the first PSP has no record of the request', async () => {
+    const { run, pspA, pspB } = collectSetup({ script: [{ ...PSP_ERROR, settleAs: { kind: 'NOT_FOUND' } }] }, { script: [OK('b1')] });
+    const out = await run();
+    expect(out.result).toEqual(OK('b1'));
+    expect(pspA.calls.map((c) => c.op)).toEqual(['collect', 'status']);
+    expect(out.pspId).toBe('pspB');
+  });
+
+  it('fails over when the first PSP reports the request as declined', async () => {
+    const { run, pspB } = collectSetup({ script: [BANK_DOWN] }, { script: [OK('b1')] });
+    const out = await run();
+    expect(out.result).toEqual(OK('b1'));
+    expect(pspB.calls).toHaveLength(1);
+  });
+
+  it('fails over when the status check itself errors', async () => {
+    const { run, pspA, pspB } = collectSetup({ script: [BANK_DOWN] }, { script: [OK('b1')] });
+    pspA.status = async () => {
+      throw new Error('connection reset');
+    };
+    const out = await run();
+    expect(out.result).toEqual(OK('b1'));
+    expect(pspB.calls).toHaveLength(1);
+  });
+
+  it('does not fail over a collect when the time budget is spent (cannot confirm safely)', async () => {
+    const { run, pspA, pspB } = collectSetup({ script: [BANK_DOWN], latencyMs: 2000 }, { script: [OK()] }, 1000);
+    const out = await run();
+    expect(out.result).toEqual(BANK_DOWN);
+    expect(pspA.calls.map((c) => c.op)).toEqual(['collect']);
+    expect(pspB.calls).toHaveLength(0);
+  });
+
+  it('leaves mandate failover unchanged: no status check on a non-timeout decline', async () => {
+    const { run, pspA } = setup({ script: [BANK_DOWN] }, { script: [OK('b1')] });
+    const out = await run();
+    expect(out.result).toEqual(OK('b1'));
+    expect(pspA.calls.map((c) => c.op)).toEqual(['execute']);
+  });
+});
+
 describe('HealthTracker', () => {
   it('opens the circuit on a high technical-decline rate and half-opens after cooldown', () => {
     const clock = new FakeClock('2026-10-15T08:00:00Z');
