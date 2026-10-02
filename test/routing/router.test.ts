@@ -59,6 +59,20 @@ describe('Router', () => {
     expect(pspB.calls).toHaveLength(0);
   });
 
+  it('gives providers the context they need to look a transaction up (mandate + base payment)', async () => {
+    const { pspA } = setup({ script: [TIMEOUT, OK('a2')] });
+    const clock = new FakeClock('2026-10-15T08:00:00Z');
+    const router = new Router([pspA], new HealthTracker({}, clock), clock, clock.sleep, { random: () => 0.5 });
+    await router.execute({ op: 'mandate', candidates: ['pspA'], amountPaise: 1, mandateRef: 'UMN1', noticeRef: 'dbt_1', baseRef: 'dbt_1-a1' });
+    expect(pspA.calls.find((c) => c.op === 'execute')!.noticeRef).toBe('dbt_1');
+    expect(pspA.calls.find((c) => c.op === 'status')!.ctx).toEqual({ kind: 'MANDATE', mandateRef: 'UMN1', noticeRef: 'dbt_1' });
+
+    const pspC = new MockPsp('pspC', { script: [TIMEOUT, OK()] });
+    const r2 = new Router([pspC], new HealthTracker({}, clock), clock, clock.sleep, { random: () => 0.5 });
+    await r2.execute({ op: 'collect', candidates: ['pspC'], amountPaise: 1, payerVpa: 'ab@ok', baseRef: 'pay_1' });
+    expect(pspC.calls.find((c) => c.op === 'status')!.ctx).toEqual({ kind: 'COLLECT' });
+  });
+
   it('returns PENDING and stops when status is still pending (never retry an in-flight debit)', async () => {
     const { run, pspA, pspB } = setup({ script: [{ ...TIMEOUT, settleAs: { kind: 'PENDING' } }] });
     const out = await run();

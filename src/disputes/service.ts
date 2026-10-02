@@ -9,7 +9,7 @@ import type { PspRegistry } from '../psp/registry.js';
 import type { ComplaintReason } from '../psp/types.js';
 import type { InitialOutcome, PaymentCase, Tracking, TrackingService } from '../tracking/service.js';
 import type { CaseStatus, DomainState, SubjectType } from '../tracking/types.js';
-import { complaintEligibility } from './rules.js';
+import { complaintEligibility, supportsComplaints } from './rules.js';
 
 export interface SubjectRef {
   type: SubjectType;
@@ -57,6 +57,7 @@ export class DisputeService {
       submittedToPsp: Boolean(t.pspId && t.txnRef),
       activeComplaint: false,
       reversalCompleted: t.reversalStatus === 'COMPLETED',
+      providerSupportsComplaints: supportsComplaints(psps, t.pspId),
     });
     if (!eligible.ok) throw new AppError('COMPLAINT_NOT_ALLOWED', eligible.reason);
 

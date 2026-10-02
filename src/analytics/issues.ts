@@ -60,7 +60,7 @@ export class IssueAnalytics {
       complaints: {
         raised: sum(complaints),
         // Simulated (mock-PSP) complaints are counted apart so they are never mistaken for real filings.
-        simulated: sum(complaints.filter((c) => c.mode === 'MOCK')),
+        simulated: sum(complaints.filter((c) => c.mode !== 'LIVE')), // mock or PSP sandbox
         live: sum(complaints.filter((c) => c.mode === 'LIVE')),
         byStatus: [...complaintByStatus].map(([status, count]) => ({ status, label: COMPLAINT_STATUS_LABELS[status], count })),
       },

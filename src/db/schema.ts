@@ -1,5 +1,5 @@
 import { bigint, boolean, index, integer, jsonb, pgTable, pgView, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
-import type { Capture, ComplaintReason, ComplaintStatus, CustomerDebit, ReversalStatus } from '../psp/types.js';
+import type { Capture, ComplaintReason, ComplaintStatus, CustomerDebit, PspMode, ReversalStatus } from '../psp/types.js';
 import type { CaseReason, CaseResolution, CaseStatus, EventType, SubjectType, VerificationStatus } from '../tracking/types.js';
 import type { MerchantCategory } from '../rules/mdr.js';
 import type { MethodCosts, SteeringConfig } from '../rules/steering.js';
@@ -260,8 +260,8 @@ export const udirComplaints = pgTable(
     caseId: text('case_id').notNull().references(() => paymentCases.id),
     merchantId: text('merchant_id').notNull().references(() => merchants.id),
     pspId: text('psp_id').notNull(),
-    /** MOCK complaints were never sent to a real PSP or NPCI. */
-    mode: text('mode').$type<'MOCK' | 'LIVE'>().notNull(),
+    /** MOCK complaints were never sent to a PSP; SANDBOX ones went to a PSP's test environment. */
+    mode: text('mode').$type<PspMode>().notNull(),
     pspComplaintRef: text('psp_complaint_ref').notNull(),
     reasonCode: text('reason_code').$type<ComplaintReason>().notNull(),
     status: text('status').$type<ComplaintStatus>().notNull(),

@@ -74,19 +74,64 @@ export type ComplaintResult =
 
 export type ComplaintStatusResult = { ok: true; status: ComplaintStatus; updatedAt: Date } | { ok: false; reason: string };
 
+export type PspMode = 'MOCK' | 'SANDBOX' | 'LIVE';
+
+/** What a provider can and cannot do; the scheduler, router and UI adapt to it. */
+export interface PspCapabilities {
+  /** Minimum gap between a successful pre-debit notice and the mandate execution. */
+  minNoticeMs: number;
+  /** Furthest ahead a pre-debit notice may be sent before its execution date (null = no limit). */
+  maxNoticeLeadMs: number | null;
+  /** Can raise UDIR complaints on the merchant's behalf via API. */
+  udirComplaints: boolean;
+  /** Its mandates can be executed through other PSPs (MIC portability). */
+  portableMandates: boolean;
+  /** Fields a collect request must carry for this provider. */
+  collectRequires: Array<'customerPhone'>;
+}
+
+/** Identifies what a txnRef belongs to, for providers that need more than the reference. */
+export type TxnContext =
+  | { kind: 'COLLECT' }
+  /** noticeRef: the base payment the pre-debit notice was sent for (our debit id). */
+  | { kind: 'MANDATE'; mandateRef: string; noticeRef: string };
+
+export interface ExecuteMandateRequest {
+  txnRef: string;
+  mandateRef: string;
+  amountPaise: number;
+  /** The pre-debit notice this execution fulfils (same base payment). */
+  noticeRef: string;
+}
+
+export interface CollectRequest {
+  txnRef: string;
+  payerVpa: string;
+  amountPaise: number;
+  customerPhone?: string;
+}
+
+export type WebhookVerification = { ok: true; refs: string[] } | { ok: false; reason: string };
+
 export interface PspAdapter {
   readonly id: string;
-  /** MOCK adapters never reach a real PSP/NPCI; the UI must say so. */
-  readonly mode: 'MOCK' | 'LIVE';
+  /** MOCK never reaches a real PSP; SANDBOX reaches a PSP's test environment. The UI says which. */
+  readonly mode: PspMode;
+  readonly capabilities: PspCapabilities;
   sendPreDebitNotice(req: PreDebitNoticeRequest): Promise<NoticeResult>;
-  executeMandate(req: { txnRef: string; mandateRef: string; amountPaise: number }): Promise<PspResult>;
-  collect(req: { txnRef: string; payerVpa: string; amountPaise: number }): Promise<PspResult>;
-  status(txnRef: string): Promise<PspResult>;
+  executeMandate(req: ExecuteMandateRequest): Promise<PspResult>;
+  collect(req: CollectRequest): Promise<PspResult>;
+  status(txnRef: string, ctx: TxnContext): Promise<PspResult>;
   /** Transaction enquiry incl. debit/capture/reversal facts. Throws on transport failure. */
-  inquire(txnRef: string): Promise<TransactionInquiry>;
-  /** Raise a UDIR complaint for a transaction via the PSP. */
+  inquire(txnRef: string, ctx: TxnContext): Promise<TransactionInquiry>;
+  /** Raise a UDIR complaint for a transaction via the PSP (when capabilities.udirComplaints). */
   raiseComplaint(req: ComplaintRequest): Promise<ComplaintResult>;
   complaintStatus(pspComplaintRef: string): Promise<ComplaintStatusResult>;
+  /**
+   * Verify an inbound webhook and extract the references it concerns. Webhooks only ever
+   * trigger a status re-check; they never change state by themselves.
+   */
+  verifyWebhook?(rawBody: string, headers: Record<string, string | string[] | undefined>, now: Date): WebhookVerification;
 }
 
 export function isTerminal(r: PspResult): boolean {

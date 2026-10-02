@@ -125,7 +125,7 @@ export async function renderCaseDetail(el, { params }) {
                 <tbody>${c.complaints.map(
                   (x) => html`<tr><td class="mono">${x.reference}</td><td>${x.statusLabel}</td><td>${when(x.raisedAt)}</td>
                     <td>${dash(x.raisedBy)}</td><td>${when(x.lastStatusAt)}</td>
-                    <td>${x.mode === 'MOCK' ? html`<span class="badge tone-mock" title="${x.modeLabel}">Simulated</span>` : x.modeLabel}</td></tr>`,
+                    <td>${x.mode === 'LIVE' ? x.modeLabel : html`<span class="badge tone-mock" title="${x.modeLabel}">${x.mode === 'MOCK' ? 'Simulated' : 'Sandbox'}</span>`}</td></tr>`,
                 )}</tbody></table></div>`}
         </section>
 

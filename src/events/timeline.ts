@@ -107,7 +107,12 @@ function describe(type: EventType, data: Record<string, unknown>): { label: stri
     case 'UDIR_COMPLAINT_RAISED': {
       const ref = str(data.pspComplaintRef);
       return {
-        label: data.mode === 'MOCK' ? 'UDIR complaint raised (simulated — mock PSP, not sent to NPCI)' : 'UDIR complaint raised with PSP',
+        label:
+          data.mode === 'MOCK'
+            ? 'UDIR complaint raised (simulated — mock PSP, not sent to NPCI)'
+            : data.mode === 'SANDBOX'
+              ? 'UDIR complaint raised (PSP sandbox — test environment)'
+              : 'UDIR complaint raised with PSP',
         ...(ref ? { detail: `Reference: ${ref}` } : {}),
       };
     }

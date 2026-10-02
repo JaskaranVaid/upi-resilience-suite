@@ -158,7 +158,7 @@ export const dashboardDataRoutes = (ctx: AppContext) => async (app: FastifyInsta
       complaints: complaints.map((x) => ({
         id: x.id,
         mode: x.mode,
-        modeLabel: x.mode === 'MOCK' ? 'Simulated — mock PSP, not sent to NPCI' : 'Submitted to PSP',
+        modeLabel: x.mode === 'MOCK' ? 'Simulated — mock PSP, not sent to NPCI' : x.mode === 'SANDBOX' ? 'PSP sandbox — test environment' : 'Submitted to PSP',
         reference: x.pspComplaintRef,
         status: x.status,
         statusLabel: COMPLAINT_STATUS_LABELS[x.status],

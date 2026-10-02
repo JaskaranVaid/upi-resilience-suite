@@ -135,6 +135,7 @@ export class DebitWorker {
       candidates: mandate.eligiblePsps,
       amountPaise: d.amountPaise,
       mandateRef: mandate.mandateRef,
+      noticeRef: d.id,
       baseRef,
     });
     await this.recordAttempts(d, outcome.attempts);
@@ -160,7 +161,7 @@ export class DebitWorker {
       const t0 = this.clock.now().getTime();
       let result: PspResult;
       try {
-        result = await this.router.status(pspId, txnRef);
+        result = await this.router.status(pspId, txnRef, { kind: 'MANDATE', mandateRef: mandate.mandateRef, noticeRef: d.id });
       } catch {
         result = { kind: 'TECHNICAL_DECLINE', code: 'PSP_ERROR' };
       }

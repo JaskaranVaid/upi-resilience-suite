@@ -1,5 +1,5 @@
 import type { Clock, Sleep } from '../clock.js';
-import type { PspAdapter, PspResult } from '../psp/types.js';
+import type { PspAdapter, PspResult, TxnContext } from '../psp/types.js';
 import type { HealthTracker } from './health.js';
 
 export interface RouterOptions {
@@ -16,7 +16,10 @@ export interface RouteRequest {
   candidates: string[];
   amountPaise: number;
   mandateRef?: string;
+  /** Base payment the pre-debit notice was sent for (mandate executions); defaults to baseRef. */
+  noticeRef?: string;
   payerVpa?: string;
+  customerPhone?: string;
   /** Stable prefix for txnRefs (e.g. the debit id) so attempts are traceable. */
   baseRef: string;
 }
@@ -71,8 +74,14 @@ export class Router {
   }
 
   /** Status lookup used by reconciliation of PENDING payments. */
-  async status(pspId: string, txnRef: string): Promise<PspResult> {
-    return this.adapter(pspId).status(txnRef);
+  async status(pspId: string, txnRef: string, ctx: TxnContext): Promise<PspResult> {
+    return this.adapter(pspId).status(txnRef, ctx);
+  }
+
+  private ctxOf(req: RouteRequest): TxnContext {
+    return req.op === 'mandate'
+      ? { kind: 'MANDATE', mandateRef: req.mandateRef ?? '', noticeRef: req.noticeRef ?? req.baseRef }
+      : { kind: 'COLLECT' };
   }
 
   async execute(req: RouteRequest): Promise<RouteOutcome> {
@@ -96,7 +105,7 @@ export class Router {
         // another PSP could let the customer pay twice, so only fail over once we've confirmed
         // there's nothing live here — and if there's no time left to confirm, don't fail over.
         if (outOfTime()) return this.outcome(r, pspId, txnRef, attempts, probe);
-        r = await this.confirmBeforeFailover(psp, txnRef, r, attempts);
+        r = await this.confirmBeforeFailover(psp, txnRef, r, attempts, this.ctxOf(req));
       }
       last = this.outcome(r, pspId, txnRef, attempts, probe);
       if (r.kind !== 'TECHNICAL_DECLINE') return last;
@@ -109,7 +118,7 @@ export class Router {
   private async resolveTimeout(psp: PspAdapter, req: RouteRequest, txnRef: string, attempts: AttemptRecord[]): Promise<PspResult> {
     for (let retried = false; ; retried = true) {
       await this.waitBeforeStatus();
-      const s = await this.track(psp.id, txnRef, 'status', attempts, () => psp.status(txnRef));
+      const s = await this.track(psp.id, txnRef, 'status', attempts, () => psp.status(txnRef, this.ctxOf(req)));
       if (s.kind === 'SUCCESS' || s.kind === 'PENDING' || s.kind === 'BUSINESS_DECLINE') return s;
       if (retried) return TIMEOUT;
       const r = await this.attempt(psp, req, txnRef, attempts);
@@ -118,8 +127,8 @@ export class Router {
   }
 
   /** Returns the live/terminal status if the PSP has one, else the original decline (safe to fail over). */
-  private async confirmBeforeFailover(psp: PspAdapter, txnRef: string, decline: PspResult, attempts: AttemptRecord[]): Promise<PspResult> {
-    const s = await this.track(psp.id, txnRef, 'status', attempts, () => psp.status(txnRef));
+  private async confirmBeforeFailover(psp: PspAdapter, txnRef: string, decline: PspResult, attempts: AttemptRecord[], ctx: TxnContext): Promise<PspResult> {
+    const s = await this.track(psp.id, txnRef, 'status', attempts, () => psp.status(txnRef, ctx));
     return s.kind === 'SUCCESS' || s.kind === 'PENDING' || s.kind === 'BUSINESS_DECLINE' ? s : decline;
   }
 
@@ -128,12 +137,15 @@ export class Router {
       if (!req.mandateRef) throw new Error('mandateRef required for mandate execution');
       const mandateRef = req.mandateRef;
       return this.track(psp.id, txnRef, 'execute', attempts, () =>
-        psp.executeMandate({ txnRef, mandateRef, amountPaise: req.amountPaise }),
+        psp.executeMandate({ txnRef, mandateRef, amountPaise: req.amountPaise, noticeRef: req.noticeRef ?? req.baseRef }),
       );
     }
     if (!req.payerVpa) throw new Error('payerVpa required for collect');
     const payerVpa = req.payerVpa;
-    return this.track(psp.id, txnRef, 'collect', attempts, () => psp.collect({ txnRef, payerVpa, amountPaise: req.amountPaise }));
+    const customerPhone = req.customerPhone;
+    return this.track(psp.id, txnRef, 'collect', attempts, () =>
+      psp.collect({ txnRef, payerVpa, amountPaise: req.amountPaise, ...(customerPhone ? { customerPhone } : {}) }),
+    );
   }
 
   private async track(

@@ -25,4 +25,8 @@ const CASE_TONES = {
 export const statusBadge = (code, label) => html`<span class="badge tone-${MERCHANT_TONES[code] ?? 'neutral'}">${label}</span>`;
 export const caseBadge = (code, label) => html`<span class="badge tone-${CASE_TONES[code] ?? 'neutral'}">${label}</span>`;
 export const mockBadge = (mode) =>
-  mode === 'MOCK' ? html`<span class="badge tone-mock" title="Simulated provider — no real PSP or NPCI calls are made">Mock PSP</span>` : '';
+  mode === 'MOCK'
+    ? html`<span class="badge tone-mock" title="Simulated provider — no real PSP or NPCI calls are made">Mock PSP</span>`
+    : mode === 'SANDBOX'
+      ? html`<span class="badge tone-mock" title="The PSP's test environment — no real money moves">PSP sandbox</span>`
+      : '';

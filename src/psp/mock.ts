@@ -5,12 +5,24 @@ import type {
   ComplaintResult,
   ComplaintStatus,
   ComplaintStatusResult,
+  CollectRequest,
+  ExecuteMandateRequest,
   NoticeResult,
+  PspCapabilities,
   PreDebitNoticeRequest,
   PspAdapter,
   PspResult,
   TransactionInquiry,
+  TxnContext,
 } from './types.js';
+
+export const MOCK_CAPABILITIES: PspCapabilities = {
+  minNoticeMs: 0,
+  maxNoticeLeadMs: null,
+  udirComplaints: true,
+  portableMandates: true,
+  collectRequires: [],
+};
 
 /** Deterministic fake 12-digit UPI reference for a PSP + txnRef. */
 export function mockRrn(pspId: string, txnRef: string): string {
@@ -42,6 +54,8 @@ export interface MockPspOptions {
   failComplaints?: boolean;
   /** Statuses each complaint reports on successive complaintStatus() calls; last repeats. */
   complaintScript?: ComplaintStatus[];
+  /** Override capabilities (e.g. to behave like a provider without UDIR complaints). */
+  capabilities?: Partial<PspCapabilities>;
   sleep?: Sleep;
 }
 
@@ -49,6 +63,8 @@ export interface MockCall {
   op: 'notice' | 'execute' | 'collect' | 'status' | 'inquire' | 'complaint' | 'complaintStatus';
   txnRef: string;
   amountPaise?: number;
+  ctx?: TxnContext;
+  noticeRef?: string;
 }
 
 /**
@@ -57,6 +73,7 @@ export interface MockCall {
  */
 export class MockPsp implements PspAdapter {
   readonly mode = 'MOCK' as const;
+  readonly capabilities: PspCapabilities;
   readonly calls: MockCall[] = [];
   readonly notices: PreDebitNoticeRequest[] = [];
   private readonly script: MockStep[];
@@ -73,6 +90,7 @@ export class MockPsp implements PspAdapter {
     private readonly opts: MockPspOptions = {},
   ) {
     this.script = [...(opts.script ?? [])];
+    this.capabilities = { ...MOCK_CAPABILITIES, ...opts.capabilities };
     this.rngState = opts.seed ?? 42;
   }
 
@@ -107,23 +125,23 @@ export class MockPsp implements PspAdapter {
     return { ok: true };
   }
 
-  async executeMandate(req: { txnRef: string; mandateRef: string; amountPaise: number }): Promise<PspResult> {
-    this.calls.push({ op: 'execute', txnRef: req.txnRef, amountPaise: req.amountPaise });
+  async executeMandate(req: ExecuteMandateRequest): Promise<PspResult> {
+    this.calls.push({ op: 'execute', txnRef: req.txnRef, amountPaise: req.amountPaise, noticeRef: req.noticeRef });
     return this.respond(req.txnRef);
   }
 
-  async collect(req: { txnRef: string; payerVpa: string; amountPaise: number }): Promise<PspResult> {
+  async collect(req: CollectRequest): Promise<PspResult> {
     this.calls.push({ op: 'collect', txnRef: req.txnRef, amountPaise: req.amountPaise });
     return this.respond(req.txnRef);
   }
 
-  async status(txnRef: string): Promise<PspResult> {
-    this.calls.push({ op: 'status', txnRef });
+  async status(txnRef: string, ctx?: TxnContext): Promise<PspResult> {
+    this.calls.push({ op: 'status', txnRef, ...(ctx ? { ctx } : {}) });
     return this.ledger.get(txnRef) ?? { kind: 'NOT_FOUND' };
   }
 
-  async inquire(txnRef: string): Promise<TransactionInquiry> {
-    this.calls.push({ op: 'inquire', txnRef });
+  async inquire(txnRef: string, ctx?: TxnContext): Promise<TransactionInquiry> {
+    this.calls.push({ op: 'inquire', txnRef, ...(ctx ? { ctx } : {}) });
     if (this.opts.failInquiries) throw new Error('mock enquiry API unavailable');
 
     let script = this.inquiryScripts.get(txnRef);

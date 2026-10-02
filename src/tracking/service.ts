@@ -2,13 +2,13 @@ import { and, desc, eq, isNull, lt, ne, or, sql } from 'drizzle-orm';
 import type { Clock } from '../clock.js';
 import type { PollingConfig } from '../config/polling.js';
 import type { Db, DbOrTx } from '../db/client.js';
-import { debits, paymentAttempts, paymentCases, payments, paymentTracking, udirComplaints } from '../db/schema.js';
+import { debits, mandates, paymentAttempts, paymentCases, payments, paymentTracking, udirComplaints } from '../db/schema.js';
 import { AppError } from '../errors.js';
 import { recordEvents, SYSTEM, type Actor } from '../events/record.js';
 import { newId } from '../ids.js';
 import { applyPaymentOutcome } from '../payments/outcome.js';
 import type { PspRegistry } from '../psp/registry.js';
-import type { ComplaintStatus, PspResult, TransactionInquiry } from '../psp/types.js';
+import type { ComplaintStatus, PspResult, TransactionInquiry, TxnContext } from '../psp/types.js';
 import { caseResolution, caseStatus } from './derive.js';
 import { reduce } from './reduce.js';
 import { nextCheckAt } from './schedule.js';
@@ -166,7 +166,7 @@ export class TrackingService {
       inquiry = { error: 'no PSP reference recorded' };
     } else {
       try {
-        inquiry = await psps.get(t.pspId).inquire(t.txnRef);
+        inquiry = await psps.get(t.pspId).inquire(t.txnRef, await this.txnContext(t));
       } catch (e) {
         inquiry = { error: e instanceof Error ? e.message : String(e) };
       }
@@ -344,6 +344,17 @@ export class TrackingService {
   async latestComplaint(db: DbOrTx, caseId: string) {
     const [c] = await db.select().from(udirComplaints).where(eq(udirComplaints.caseId, caseId)).orderBy(desc(udirComplaints.raisedAt)).limit(1);
     return c;
+  }
+
+  /** What the PSP needs to look this transaction up: AutoPay needs the mandate and base payment. */
+  private async txnContext(t: Tracking): Promise<TxnContext> {
+    if (t.subjectType === 'COLLECT') return { kind: 'COLLECT' };
+    const [row] = await this.deps.db
+      .select({ mandateRef: mandates.mandateRef })
+      .from(debits)
+      .innerJoin(mandates, eq(mandates.id, debits.mandateId))
+      .where(eq(debits.id, t.subjectId));
+    return { kind: 'MANDATE', mandateRef: row?.mandateRef ?? '', noticeRef: t.subjectId };
   }
 
   async domainState(subjectType: SubjectType, subjectId: string): Promise<DomainState> {

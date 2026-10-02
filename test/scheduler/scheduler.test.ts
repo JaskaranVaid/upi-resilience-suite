@@ -230,7 +230,7 @@ describe('Engine A — peak-aware AutoPay scheduler', () => {
       // Simulate: worker claimed, sent to PSP (which succeeded), then crashed before saving.
       clock.set(debit.scheduledAt);
       const base = `${debit.id}-a1`;
-      await pspA.executeMandate({ txnRef: `${base}-1`, mandateRef: 'UMN-123@psp', amountPaise: rs(499) });
+      await pspA.executeMandate({ txnRef: `${base}-1`, mandateRef: 'UMN-123@psp', amountPaise: rs(499), noticeRef: debit.id });
       await h.db.update(debits).set({ state: 'EXECUTING', attempts: 1, lastTxnRef: base, executingSince: clock.now() }).where(eq(debits.id, debit.id));
       clock.advance(10 * 60_000);
       await worker.runOnce();

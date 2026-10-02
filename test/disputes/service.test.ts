@@ -102,6 +102,19 @@ describe('DisputeService', () => {
     });
   });
 
+  it("explains, rather than attempts, a complaint when the provider doesn't support merchant-raised UDIR", async () => {
+    await setup({ capabilities: { udirComplaints: false } });
+    const p = await debitedPayment();
+    await expect(ctx.disputes.raiseComplaint(merchantId, ref(p.id), user, 'DEBITED_NOT_CREDITED')).rejects.toMatchObject({
+      code: 'COMPLAINT_NOT_ALLOWED',
+      message: expect.stringMatching(/customer can raise one from their UPI app/),
+    });
+    expect(psp.calls.filter((c) => c.op === 'complaint')).toHaveLength(0);
+    const detail = await ctx.queries.detail(merchantId, 'COLLECT', p.id, { canOperate: true });
+    expect(detail.actionsAllowed).toEqual(['RECHECK']);
+    expect(detail.complaintUnavailableReason).toMatch(/doesn't accept merchant-raised UDIR complaints/);
+  });
+
   it('persists nothing when the PSP rejects the complaint submission', async () => {
     await setup({ failComplaints: true });
     const p = await debitedPayment();

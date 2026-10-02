@@ -3,10 +3,11 @@ import type { Clock } from '../clock.js';
 import type { PollingConfig } from '../config/polling.js';
 import type { Db } from '../db/client.js';
 import { dashboardUsers, merchantPaymentsView, paymentCases, paymentEvents, udirComplaints } from '../db/schema.js';
-import { complaintEligibility } from '../disputes/rules.js';
+import { complaintEligibility, supportsComplaints } from '../disputes/rules.js';
 import { AppError } from '../errors.js';
 import { CASE_STATUS_LABELS, toTimeline, type TimelineItem } from '../events/timeline.js';
 import type { PspRegistry } from '../psp/registry.js';
+import type { PspMode } from '../psp/types.js';
 import { customerStatus, merchantStatus, MERCHANT_STATUS_LABELS, type MerchantStatus } from '../tracking/derive.js';
 import type { SubjectType } from '../tracking/types.js';
 
@@ -171,13 +172,14 @@ export class PaymentQueryService {
       submittedToPsp: Boolean(row.pspId),
       activeComplaint,
       reversalCompleted: row.reversalStatus === 'COMPLETED',
+      providerSupportsComplaints: supportsComplaints(psps, row.pspId),
     });
     const actions: string[] = [];
     // An AutoPay debit still waiting for its slot hasn't been sent anywhere yet, so there's nothing to check.
     if (viewer.canOperate && !row.awaitingExecution) actions.push('RECHECK');
     if (viewer.canOperate && eligibility.ok) actions.push('RAISE_COMPLAINT');
 
-    let providerMode: 'MOCK' | 'LIVE' | null = null;
+    let providerMode: PspMode | null = null;
     try {
       providerMode = row.pspId ? psps.get(row.pspId).mode : null;
     } catch {
