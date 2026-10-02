@@ -1,5 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import fastifyCookie from '@fastify/cookie';
+import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { ZodError } from 'zod';
@@ -77,6 +79,17 @@ export function buildApp(ctx: AppContext, opts: { logger?: boolean } = {}): Fast
   });
 
   app.register(fastifyCookie);
+  // Static merchant console. API calls go to /dashboard/api/*, registered below (more specific routes win).
+  app.register(fastifyStatic, {
+    root: fileURLToPath(new URL('../../dashboard', import.meta.url)),
+    prefix: '/dashboard/',
+    setHeaders: (res) => {
+      res.setHeader('content-security-policy', "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+      res.setHeader('x-content-type-options', 'nosniff');
+      res.setHeader('referrer-policy', 'same-origin');
+    },
+  });
+  app.get('/dashboard', async (_req, reply) => reply.redirect('/dashboard/'));
   app.register(dashboardApi(ctx));
   app.register(opsRoutes(ctx));
   app.register(merchantRoutes(ctx));

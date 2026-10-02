@@ -5,7 +5,7 @@ import type { Db } from '../db/client.js';
 import { dashboardUsers, merchantPaymentsView, paymentCases, paymentEvents, udirComplaints } from '../db/schema.js';
 import { complaintEligibility } from '../disputes/rules.js';
 import { AppError } from '../errors.js';
-import { toTimeline, type TimelineItem } from '../events/timeline.js';
+import { CASE_STATUS_LABELS, toTimeline, type TimelineItem } from '../events/timeline.js';
 import type { PspRegistry } from '../psp/registry.js';
 import { customerStatus, merchantStatus, MERCHANT_STATUS_LABELS, type MerchantStatus } from '../tracking/derive.js';
 import type { SubjectType } from '../tracking/types.js';
@@ -194,7 +194,7 @@ export class PaymentQueryService {
       },
       resolution: {
         verification: { code: row.verificationStatus ?? 'NOT_REQUIRED', label: VERIFICATION_LABELS[row.verificationStatus ?? 'NOT_REQUIRED'] },
-        openCase: openCase ? { id: openCase.id, status: openCase.status } : null,
+        openCase: openCase ? { id: openCase.id, status: openCase.status, statusLabel: CASE_STATUS_LABELS[openCase.status] } : null,
         caseHistory: cases.map((c) => ({ id: c.id, status: c.status, openedAt: c.openedAt, resolvedAt: c.resolvedAt })),
         actionRequired: openCase?.status === 'NEEDS_ACTION',
         nextStep: nextStep(base!.merchantStatus, openCase?.status ?? null),
