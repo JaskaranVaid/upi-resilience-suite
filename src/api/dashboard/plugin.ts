@@ -6,6 +6,7 @@ import { merchants, type DashboardRole } from '../../db/schema.js';
 import { AppError } from '../../errors.js';
 import type { Actor } from '../../events/record.js';
 import { userView, type DashboardUser } from '../../auth/users.js';
+import { analyticsRoutes } from './analytics.js';
 import { dashboardDataRoutes } from './data.js';
 
 export const SESSION_COOKIE = 'rs_session';
@@ -113,4 +114,5 @@ export const dashboardApi = (ctx: AppContext) => async (app: FastifyInstance) =>
   });
 
   await app.register(dashboardDataRoutes(ctx));
+  await app.register(analyticsRoutes(ctx));
 };

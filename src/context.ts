@@ -1,4 +1,8 @@
 import { realSleep, systemClock, type Clock, type Sleep } from './clock.js';
+import { IssueAnalytics } from './analytics/issues.js';
+import { PspAnalytics } from './analytics/psps.js';
+import { StatementService } from './analytics/statement.js';
+import { ValueService } from './analytics/value.js';
 import { SessionService, type AuthConfig } from './auth/sessions.js';
 import { UserService } from './auth/users.js';
 import { CheckoutService } from './checkout/service.js';
@@ -40,6 +44,7 @@ export interface AppContext {
   secureCookies: boolean;
   /** HMAC key for payment-scoped customer status tokens. */
   customerTokenSecret: string;
+  analytics: { value: ValueService; psps: PspAnalytics; issues: IssueAnalytics; statement: StatementService };
 }
 
 export function buildContext(args: {
@@ -66,6 +71,8 @@ export function buildContext(args: {
   const psps = new PspRegistry(args.adapters);
   const polling = { ...DEFAULT_POLLING, ...args.polling };
   const tracking = new TrackingService({ db: args.db, clock, psps, cfg: polling });
+  const value = new ValueService({ db: args.db });
+  const issues = new IssueAnalytics({ db: args.db });
   const fetchImpl: FetchLike = args.fetchImpl ?? ((url, init) => fetch(url, init));
   return {
     db: args.db,
@@ -88,5 +95,6 @@ export function buildContext(args: {
     queries: new PaymentQueryService({ db: args.db, clock, cfg: polling, psps }),
     secureCookies: args.secureCookies ?? false,
     customerTokenSecret: args.customerTokenSecret ?? 'dev-customer-token-secret-not-for-production',
+    analytics: { value, psps: new PspAnalytics({ db: args.db }), issues, statement: new StatementService({ db: args.db, value, issues }) },
   };
 }
