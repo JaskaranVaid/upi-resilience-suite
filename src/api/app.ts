@@ -15,6 +15,7 @@ import { merchantRoutes } from './routes/merchants.js';
 import { opsRoutes } from './routes/ops.js';
 import { paymentRoutes } from './routes/payments.js';
 import { publicRoutes } from './routes/public.js';
+import { pspWebhookRoutes } from './routes/psp-webhooks.js';
 
 export type Merchant = typeof merchants.$inferSelect;
 
@@ -97,5 +98,6 @@ export function buildApp(ctx: AppContext, opts: { logger?: boolean } = {}): Fast
   app.register(checkoutRoutes(ctx));
   app.register(paymentRoutes(ctx));
   app.register(publicRoutes(ctx));
+  app.register(pspWebhookRoutes(ctx));
   return app;
 }

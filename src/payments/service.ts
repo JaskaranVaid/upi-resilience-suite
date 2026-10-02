@@ -18,6 +18,8 @@ export interface CreatePaymentInput {
   idempotencyKey: string;
   orderId?: string;
   quoteId?: string;
+  /** Required by some PSPs (e.g. Cashfree) to create a collect. */
+  customerPhone?: string;
 }
 
 function initialOutcome(result: PspResult, pspId: string | null): InitialOutcome {
@@ -73,6 +75,7 @@ export class PaymentService {
       candidates: pspIds,
       amountPaise: input.amountPaise,
       payerVpa: input.payerVpa,
+      ...(input.customerPhone ? { customerPhone: input.customerPhone } : {}),
       baseRef: id,
     });
     await this.recordAttempts(merchantId, id, outcome.attempts);

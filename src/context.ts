@@ -11,6 +11,7 @@ import type { Db } from './db/client.js';
 import { DisputeService } from './disputes/service.js';
 import { PaymentService } from './payments/service.js';
 import { PspRegistry } from './psp/registry.js';
+import { PspWebhookIngest } from './psp/webhook-ingest.js';
 import type { PspAdapter } from './psp/types.js';
 import { PaymentQueryService } from './query/payments.js';
 import { HealthTracker, type HealthOptions } from './routing/health.js';
@@ -45,6 +46,7 @@ export interface AppContext {
   /** HMAC key for payment-scoped customer status tokens. */
   customerTokenSecret: string;
   analytics: { value: ValueService; psps: PspAnalytics; issues: IssueAnalytics; statement: StatementService };
+  webhookIngest: PspWebhookIngest;
 }
 
 export function buildContext(args: {
@@ -96,5 +98,6 @@ export function buildContext(args: {
     secureCookies: args.secureCookies ?? false,
     customerTokenSecret: args.customerTokenSecret ?? 'dev-customer-token-secret-not-for-production',
     analytics: { value, psps: new PspAnalytics({ db: args.db }), issues, statement: new StatementService({ db: args.db, value, issues }) },
+    webhookIngest: new PspWebhookIngest({ db: args.db, clock, tracking }),
   };
 }
