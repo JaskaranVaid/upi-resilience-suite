@@ -32,6 +32,8 @@ export function plan(args: {
   seed: string;
   noticeDate: string | null;
   opts: PlanningOptions;
+  /** The provider's own minimum notice, when stricter than the regulatory one. */
+  minNoticeMs?: number;
 }): Plan {
   const { earliest, now, seed, noticeDate, opts } = args;
   const rules = getRuleSet(now);
@@ -39,13 +41,40 @@ export function plan(args: {
     const slot = chooseSlot({ earliest, seed, cfg: rules.windows });
     if (istDateString(slot) === noticeDate) return { scheduledAt: slot, noticeDate, needsNotice: false };
   }
-  const noticeReady = new Date(now.getTime() + rules.preDebitNoticeHours * HOUR_MS + opts.noticeBufferMs);
+  const minNotice = Math.max(rules.preDebitNoticeHours * HOUR_MS, args.minNoticeMs ?? 0);
+  const noticeReady = new Date(now.getTime() + minNotice + opts.noticeBufferMs);
   const slot = chooseSlot({
     earliest: new Date(Math.max(earliest.getTime(), noticeReady.getTime())),
     seed,
     cfg: rules.windows,
   });
   return { scheduledAt: slot, noticeDate: istDateString(slot), needsNotice: true };
+}
+
+export interface NoticeWindow {
+  minNoticeMs: number;
+  maxNoticeLeadMs: number | null;
+}
+
+/** The notice window of the PSP that sends this mandate's notices (its primary PSP). */
+export function noticeWindow(router: Router, mandate: Mandate): NoticeWindow {
+  const primary = mandate.eligiblePsps[0];
+  try {
+    const caps = primary ? router.adapter(primary).capabilities : null;
+    return { minNoticeMs: caps?.minNoticeMs ?? 0, maxNoticeLeadMs: caps?.maxNoticeLeadMs ?? null };
+  } catch {
+    return { minNoticeMs: 0, maxNoticeLeadMs: null };
+  }
+}
+
+/**
+ * If the planned execution is further ahead than the provider accepts notices for, return when
+ * to send the notice instead (an off-peak moment just inside the provider's window); else null.
+ */
+export function deferredNoticeAt(slot: Date, now: Date, win: NoticeWindow, seed: string): Date | null {
+  if (win.maxNoticeLeadMs === null || slot.getTime() - now.getTime() <= win.maxNoticeLeadMs) return null;
+  const rules = getRuleSet(now);
+  return chooseSlot({ earliest: new Date(slot.getTime() - win.maxNoticeLeadMs + HOUR_MS), seed: `${seed}:notice`, cfg: rules.windows });
 }
 
 /** Pre-debit notices go via the mandate's primary PSP (the one the customer registered with). */

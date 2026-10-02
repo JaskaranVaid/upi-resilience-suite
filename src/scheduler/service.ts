@@ -10,7 +10,7 @@ import { istMidnight } from '../rules/time.js';
 import { isPeak } from '../rules/windows.js';
 import { recordEvents, SYSTEM } from '../events/record.js';
 import { enqueueWebhook } from '../webhooks/outbox.js';
-import { DEFAULT_PLANNING, plan, sendNotice, type PlanningOptions } from './planning.js';
+import { DEFAULT_PLANNING, deferredNoticeAt, noticeWindow, plan, sendNotice, type PlanningOptions } from './planning.js';
 
 export type Debit = typeof debits.$inferSelect;
 
@@ -41,6 +41,8 @@ export function debitView(d: Debit) {
     dueDate: d.dueDate,
     scheduledAt: d.scheduledAt,
     noticeDate: d.noticeDate,
+    /** Notice not sent yet because the provider only accepts notices a few days ahead. */
+    noticePending: d.noticeDate === null,
     attempts: d.attempts,
     maxAttempts: d.maxAttempts,
     lastErrorCode: d.lastErrorCode,
@@ -83,9 +85,12 @@ export class SchedulerService {
     const now = this.clock.now();
     const id = newId('dbt');
     const due = input.dueDate ? istMidnight(input.dueDate) : now;
-    const p = plan({ earliest: new Date(Math.max(now.getTime(), due.getTime())), now, seed: id, noticeDate: null, opts: this.opts });
+    const win = noticeWindow(this.router, mandate);
+    const p = plan({ earliest: new Date(Math.max(now.getTime(), due.getTime())), now, seed: id, noticeDate: null, opts: this.opts, minNoticeMs: win.minNoticeMs });
+    // Too far ahead for the provider to accept a notice: the worker sends it later, then schedules.
+    const noticeAt = deferredNoticeAt(p.scheduledAt, now, win, id);
     // Notice first: if it fails nothing is persisted and the merchant can retry with the same key.
-    await sendNotice(this.router, mandate, id, input.amountPaise, p.noticeDate);
+    if (!noticeAt) await sendNotice(this.router, mandate, id, input.amountPaise, p.noticeDate);
 
     try {
       const debit = await this.db.transaction(async (tx) => {
@@ -102,9 +107,9 @@ export class SchedulerService {
             requestedAt: now,
             requestedInPeak: isPeak(now, getRuleSet(now).windows),
             dueDate: input.dueDate ?? null,
-            scheduledAt: p.scheduledAt,
-            noticeDate: p.noticeDate,
-            noticeSentAt: now,
+            scheduledAt: noticeAt ?? p.scheduledAt,
+            noticeDate: noticeAt ? null : p.noticeDate,
+            noticeSentAt: noticeAt ? null : now,
             maxAttempts: this.opts.maxAttempts,
             createdAt: now,
             updatedAt: now,

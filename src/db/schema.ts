@@ -67,9 +67,13 @@ export const debits = pgTable(
     requestedInPeak: boolean('requested_in_peak').notNull(),
     dueDate: text('due_date'),
     scheduledAt: ts('scheduled_at').notNull(),
-    /** IST date stated in the pre-debit notice; execution must happen on this date. */
-    noticeDate: text('notice_date').notNull(),
-    noticeSentAt: ts('notice_sent_at').notNull(),
+    /**
+     * IST date stated in the pre-debit notice; execution must happen on this date. Null while the
+     * notice is deferred (provider only accepts notices a few days ahead) — scheduled_at is then
+     * when the notice will be sent.
+     */
+    noticeDate: text('notice_date'),
+    noticeSentAt: ts('notice_sent_at'),
     attempts: integer('attempts').notNull().default(0),
     maxAttempts: integer('max_attempts').notNull(),
     lastTxnRef: text('last_txn_ref'),

@@ -20,9 +20,19 @@ export const mandateRoutes = (ctx: AppContext) => async (app: FastifyInstance) =
   app.post('/v1/mandates', async (req, reply) => {
     const merchant = merchantOf(req);
     const body = createMandate.parse(req.body);
-    const eligiblePsps = body.eligiblePsps ?? ctx.pspIds;
+    // A mandate lives at the PSP it was registered with; only MIC-portable mandates may be
+    // executed elsewhere. Omitted eligiblePsps = every PSP that accepts portable mandates.
+    const portable = ctx.pspIds.filter((id) => ctx.psps.get(id).capabilities.portableMandates);
+    const eligiblePsps = body.eligiblePsps ?? portable;
+    if (eligiblePsps.length === 0) {
+      throw new AppError('VALIDATION', 'Specify eligiblePsps: the payment provider this mandate was registered with');
+    }
     const unknown = eligiblePsps.filter((p) => !ctx.pspIds.includes(p));
     if (unknown.length) throw new AppError('VALIDATION', `Unknown PSPs: ${unknown.join(', ')}`);
+    const nonPortable = eligiblePsps.filter((p) => !ctx.psps.get(p).capabilities.portableMandates);
+    if (nonPortable.length > 0 && eligiblePsps.length > 1) {
+      throw new AppError('VALIDATION', `${nonPortable[0]} mandates can only be executed through ${nonPortable[0]}; set eligiblePsps to ["${nonPortable[0]}"]`);
+    }
     const [m] = await ctx.db
       .insert(mandates)
       .values({ id: newId('mdt'), merchantId: merchant.id, ...body, eligiblePsps, createdAt: ctx.clock.now() })

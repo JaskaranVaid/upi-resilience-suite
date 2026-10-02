@@ -8,12 +8,12 @@ import { newId } from '../ids.js';
 import { recordSavings } from '../ledger/savings.js';
 import type { PspResult } from '../psp/types.js';
 import type { AttemptRecord, Router } from '../routing/router.js';
-import { istDateString } from '../rules/time.js';
+import { istDateString, istMidnight } from '../rules/time.js';
 import { isRestricted } from '../rules/windows.js';
 import { recordEvents, SYSTEM } from '../events/record.js';
 import type { InitialOutcome, TrackingService } from '../tracking/service.js';
 import { enqueueWebhook } from '../webhooks/outbox.js';
-import { DEFAULT_PLANNING, plan, sendNotice, type PlanningOptions } from './planning.js';
+import { DEFAULT_PLANNING, deferredNoticeAt, noticeWindow, plan, sendNotice, type PlanningOptions } from './planning.js';
 import { debitView, type Debit } from './service.js';
 
 type Mandate = typeof mandates.$inferSelect;
@@ -120,8 +120,10 @@ export class DebitWorker {
     if (!mandate || mandate.status !== 'ACTIVE') return this.fail(d, 'MANDATE_INACTIVE', { kind: 'NOT_SUBMITTED' }, null, null);
 
     // Guardrails: never debit inside a restricted window or on a date the customer wasn't notified of.
+    // (A debit whose notice was deferred has no notice date yet: this sends it and schedules.)
     if (isRestricted(now, getRuleSet(now).windows) || istDateString(now) !== d.noticeDate) {
-      return this.reschedule(d, mandate, now, null);
+      const due = d.dueDate ? istMidnight(d.dueDate).getTime() : 0;
+      return this.reschedule(d, mandate, new Date(Math.max(now.getTime(), due)), null);
     }
 
     const attempt = d.attempts + 1;
@@ -214,7 +216,16 @@ export class DebitWorker {
 
   private async reschedule(d: Debit, mandate: Mandate, earliest: Date, errorCode: string | null): Promise<void> {
     const now = this.clock.now();
-    const p = plan({ earliest, now, seed: `${d.id}:${d.attempts}`, noticeDate: d.noticeDate, opts: this.opts });
+    const win = noticeWindow(this.router, mandate);
+    const p = plan({ earliest, now, seed: `${d.id}:${d.attempts}`, noticeDate: d.noticeDate, opts: this.opts, minNoticeMs: win.minNoticeMs });
+    const noticeAt = p.needsNotice ? deferredNoticeAt(p.scheduledAt, now, win, d.id) : null;
+    if (noticeAt) {
+      await this.db
+        .update(debits)
+        .set({ state: 'SCHEDULED', scheduledAt: noticeAt, noticeDate: null, noticeSentAt: null, executingSince: null, lastPspId: null, updatedAt: now })
+        .where(eq(debits.id, d.id));
+      return;
+    }
     let noticeSentAt = d.noticeSentAt;
     if (p.needsNotice) {
       try {
