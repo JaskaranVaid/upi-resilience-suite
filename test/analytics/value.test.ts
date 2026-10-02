@@ -106,6 +106,20 @@ describe('ValueService', () => {
       expect(u).toMatchObject({ submitted: 1, recovered: 1, withoutRecoverySuccessRate: 0 });
     });
 
+    it('judges recovery against the PSP the router preferred, not a failed health probe', async () => {
+      const add = async (attempts: Array<{ outcome: string; probe: boolean }>, final: 'SUCCEEDED' | 'FAILED') => {
+        const id = newId('pay');
+        await db.insert(payments).values({ id, merchantId, amountPaise: 100, payerVpa: 'ab@ok', idempotencyKey: id, state: final, createdAt: ist('2026-10-10T12:00:00'), updatedAt: ist('2026-10-10T12:00:00') });
+        await db.insert(paymentAttempts).values(
+          attempts.map((a, seq) => ({ id: newId('att'), merchantId, paymentId: id, pspId: a.probe ? 'pspA' : 'pspB', txnRef: 't', op: 'collect', outcome: a.outcome, probe: a.probe, latencyMs: 5, seq, createdAt: ist('2026-10-10T12:00:00') })),
+        );
+      };
+      await add([{ outcome: 'TECHNICAL_DECLINE', probe: true }, { outcome: 'SUCCESS', probe: false }], 'SUCCEEDED'); // probe failed: not a recovery
+      await add([{ outcome: 'SUCCESS', probe: true }], 'SUCCEEDED'); // probe succeeded
+      await add([{ outcome: 'TECHNICAL_DECLINE', probe: true }, { outcome: 'TECHNICAL_DECLINE', probe: false }, { outcome: 'SUCCESS', probe: false }], 'SUCCEEDED'); // genuine recovery
+      expect(await svc.successUplift(merchantId, OCT)).toMatchObject({ submitted: 3, succeeded: 3, recovered: 1 });
+    });
+
     it('returns zeros rather than dividing by zero for an empty period', async () => {
       expect(await svc.successUplift(merchantId, OCT)).toMatchObject({ submitted: 0, actualSuccessRate: null, withoutRecoverySuccessRate: null, upliftPp: null });
     });

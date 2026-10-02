@@ -194,6 +194,178 @@ describe('Router — collect failover (status check before failover)', () => {
   });
 });
 
+describe('HealthTracker — time decay and probing (no starvation)', () => {
+  const S = 1000;
+  const M = 60 * S;
+  const fresh = (opts = {}) => {
+    const clock = new FakeClock('2026-10-15T08:00:00Z');
+    return { clock, h: new HealthTracker({ probeIntervalMs: 60 * S, probeAfterPasses: 10, halfLifeMs: 10 * M, ...opts }, clock) };
+  };
+  const times = <T,>(n: number, f: () => T) => Array.from({ length: n }, f);
+  /** Route n payments, recording that the first PSP handled each successfully; returns the firsts. */
+  const pay = (h: HealthTracker, n: number, ids = ['pspA', 'pspB']) =>
+    times(n, () => {
+      const first = h.route(ids)[0]!;
+      h.record(first, OK());
+      return first;
+    });
+
+  it('lets old failures fade so the score reflects recent behaviour', () => {
+    const { clock, h } = fresh();
+    times(8, () => h.record('pspA', BANK_DOWN));
+    const atFailure = h.score('pspA');
+    clock.advance(30 * M); // three half-lives: the eight failures now weigh as one
+    const later = h.score('pspA');
+    expect(later).toBeGreaterThan(atFailure);
+    expect(later).toBeLessThan(0.2); // falls back to its (poor) longer-run record, not to "unknown"
+    times(3, () => h.record('pspA', OK()));
+    expect(h.score('pspA')).toBeGreaterThan(0.55); // recent successes now outweigh the old failures
+  });
+
+  it('keeps a fresh tracker in configured priority order', () => {
+    const { h } = fresh();
+    expect(pay(h, 10)).toEqual(Array(10).fill('pspA'));
+  });
+
+  it('heavy traffic: probes an avoided provider about once per probe interval', () => {
+    const { clock, h } = fresh();
+    times(5, () => h.record('pspA', BANK_DOWN));
+    let probes = 0;
+    for (let sec = 0; sec < 10 * 60; sec += 2) {
+      // a payment every 2 seconds for 10 minutes
+      clock.set(new Date(Date.parse('2026-10-15T08:00:00Z') + sec * S));
+      const first = h.route(['pspA', 'pspB'])[0]!;
+      if (first === 'pspA') {
+        probes++;
+        h.record('pspA', BANK_DOWN); // still broken: probes keep failing
+      } else h.record('pspB', OK());
+    }
+    expect(probes).toBeGreaterThanOrEqual(9);
+    expect(probes).toBeLessThanOrEqual(10);
+  });
+
+  it('light traffic: probes at most 1 in (passes + 1) payments', () => {
+    const { clock, h } = fresh();
+    times(5, () => h.record('pspA', BANK_DOWN));
+    let probes = 0;
+    for (let day = 0; day < 44; day++) {
+      clock.advance(24 * 60 * M); // one payment a day
+      const first = h.route(['pspA', 'pspB'])[0]!;
+      if (first === 'pspA') {
+        probes++;
+        h.record('pspA', BANK_DOWN);
+      } else h.record('pspB', OK());
+    }
+    expect(probes).toBe(4); // 1 in 11
+  });
+
+  it('a recovered provider takes over once it is the healthier one', () => {
+    const { clock, h } = fresh();
+    times(5, () => h.record('pspA', BANK_DOWN));
+    for (let minute = 1; minute <= 60; minute++) {
+      clock.advance(M);
+      const first = h.route(['pspA', 'pspB'])[0]!;
+      const bDown = minute > 30; // A has recovered; B degrades after 30 minutes
+      if (first === 'pspB' && bDown) {
+        h.record('pspB', BANK_DOWN);
+        h.record('pspA', OK()); // failover to A succeeds
+      } else h.record(first, OK());
+    }
+    expect(h.rank(['pspA', 'pspB'])).toEqual(['pspA', 'pspB']);
+  });
+
+  it('does not probe a blocked (open-circuit) provider before its cooldown, then re-tests it', () => {
+    const { clock, h } = fresh({ minSamples: 5, cooldownMs: 120 * S, probeAfterPasses: 1 });
+    times(5, () => h.record('pspA', BANK_DOWN));
+    expect(h.state('pspA')).toBe('OPEN');
+    clock.advance(60 * S);
+    expect(pay(h, 3)).toEqual(['pspB', 'pspB', 'pspB']);
+    clock.advance(60 * S);
+    expect(h.state('pspA')).toBe('HALF_OPEN');
+    expect(h.route(['pspA', 'pspB'])[0]).toBe('pspA');
+  });
+
+  it('counts customer-declined and pending traffic as traffic (no needless probes)', () => {
+    const { clock, h } = fresh({ probeAfterPasses: 1 });
+    times(5, () => h.record('pspA', BANK_DOWN));
+    times(5, () => h.record('pspB', OK()));
+    h.route(['pspA', 'pspB']);
+    clock.advance(60 * S);
+    h.record('pspA', NO_FUNDS); // A handled a payment (customer declined), so it isn't idle
+    expect(h.route(['pspA', 'pspB'])[0]).toBe('pspB');
+  });
+});
+
+describe('Router — probing in practice', () => {
+  it('a failed probe falls back like any failure (collect: status check, then failover)', async () => {
+    const clock = new FakeClock('2026-10-15T08:00:00Z');
+    const health = new HealthTracker({ probeAfterPasses: 3 }, clock);
+    const pspA = new MockPsp('pspA', { script: [BANK_DOWN] });
+    const pspB = new MockPsp('pspB');
+    const router = new Router([pspA, pspB], health, clock, clock.sleep, { random: () => 0.5 });
+    for (let i = 0; i < 5; i++) health.record('pspA', BANK_DOWN);
+    const run = (ref: string) => router.execute({ op: 'collect', candidates: ['pspA', 'pspB'], amountPaise: 1, payerVpa: 'ab@ok', baseRef: ref });
+
+    for (let i = 0; i < 3; i++) expect((await run(`p${i}`)).pspId).toBe('pspB');
+    expect(pspA.calls).toHaveLength(0); // A is avoided while its failures are recent
+
+    clock.advance(60_000);
+    const probe = await run('probe');
+    expect(pspA.calls.map((c) => c.op)).toEqual(['collect', 'status']); // probed first, status-checked
+    expect(probe.result.kind).toBe('SUCCESS');
+    expect(probe.pspId).toBe('pspB');
+  });
+
+  it('a mandate probe that fails fails over to the healthy provider', async () => {
+    const clock = new FakeClock('2026-10-15T08:00:00Z');
+    const health = new HealthTracker({ probeAfterPasses: 1 }, clock);
+    const pspA = new MockPsp('pspA', { script: [BANK_DOWN] });
+    const pspB = new MockPsp('pspB');
+    const router = new Router([pspA, pspB], health, clock, clock.sleep, { random: () => 0.5 });
+    for (let i = 0; i < 5; i++) health.record('pspA', BANK_DOWN);
+    await router.execute({ op: 'mandate', candidates: ['pspA', 'pspB'], amountPaise: 1, mandateRef: 'U', baseRef: 'm0' });
+    clock.advance(60_000);
+    const out = await router.execute({ op: 'mandate', candidates: ['pspA', 'pspB'], amountPaise: 1, mandateRef: 'U', baseRef: 'm1' });
+    expect(pspA.calls.map((c) => c.op)).toEqual(['execute']);
+    expect(out).toMatchObject({ pspId: 'pspB', hadTechnicalDecline: false }); // a failed probe earns no recovery credit
+  });
+
+  it('marks probe attempts and never counts a failed probe as a recovered technical decline', async () => {
+    const clock = new FakeClock('2026-10-15T08:00:00Z');
+    const health = new HealthTracker({ probeAfterPasses: 1 }, clock);
+    const pspA = new MockPsp('pspA', { script: [BANK_DOWN, BANK_DOWN] });
+    const pspB = new MockPsp('pspB', { script: [OK('b0'), OK('b1'), TIMEOUT, OK('b2')] });
+    const router = new Router([pspA, pspB], health, clock, clock.sleep, { random: () => 0.5 });
+    for (let i = 0; i < 5; i++) health.record('pspA', BANK_DOWN);
+    const run = (ref: string) => router.execute({ op: 'mandate', candidates: ['pspA', 'pspB'], amountPaise: 1, mandateRef: 'U', baseRef: ref });
+    await run('m0'); // B; A passed over once
+
+    clock.advance(60_000);
+    const probeOnly = await run('m1'); // probe A fails, B succeeds
+    expect(probeOnly.attempts.map((a) => [a.pspId, a.probe ?? false])).toEqual([['pspA', true], ['pspB', false]]);
+    expect(probeOnly.hadTechnicalDecline).toBe(false); // nothing was recovered: the router chose to risk A
+
+    clock.advance(60_000);
+    const real = await run('m2'); // probe A fails, then B times out and is safely retried
+    expect(real.result).toEqual(OK('b2'));
+    expect(real.hadTechnicalDecline).toBe(true); // B's own failure was genuinely recovered
+  });
+
+  it('only probes among the PSPs eligible for this payment', async () => {
+    const clock = new FakeClock('2026-10-15T08:00:00Z');
+    const health = new HealthTracker({ probeAfterPasses: 1 }, clock);
+    const pspA = new MockPsp('pspA');
+    const pspB = new MockPsp('pspB');
+    const router = new Router([pspA, pspB], health, clock, clock.sleep, { random: () => 0.5 });
+    for (let i = 0; i < 5; i++) health.record('pspA', BANK_DOWN);
+    for (let i = 0; i < 3; i++) {
+      clock.advance(60_000);
+      await router.execute({ op: 'mandate', candidates: ['pspB'], amountPaise: 1, mandateRef: 'U', baseRef: `m${i}` });
+    }
+    expect(pspA.calls).toHaveLength(0);
+  });
+});
+
 describe('HealthTracker', () => {
   it('opens the circuit on a high technical-decline rate and half-opens after cooldown', () => {
     const clock = new FakeClock('2026-10-15T08:00:00Z');

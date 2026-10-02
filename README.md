@@ -7,7 +7,7 @@ October 2026 UPI changes from a cost into a managed problem:
 |---|---|---|
 | **Engine A — Peak-aware AutoPay scheduler** | NPCI blocks AutoPay execution 10:00–13:00 and 17:00–21:30 IST; RBI requires a pre-debit notice ≥ 24h ahead | Accepts debits whenever the merchant's cron fires, sends the notice, executes in an off-peak slot (spread, not a 13:01 spike), never on an un-notified date, never burning the retry budget on doomed attempts |
 | **Engine B — MDR-aware checkout** | 0.4% MDR (cap ₹300) on P2M UPI > ₹2,000 from 15 Oct 2026 | Costs every accepted method, offers a **discount-only** incentive toward cheaper methods, splits marketplace carts by vendor ownership |
-| **Smart Router (Phase 2)** | Bank/PSP technical declines | Health-scored PSP selection with circuit breakers, failover, and timeout handling that checks status before any retry |
+| **Smart Router (Phase 2)** | Bank/PSP technical declines | Health-scored PSP selection (time-weighted, with low-rate probing so no provider is starved after a bad patch) with circuit breakers, failover, and timeout handling that checks status before any retry |
 | **Savings ledger** | Proving ROI | Every rescued payment and saved fee is recorded once, exposed at `/v1/savings` |
 | **Status poller (Phase 3)** | Payments stuck "pending", or failed after the customer was debited | Backend poller checks unresolved payments on a configurable schedule (5s/15s/30s/45s → every minute to 15 min → every 15 min to 48h), tracks debit / capture / bank auto-reversal, then hands over to manual investigation |
 | **Value analytics (Phase 4)** | Proving ROI every billing cycle | Value delivered per source (each with a method note), success uplift vs a no-recovery baseline, PSP performance, payment-issue outcomes, monthly statement (printable + CSV line items) |
@@ -43,7 +43,7 @@ effective date. **Verify them against the current NPCI/RBI circulars before go-l
 
 ```bash
 npm install
-npm test                 # 291 tests, in-process PGlite Postgres — no Docker needed
+npm test                 # 304 tests, in-process PGlite Postgres — no Docker needed
 npm run demo             # Phase 1–2 time-compressed simulation with mock PSPs
 npm run demo:dashboard   # Phase 3: seeds investigation scenarios, serves http://localhost:3100/dashboard/
 npm run dev              # API + worker + poller on :3000, data in .data/pg

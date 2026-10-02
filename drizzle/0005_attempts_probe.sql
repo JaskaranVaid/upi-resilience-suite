@@ -1,0 +1,1 @@
+ALTER TABLE "payment_attempts" ADD COLUMN "probe" boolean DEFAULT false NOT NULL;

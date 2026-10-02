@@ -117,7 +117,8 @@ export class ValueService {
           coalesce(payment_id, debit_id) as subject_id, outcome, created_at
         from payment_attempts
         where merchant_id = ${merchantId} and op <> 'status'
-        order by coalesce(payment_id, debit_id), created_at, seq
+        -- the first attempt on the PSP the router preferred: a failed health probe isn't the baseline
+        order by coalesce(payment_id, debit_id), probe, created_at, seq
       )
       select
         count(*) as submitted,

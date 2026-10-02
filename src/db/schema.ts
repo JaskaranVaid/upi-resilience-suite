@@ -130,6 +130,8 @@ export const paymentAttempts = pgTable(
     latencyMs: integer('latency_ms').notNull(),
     /** Order within one routing call (attempts from a single call share created_at). */
     seq: integer('seq').notNull().default(0),
+    /** Attempt made only to probe this PSP's health; never earns routing-recovery credit. */
+    probe: boolean('probe').notNull().default(false),
     createdAt: createdAt(),
   },
   (t) => [

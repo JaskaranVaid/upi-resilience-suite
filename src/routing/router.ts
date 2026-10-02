@@ -22,6 +22,8 @@ export interface RouteRequest {
 }
 
 export interface AttemptRecord {
+  /** Attempt on a PSP tried first only to probe its health (see HealthTracker.route). */
+  probe?: boolean;
   pspId: string;
   txnRef: string;
   op: 'execute' | 'collect' | 'status';
@@ -80,7 +82,7 @@ export class Router {
     let seq = 0;
     let last: RouteOutcome | undefined;
 
-    const candidates = this.health.rank(req.candidates.filter((id) => this.adapters.has(id)));
+    const { order: candidates, probe } = this.health.routeWithProbe(req.candidates.filter((id) => this.adapters.has(id)));
     for (const pspId of candidates) {
       if (outOfTime()) break;
       const psp = this.adapter(pspId);
@@ -93,14 +95,14 @@ export class Router {
         // A collect request may exist at this PSP despite the error. Sending a second one via
         // another PSP could let the customer pay twice, so only fail over once we've confirmed
         // there's nothing live here — and if there's no time left to confirm, don't fail over.
-        if (outOfTime()) return this.outcome(r, pspId, txnRef, attempts);
+        if (outOfTime()) return this.outcome(r, pspId, txnRef, attempts, probe);
         r = await this.confirmBeforeFailover(psp, txnRef, r, attempts);
       }
-      last = this.outcome(r, pspId, txnRef, attempts);
+      last = this.outcome(r, pspId, txnRef, attempts, probe);
       if (r.kind !== 'TECHNICAL_DECLINE') return last;
     }
 
-    return last ?? { result: { kind: 'TECHNICAL_DECLINE', code: 'PSP_ERROR' }, attempts, hadTechnicalDecline: true };
+    return last ?? { result: { kind: 'TECHNICAL_DECLINE', code: 'PSP_ERROR' }, attempts, hadTechnicalDecline: attempts.length > 0 };
   }
 
   /** After a timeout: wait, ask the PSP what happened, and retry once only if it never saw the debit. */
@@ -159,13 +161,15 @@ export class Router {
     return this.sleep(Math.round(min + this.opts.random() * (max - min)));
   }
 
-  private outcome(result: PspResult, pspId: string, txnRef: string, attempts: AttemptRecord[]): RouteOutcome {
+  private outcome(result: PspResult, pspId: string, txnRef: string, attempts: AttemptRecord[], probe: string | null): RouteOutcome {
+    for (const a of attempts) if (a.pspId === probe) a.probe = true;
     return {
       result,
       pspId,
       txnRef,
       attempts,
-      hadTechnicalDecline: attempts.some((a) => a.op !== 'status' && a.result.kind === 'TECHNICAL_DECLINE'),
+      // A failed probe is a failure the router chose to risk, not one it recovered from.
+      hadTechnicalDecline: attempts.some((a) => a.op !== 'status' && !a.probe && a.result.kind === 'TECHNICAL_DECLINE'),
     };
   }
 }

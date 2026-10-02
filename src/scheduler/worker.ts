@@ -250,7 +250,7 @@ export class DebitWorker {
         await this.db
           .select({ id: paymentAttempts.id })
           .from(paymentAttempts)
-          .where(and(eq(paymentAttempts.debitId, d.id), eq(paymentAttempts.outcome, 'TECHNICAL_DECLINE'), ne(paymentAttempts.op, 'status')))
+          .where(and(eq(paymentAttempts.debitId, d.id), eq(paymentAttempts.outcome, 'TECHNICAL_DECLINE'), ne(paymentAttempts.op, 'status'), eq(paymentAttempts.probe, false)))
           .limit(1)
       ).length > 0;
 
@@ -316,6 +316,7 @@ export class DebitWorker {
         code: 'code' in a.result ? a.result.code : null,
         latencyMs: a.latencyMs,
         seq,
+        probe: a.probe ?? false,
         createdAt: this.clock.now(),
       })),
     );

@@ -243,7 +243,7 @@ export class TrackingService {
         const [td] = await tx
           .select({ id: paymentAttempts.id })
           .from(paymentAttempts)
-          .where(and(eq(paymentAttempts.paymentId, t.subjectId), eq(paymentAttempts.outcome, 'TECHNICAL_DECLINE'), ne(paymentAttempts.op, 'status')))
+          .where(and(eq(paymentAttempts.paymentId, t.subjectId), eq(paymentAttempts.outcome, 'TECHNICAL_DECLINE'), ne(paymentAttempts.op, 'status'), eq(paymentAttempts.probe, false)))
           .limit(1);
         const result: PspResult =
           out.domainOutcome.to === 'SUCCEEDED'

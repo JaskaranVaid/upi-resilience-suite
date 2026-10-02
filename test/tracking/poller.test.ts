@@ -123,6 +123,24 @@ describe('StatusPoller + TrackingService', () => {
     expect(await ctx.db.select().from(savingsEvents).where(eq(savingsEvents.refId, payment.id))).toEqual([]);
   });
 
+  it('does not credit routing recovery when the only technical decline was a health probe', async () => {
+    const c2 = buildContext({ db: ctx.db, adapters: [pspA, pspB], adminToken: 'x'.repeat(20), clock, sleep: clock.sleep, router: { random: () => 0.5 }, health: { probeAfterPasses: 1 } });
+    for (let i = 0; i < 5; i++) c2.health.record('pspA', { kind: 'TECHNICAL_DECLINE', code: 'BANK_UNAVAILABLE' });
+    await c2.payments.create(merchantId, { amountPaise: rs(100), payerVpa: 'ravi@okicici', idempotencyKey: 'warm' }); // B; A passed over
+    clock.advance(60_000);
+    pspA.enqueue(BANK_DOWN); // the probe fails…
+    pspB.enqueue({ kind: 'PENDING' }); // …B accepts; the customer approves later
+    const { payment } = await c2.payments.create(merchantId, { amountPaise: rs(100), payerVpa: 'ravi@okicici', idempotencyKey: 'probed' });
+    expect(payment.state).toBe('PENDING');
+    const t = await tracking(payment.id);
+    expect(t.pspId).toBe('pspB');
+    pspB.scriptInquiry(t.txnRef!, [inq({ outcome: 'SUCCESS', customerDebit: 'DEBITED', capture: 'CAPTURED' })]);
+    clock.set(t.nextCheckAt!);
+    await c2.poller.runOnce();
+    expect((await paymentRow(payment.id)).state).toBe('SUCCEEDED');
+    expect(await ctx.db.select().from(savingsEvents).where(eq(savingsEvents.refId, payment.id))).toEqual([]);
+  });
+
   it('resolves without a case when a failed collect turns out not to have been debited', async () => {
     pspA.enqueue(BANK_DOWN);
     pspB.enqueue(BANK_DOWN);

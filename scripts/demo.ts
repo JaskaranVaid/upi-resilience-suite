@@ -81,7 +81,9 @@ async function main() {
   }
   const ok = all.filter((d) => d.state === 'SUCCEEDED');
   const failed = all.filter((d) => d.state === 'FAILED');
-  const tdFailovers = new Set(executes.filter((a) => a.outcome === 'TECHNICAL_DECLINE').map((a) => a.debitId)).size;
+  // Failed health probes are risks the router chose to take, not failures it rescued.
+  const tdFailovers = new Set(executes.filter((a) => a.outcome === 'TECHNICAL_DECLINE' && !a.probe).map((a) => a.debitId)).size;
+  const probes = executes.filter((a) => a.probe);
 
   console.log(`\nExecution spread (IST, completed debits):`);
   for (const [k, v] of [...byHour].sort()) console.log(`  ${k}  ${'█'.repeat(Math.ceil(v / 4))} ${v}`);
@@ -90,6 +92,7 @@ async function main() {
   console.log(`Executions inside peak/blackout windows: ${execTimesRestricted}`);
   console.log(`Debits that hit a technical decline and were rescued by failover/retry: ${tdFailovers}`);
   console.log(`PSP calls: ${executes.length} execute, ${attempts.length - executes.length} status checks`);
+  console.log(`Health probes of an avoided PSP: ${probes.length} (${probes.filter((a) => a.outcome === 'SUCCESS').length} succeeded)`);
   console.log(`PSP health:`, ctx.health.snapshot().map((s) => `${s.pspId}=${s.state} score ${s.score}`).join('  '));
 
   // ── 2. Checkout steering ───────────────────────────────────────────────────

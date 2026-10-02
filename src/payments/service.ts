@@ -133,6 +133,7 @@ export class PaymentService {
         code: 'code' in a.result ? a.result.code : null,
         latencyMs: a.latencyMs,
         seq,
+        probe: a.probe ?? false,
         createdAt: this.deps.clock.now(),
       })),
     );

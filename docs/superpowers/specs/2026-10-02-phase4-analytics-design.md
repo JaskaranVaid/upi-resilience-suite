@@ -118,7 +118,27 @@ Static: new modules parse, no inline styles. Manual: browser walkthrough of all 
 4. **Charts**: categorical slots 1–3 validated all-pairs with the dataviz validator against the
    dashboard surfaces (light `#ffffff`, dark `#171b21`); aqua is < 3:1 on light, relieved by legend,
    direct end labels and the table view. Revenue and MDR fees are never on one axis.
-5. **Follow-up found (not changed — Phase 2 behaviour)**: the router's health score has no time
+5. **Follow-up found, then fixed with approval (Phase 2 behaviour change)**: the router's health score had no time
    decay and no periodic probing. In the seeded demo PSP A received 9 of 254 attempts after a few
    early failures: once a PSP's score drops it can be starved of the traffic it needs to recover.
    Recommend time-decayed scores or a small probe share before production.
+
+### 9.1 Router starvation fix (approved after Phase 4)
+- **Time-weighted score** (`HealthTracker.score`): outcomes weigh 0.5^(age / halfLifeMs), default 10 min.
+  As recent evidence ages, the score falls back to the PSP's longer-run record (Laplace rate over the
+  last `windowSize` outcomes, weight 2) — *refined during implementation*: decaying toward "unknown"
+  (0.5) erased all memory between payments for low-volume merchants, so a broken PSP was tried first
+  almost daily.
+- **Probing** (`HealthTracker.route`, used by the router): a non-blocked PSP that has been idle for
+  `probeIntervalMs` (60 s) **and** passed over for `probeAfterPasses` (10) payments goes first for one
+  payment — *refined during implementation*: interval alone would make every other payment a probe
+  at one payment/day. Caps: ~1 probe/interval under heavy traffic, ≤ 1 in 11 payments under light.
+- Unchanged: customer declines never count against a PSP; open circuits aren't probed until their
+  cooldown; only the payment's eligible PSPs are considered; a failed probe falls back exactly like
+  any failure (collect: status check before failover, D10).
+- **Probes never earn value credit** (found during verification): a failed probe that is then rescued
+  by failover is a risk the router chose to take, not a recovery. Attempts carry `payment_attempts.probe`;
+  `TD_RECOVERED` (router, poller and worker paths) ignores probe failures, and success uplift measures
+  against the first attempt on the PSP the router preferred. Without this, probing inflated "recovered"
+  from 10 to 18 debits in the CLI demo.
+- Cost observed in the CLI demo (PSP A: 20% outages): 25 probes over 300 debits (~1 in 12), 14 succeeded.
