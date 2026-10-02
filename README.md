@@ -9,9 +9,12 @@ October 2026 UPI changes from a cost into a managed problem:
 | **Engine B — MDR-aware checkout** | 0.4% MDR (cap ₹300) on P2M UPI > ₹2,000 from 15 Oct 2026 | Costs every accepted method, offers a **discount-only** incentive toward cheaper methods, splits marketplace carts by vendor ownership |
 | **Smart Router (Phase 2)** | Bank/PSP technical declines | Health-scored PSP selection with circuit breakers, failover, and timeout handling that checks status before any retry |
 | **Savings ledger** | Proving ROI | Every rescued payment and saved fee is recorded once, exposed at `/v1/savings` |
+| **Status poller (Phase 3)** | Payments stuck "pending", or failed after the customer was debited | Backend poller checks unresolved payments on a configurable schedule (5s/15s/30s/45s → every minute to 15 min → every 15 min to 48h), tracks debit / capture / bank auto-reversal, then hands over to manual investigation |
+| **Payment Resolution Console (Phase 3)** | "I was charged but my order failed" | Merchant dashboard at `/dashboard`: search by 12-digit UPI reference, see what happened to the customer's money, Dispute Desk queues, recheck, notes, raise UDIR complaints, audit timeline |
 
-Source brief: *UPI Taxation Business Gap Analysis* (Section 5, Phases 1–2).
-Design: [`docs/superpowers/specs/2026-10-02-upi-resilience-suite-design.md`](docs/superpowers/specs/2026-10-02-upi-resilience-suite-design.md).
+Source brief: *UPI Taxation Business Gap Analysis* (Section 5, Phases 1–3).
+Designs: [Phases 1–2](docs/superpowers/specs/2026-10-02-upi-resilience-suite-design.md) ·
+[Phase 3](docs/superpowers/specs/2026-10-02-phase3-status-polling-udir-design.md).
 
 ## Compliance stance
 
@@ -25,7 +28,12 @@ These are enforced in code and covered by tests:
   executing.
 - **Pre-debit notice integrity.** Execution only on the date stated in a notice sent ≥ 24h earlier;
   a reschedule that changes the date triggers a fresh notice.
-- **No double debits.** Timeouts are status-checked before retrying; idempotency keys everywhere.
+- **No double debits.** Timeouts are status-checked before retrying; a failed collect is
+  status-checked before failing over to another PSP; idempotency keys everywhere.
+- **No invented deadlines.** No refund/reversal due date is computed until a rule is confirmed
+  for a specific UPI failure category with a cited source (`REVERSAL_DEADLINE_RULES` is empty).
+- **"Captured" ≠ "settled".** Capture means PSP-confirmed; bank settlement isn't ingested and is
+  never claimed.
 
 All regulatory numbers live in [`src/config/rules.ts`](src/config/rules.ts), versioned by
 effective date. **Verify them against the current NPCI/RBI circulars before go-live.**
@@ -34,12 +42,16 @@ effective date. **Verify them against the current NPCI/RBI circulars before go-l
 
 ```bash
 npm install
-npm test            # 100 tests, uses in-process PGlite Postgres — no Docker needed
-npm run demo        # time-compressed simulation with mock PSPs
-npm run dev         # API + worker on :3000, data in .data/pg
+npm test                 # 249 tests, in-process PGlite Postgres — no Docker needed
+npm run demo             # Phase 1–2 time-compressed simulation with mock PSPs
+npm run demo:dashboard   # Phase 3: seeds investigation scenarios, serves http://localhost:3100/dashboard/
+npm run dev              # API + worker + poller on :3000, data in .data/pg
 ```
 
-Production: set `DATABASE_URL=postgres://…` and `ADMIN_TOKEN`, run `ROLE=api` and `ROLE=worker`
+`demo:dashboard` prints local demo logins (admin / support / viewer). Everything is mock: no real
+PSP, NPCI or money is involved, and simulated UDIR complaints are labelled as such in the UI.
+
+Production: set `DATABASE_URL=postgres://…`, `ADMIN_TOKEN` and `CUSTOMER_TOKEN_SECRET`, run `ROLE=api` and `ROLE=worker`
 as separate processes (any number of workers — rows are claimed with `FOR UPDATE SKIP LOCKED`).
 See [`.env.example`](.env.example).
 
@@ -109,17 +121,61 @@ src/payments/    one-off routed payments
 src/ledger/      savings events
 src/webhooks/    outbox, dispatcher, signing
 src/api/         Fastify app, auth, routes, zod schemas
+src/tracking/    Phase 3: money facts, polling schedule, pure reducer, status derivations, poller
+src/disputes/    Phase 3: cases, notes, UDIR complaints, recheck
+src/auth/        Phase 3: dashboard users, passwords, sessions
+src/query/       Phase 3: unified Collect + AutoPay read model
+src/events/      Phase 3: audit log + merchant-safe timeline
+dashboard/       Phase 3: static vanilla-JS console (no build step)
 ```
+
+## Phase 3 — status polling & Payment Resolution Console
+
+**Statuses.** Internal state (PSP codes, check counts, backoff) never leaves the backend. Two
+derived views, both computed server-side in [`src/tracking/derive.ts`](src/tracking/derive.ts):
+
+- *Merchant status* — e.g. "Payment verification in progress", "Customer debited, payment not
+  captured", "Auto-reversal to customer in progress", "Needs manual investigation".
+- *Customer status* — `processing`, `success`, `failed`, `verification_in_progress`,
+  `refund_processing`, `refunded`, each with a plain message ("Please don't make another payment").
+
+**Dashboard users.** The first admin is created with the merchant API key
+(`POST /v1/dashboard-users`); after that, admins manage the team in the console. Roles: `ADMIN`
+(users + actions), `SUPPORT` (recheck, notes, UDIR complaints, close), `VIEWER` (read-only).
+Email + password (scrypt), httpOnly SameSite=Strict session cookie, 30-min idle / 12-h absolute
+expiry, lockout after 5 failures, CSRF header on writes.
+
+**Customer status for checkout pages.** `POST /v1/payments` returns `customerStatusToken`. The
+checkout page polls `GET /public/payments/:id/status` with header `X-Payment-Token`; it reads only
+that payment's customer-safe status and never touches a PSP.
+
+**Dashboard API** (`/dashboard/api`, cookie session):
+
+| Method & path | Purpose |
+|---|---|
+| `GET /overview` | Counts by what needs attention |
+| `GET /payments?status&type&psp&from&to&minAmount&maxAmount&orderId&paymentId&upiRrn&cursor` | Unified Collect + AutoPay list |
+| `GET /payments/search?q=` | 12-digit UPI ref, payment id or order id |
+| `GET /payments/:type/:id`, `…/timeline` | Investigation view + merchant-safe audit timeline |
+| `POST /payments/:type/:id/recheck`, `…/complaints` | Recheck now · raise UDIR complaint (SUPPORT+) |
+| `GET /cases?status=`, `GET /cases/:id` | Dispute Desk |
+| `POST /cases/:id/notes`, `…/recheck`, `…/close` | Notes · recheck · mark resolved with a note (SUPPORT+) |
+| `GET/POST /users`, `PATCH /users/:id` | Team management (ADMIN) |
+
+**Audit.** Every state change, status check, UDIR action, note, view and login is appended to
+`payment_events`, which feeds the timelines and, later, Phase 4 analytics.
 
 ## What is mocked / not yet built
 
-- **PSPs are mocks.** Integrating a real gateway = implementing `PspAdapter` (4 methods) and
-  normalising its codes into `PspResult`. Router health is per-process (move to Redis when
+- **PSPs are mocks.** Integrating a real gateway = implementing `PspAdapter` and normalising its
+  codes into `PspResult` / `TransactionInquiry`. Router health is per-process (move to Redis when
   running many API instances).
+- **UDIR is mock-backed.** `inquire`, `raiseComplaint` and `complaintStatus` are implemented by
+  `MockPsp` (mode `MOCK`, labelled in the UI). A real PSP adapter replaces it without touching the
+  dashboard. Lookups go through PSP/aggregator APIs; non-bank entities can't query the NPCI switch.
+- **Merchant-initiated refunds** are out of scope for Phase 3 (bank auto-reversals are tracked).
 - **Savings attribution** for peak rescues assumes the debit would otherwise have fired in the
   embargo window (it was *requested* during one). That's the brief's model; confirm it matches
   how you'll bill customers.
-- **Phase 3** (status poller UI, UDIR dispute desk) and **Phase 4** (analytics dashboard) are
-  not built. The ledger and `payment_attempts` table are their data source. Note: dispute/status
-  lookups must go through PSP/aggregator APIs — non-bank entities cannot query the NPCI switch
-  directly.
+- **Phase 4** (analytics) is not built; `payment_events`, `payment_tracking` and `savings_events`
+  are its data sources.

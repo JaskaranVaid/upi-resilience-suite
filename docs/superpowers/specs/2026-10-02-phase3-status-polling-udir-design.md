@@ -459,3 +459,31 @@ in the header on every page. UI states per view: loading, empty, error, forbidde
 - UDIR: raise (MOCK mode recorded), idempotency, not allowed when NOT_DEBITED, status advance.
 - Regression: all 100 existing tests stay green (API test for lazy refresh rewritten per C2).
 - Dashboard: static assets served; manual walkthrough in the browser pane before completion.
+
+---
+
+## 12. Implementation notes (deviations found while building)
+
+Recorded so the spec matches the shipped code. None changes a product decision (D1–D10, C1–C4).
+
+1. **Merchant status `SCHEDULED`** — an AutoPay debit waiting for its execution slot would
+   otherwise read as "verifying" after 45 s. Customer mapping: `processing`.
+2. **Merchant status `CAPTURED_AFTER_FAILURE`** — the merchant-facing face of C3 (late capture),
+   instead of showing "Failed" while money was captured. Customer mapping: `verification_in_progress`.
+3. **"Mark resolved" case action** (`POST /cases/:id/close`, SUPPORT+, note required, only from
+   `NEEDS_ACTION`) — a `STATUS_MISMATCH` case can only be settled by a human decision; without
+   it the case would stay in "Needs action" forever. Uses the `CLOSED_BY_MERCHANT` resolution.
+4. **UDIR complaint resolved as `RESOLVED_REVERSED` records an observed reversal** (reversal
+   facts → `COMPLETED`), so the money panel, merchant status and customer status agree with the
+   complaint. No further complaint is allowed once the amount is reversed.
+5. **Manual recheck never starts a watch** on a payment whose verification is `NOT_REQUIRED` or
+   `RESOLVED`; it refreshes the facts only.
+6. **SQL mirror of merchant status** (`merchantStatusSql`) so list filters and overview counts run
+   in Postgres; a test asserts it agrees with `merchantStatus()` across every fact combination.
+7. **`GET /dashboard/api/meta`** serves status/type labels and PSP modes so the UI hard-codes no
+   domain vocabulary.
+8. **Detail views prompt to refresh** when the backend changes them (15 s, our API only, ignores
+   routine status checks; never auto-redraws under the user).
+9. **`payment_events.seq`** orders events written within the same millisecond.
+10. **Collect domain transitions from the poller** go through `applyPaymentOutcome`, now guarded to
+    `PENDING` rows only, so Phase 2 webhooks/savings fire exactly once.
