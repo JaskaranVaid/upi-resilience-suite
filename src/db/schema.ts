@@ -1,4 +1,6 @@
-import { bigint, boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+import { bigint, boolean, index, integer, jsonb, pgTable, pgView, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+import type { Capture, ComplaintReason, ComplaintStatus, CustomerDebit, ReversalStatus } from '../psp/types.js';
+import type { CaseReason, CaseResolution, CaseStatus, EventType, SubjectType, VerificationStatus } from '../tracking/types.js';
 import type { MerchantCategory } from '../rules/mdr.js';
 import type { MethodCosts, SteeringConfig } from '../rules/steering.js';
 
@@ -58,6 +60,8 @@ export const debits = pgTable(
     mandateId: text('mandate_id').notNull().references(() => mandates.id),
     amountPaise: money('amount_paise').notNull(),
     idempotencyKey: text('idempotency_key').notNull(),
+    /** Merchant's own reference (invoice/order), optional. */
+    orderId: text('order_id'),
     state: text('state').$type<DebitState>().notNull(),
     requestedAt: ts('requested_at').notNull(),
     requestedInPeak: boolean('requested_in_peak').notNull(),
@@ -80,6 +84,7 @@ export const debits = pgTable(
   (t) => [
     uniqueIndex('debits_merchant_idem').on(t.merchantId, t.idempotencyKey),
     index('debits_due').on(t.state, t.scheduledAt),
+    index('debits_merchant_order').on(t.merchantId, t.orderId),
   ],
 );
 
@@ -93,6 +98,8 @@ export const payments = pgTable(
     amountPaise: money('amount_paise').notNull(),
     payerVpa: text('payer_vpa').notNull(),
     idempotencyKey: text('idempotency_key').notNull(),
+    /** Merchant's own order reference, optional. */
+    orderId: text('order_id'),
     quoteId: text('quote_id'),
     state: text('state').$type<PaymentState>().notNull(),
     pspId: text('psp_id'),
@@ -101,7 +108,10 @@ export const payments = pgTable(
     createdAt: createdAt(),
     updatedAt: ts('updated_at').notNull().defaultNow(),
   },
-  (t) => [uniqueIndex('payments_merchant_idem').on(t.merchantId, t.idempotencyKey)],
+  (t) => [
+    uniqueIndex('payments_merchant_idem').on(t.merchantId, t.idempotencyKey),
+    index('payments_merchant_order').on(t.merchantId, t.orderId),
+  ],
 );
 
 export const paymentAttempts = pgTable(
@@ -172,3 +182,184 @@ export const webhookOutbox = pgTable(
   },
   (t) => [index('outbox_due').on(t.deliveredAt, t.nextAttemptAt)],
 );
+
+// ─── Phase 3: tracking, cases, UDIR, audit, dashboard auth ────────────────────────────────
+
+/**
+ * Money-movement facts and verification lifecycle for one payment (collect or AutoPay debit).
+ * Lives beside the Phase 1-2 tables so their state machines stay untouched.
+ */
+export const paymentTracking = pgTable(
+  'payment_tracking',
+  {
+    id: text('id').primaryKey(),
+    merchantId: text('merchant_id').notNull().references(() => merchants.id),
+    subjectType: text('subject_type').$type<SubjectType>().notNull(),
+    subjectId: text('subject_id').notNull(),
+    pspId: text('psp_id'),
+    txnRef: text('txn_ref'),
+    upiRrn: text('upi_rrn'),
+    npciTxnId: text('npci_txn_id'),
+    customerDebit: text('customer_debit').$type<CustomerDebit>().notNull().default('UNKNOWN'),
+    capture: text('capture').$type<Capture>().notNull().default('UNKNOWN'),
+    reversalStatus: text('reversal_status').$type<ReversalStatus>().notNull().default('NONE'),
+    reversalInitiatedAt: ts('reversal_initiated_at'),
+    reversalCompletedAt: ts('reversal_completed_at'),
+    verificationStatus: text('verification_status').$type<VerificationStatus>().notNull(),
+    verificationStartedAt: ts('verification_started_at'),
+    nextCheckAt: ts('next_check_at'),
+    checkCount: integer('check_count').notNull().default(0),
+    lastCheckedAt: ts('last_checked_at'),
+    lastManualCheckAt: ts('last_manual_check_at'),
+    leaseUntil: ts('lease_until'),
+    createdAt: createdAt(),
+    updatedAt: ts('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('tracking_subject').on(t.subjectType, t.subjectId),
+    index('tracking_merchant_rrn').on(t.merchantId, t.upiRrn),
+    index('tracking_due').on(t.verificationStatus, t.nextCheckAt),
+  ],
+);
+
+/** A payment issue that may need merchant attention (a "dispute" on the Dispute Desk). */
+export const paymentCases = pgTable(
+  'payment_cases',
+  {
+    id: text('id').primaryKey(),
+    merchantId: text('merchant_id').notNull().references(() => merchants.id),
+    subjectType: text('subject_type').$type<SubjectType>().notNull(),
+    subjectId: text('subject_id').notNull(),
+    trackingId: text('tracking_id').notNull().references(() => paymentTracking.id),
+    reason: text('reason').$type<CaseReason>().notNull(),
+    status: text('status').$type<CaseStatus>().notNull(),
+    resolution: text('resolution').$type<CaseResolution>(),
+    closedByMerchant: boolean('closed_by_merchant').notNull().default(false),
+    openedAt: ts('opened_at').notNull(),
+    resolvedAt: ts('resolved_at'),
+    updatedAt: ts('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    index('cases_merchant_status').on(t.merchantId, t.status, t.openedAt),
+    index('cases_subject').on(t.subjectType, t.subjectId),
+  ],
+);
+
+export const udirComplaints = pgTable(
+  'udir_complaints',
+  {
+    id: text('id').primaryKey(),
+    caseId: text('case_id').notNull().references(() => paymentCases.id),
+    merchantId: text('merchant_id').notNull().references(() => merchants.id),
+    pspId: text('psp_id').notNull(),
+    /** MOCK complaints were never sent to a real PSP or NPCI. */
+    mode: text('mode').$type<'MOCK' | 'LIVE'>().notNull(),
+    pspComplaintRef: text('psp_complaint_ref').notNull(),
+    reasonCode: text('reason_code').$type<ComplaintReason>().notNull(),
+    status: text('status').$type<ComplaintStatus>().notNull(),
+    raisedByUserId: text('raised_by_user_id'),
+    raisedAt: ts('raised_at').notNull(),
+    lastStatusAt: ts('last_status_at').notNull(),
+  },
+  (t) => [index('complaints_case').on(t.caseId)],
+);
+
+export const caseNotes = pgTable(
+  'case_notes',
+  {
+    id: text('id').primaryKey(),
+    caseId: text('case_id').notNull().references(() => paymentCases.id),
+    merchantId: text('merchant_id').notNull().references(() => merchants.id),
+    authorUserId: text('author_user_id').notNull(),
+    body: text('body').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index('notes_case').on(t.caseId, t.createdAt)],
+);
+
+export type ActorType = 'SYSTEM' | 'DASHBOARD_USER' | 'API_KEY';
+
+/** Append-only audit log; source of payment timelines and future analytics. */
+export const paymentEvents = pgTable(
+  'payment_events',
+  {
+    id: text('id').primaryKey(),
+    merchantId: text('merchant_id').notNull().references(() => merchants.id),
+    subjectType: text('subject_type').$type<SubjectType>(),
+    subjectId: text('subject_id'),
+    caseId: text('case_id'),
+    type: text('type').$type<EventType>().notNull(),
+    actorType: text('actor_type').$type<ActorType>().notNull(),
+    actorId: text('actor_id'),
+    data: jsonb('data').$type<Record<string, unknown>>(),
+    /** Monotonic per process; orders events written within the same millisecond. */
+    seq: bigint('seq', { mode: 'number' }).notNull(),
+    createdAt: ts('created_at').notNull(),
+  },
+  (t) => [
+    index('events_subject').on(t.subjectType, t.subjectId, t.createdAt),
+    index('events_merchant').on(t.merchantId, t.createdAt),
+  ],
+);
+
+export type DashboardRole = 'ADMIN' | 'SUPPORT' | 'VIEWER';
+
+export const dashboardUsers = pgTable('dashboard_users', {
+  id: text('id').primaryKey(),
+  merchantId: text('merchant_id').notNull().references(() => merchants.id),
+  /** Stored lower-cased; unique across merchants so login needs only email + password. */
+  email: text('email').notNull().unique(),
+  name: text('name').notNull(),
+  passwordHash: text('password_hash').notNull(),
+  role: text('role').$type<DashboardRole>().notNull(),
+  disabled: boolean('disabled').notNull().default(false),
+  failedLogins: integer('failed_logins').notNull().default(0),
+  lockedUntil: ts('locked_until'),
+  lastLoginAt: ts('last_login_at'),
+  createdBy: text('created_by'),
+  createdAt: createdAt(),
+  updatedAt: ts('updated_at').notNull().defaultNow(),
+});
+
+export const dashboardSessions = pgTable(
+  'dashboard_sessions',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id').notNull().references(() => dashboardUsers.id),
+    tokenHash: text('token_hash').notNull().unique(),
+    createdAt: ts('created_at').notNull(),
+    lastSeenAt: ts('last_seen_at').notNull(),
+    expiresAt: ts('expires_at').notNull(),
+    revokedAt: ts('revoked_at'),
+  },
+  (t) => [index('sessions_user').on(t.userId)],
+);
+
+/**
+ * Read model unifying one-off collects and AutoPay debits for the dashboard.
+ * Created by drizzle/0002_merchant_payments_view.sql; declared here for typed queries only.
+ */
+export const merchantPaymentsView = pgView('merchant_payments_v', {
+  subjectType: text('subject_type').$type<SubjectType>().notNull(),
+  id: text('id').notNull(),
+  merchantId: text('merchant_id').notNull(),
+  orderId: text('order_id'),
+  amountPaise: money('amount_paise').notNull(),
+  rawState: text('raw_state').notNull(),
+  domainState: text('domain_state').$type<'PENDING' | 'SUCCEEDED' | 'FAILED'>().notNull(),
+  pspId: text('psp_id'),
+  createdAt: ts('created_at').notNull(),
+  lastUpdatedAt: ts('last_updated_at').notNull(),
+  pendingSince: ts('pending_since').notNull(),
+  awaitingExecution: boolean('awaiting_execution').notNull(),
+  scheduledAt: ts('scheduled_at'),
+  trackingId: text('tracking_id'),
+  upiRrn: text('upi_rrn'),
+  npciTxnId: text('npci_txn_id'),
+  customerDebit: text('customer_debit').$type<CustomerDebit>(),
+  capture: text('capture').$type<Capture>(),
+  reversalStatus: text('reversal_status').$type<ReversalStatus>(),
+  reversalInitiatedAt: ts('reversal_initiated_at'),
+  reversalCompletedAt: ts('reversal_completed_at'),
+  verificationStatus: text('verification_status').$type<VerificationStatus>(),
+}).existing();

@@ -22,8 +22,10 @@ export async function freshDb(): Promise<DbHandle> {
   shared ??= createDb();
   const h = await shared;
   await h.db.execute(sql`
-    truncate merchants, vendors, mandates, debits, payments, payment_attempts,
-             checkout_quotes, savings_events, webhook_outbox cascade`);
+    do $$ declare t text; begin
+      select string_agg(format('%I', tablename), ', ') into t from pg_tables where schemaname = 'public';
+      if t is not null then execute 'truncate ' || t || ' cascade'; end if;
+    end $$`);
   return { db: h.db, close: async () => {} };
 }
 

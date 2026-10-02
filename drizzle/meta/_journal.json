@@ -8,6 +8,20 @@
       "when": 1790936167183,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790952405575,
+      "tag": "0001_phase3_tracking",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790952407909,
+      "tag": "0002_merchant_payments_view",
+      "breakpoints": true
     }
   ]
 }
