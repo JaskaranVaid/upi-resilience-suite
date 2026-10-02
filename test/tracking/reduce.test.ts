@@ -131,6 +131,20 @@ describe('reduce', () => {
     expect(types(o)).not.toContain('VERIFICATION_EXHAUSTED');
   });
 
+  it('a recheck on a payment that never needed watching refreshes facts without starting a watch', () => {
+    const o = reduce(input({ domainState: 'FAILED', verificationStatus: 'NOT_REQUIRED', verificationStartedAt: null, inquiry: found({ outcome: 'FAILED', customerDebit: 'NOT_DEBITED' }) }));
+    expect(o.verificationStatus).toBe('NOT_REQUIRED');
+    expect(o.nextCheckAt).toBeNull();
+    expect(types(o)).not.toContain('VERIFICATION_RESOLVED');
+    expect(o.facts.customerDebit).toBe('NOT_DEBITED');
+  });
+
+  it('a recheck on a resolved payment stays resolved even if the PSP is momentarily inconclusive', () => {
+    const o = reduce(input({ domainState: 'FAILED', verificationStatus: 'RESOLVED', inquiry: found({ outcome: 'PENDING' }) }));
+    expect(o.verificationStatus).toBe('RESOLVED');
+    expect(o.nextCheckAt).toBeNull();
+  });
+
   it('records an enquiry error as a check and keeps the schedule', () => {
     const o = reduce(input({ inquiry: { error: 'timeout' } }));
     expect(o.verificationStatus).toBe('IN_PROGRESS');

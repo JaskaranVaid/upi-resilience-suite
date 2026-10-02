@@ -2,6 +2,7 @@ import { realSleep, systemClock, type Clock, type Sleep } from './clock.js';
 import { CheckoutService } from './checkout/service.js';
 import { DEFAULT_POLLING, type PollingConfig } from './config/polling.js';
 import type { Db } from './db/client.js';
+import { DisputeService } from './disputes/service.js';
 import { PaymentService } from './payments/service.js';
 import { PspRegistry } from './psp/registry.js';
 import type { PspAdapter } from './psp/types.js';
@@ -28,6 +29,7 @@ export interface AppContext {
   psps: PspRegistry;
   tracking: TrackingService;
   poller: StatusPoller;
+  disputes: DisputeService;
 }
 
 export function buildContext(args: {
@@ -66,5 +68,6 @@ export function buildContext(args: {
     psps,
     tracking,
     poller: new StatusPoller({ db: args.db, clock, tracking }),
+    disputes: new DisputeService({ db: args.db, clock, psps, tracking }),
   };
 }

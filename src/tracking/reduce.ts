@@ -75,9 +75,13 @@ export function reduce(i: ReduceInput): ReduceOutput {
 
   let verificationStatus: VerificationStatus;
   let next: Date | null = null;
-  if (terminal) {
+  const watching = i.verificationStatus === 'IN_PROGRESS' || i.verificationStatus === 'NEEDS_MANUAL_INVESTIGATION';
+  if (!watching) {
+    // A manual recheck refreshes the facts but never starts a watch on a settled payment.
+    verificationStatus = i.verificationStatus;
+  } else if (terminal) {
     verificationStatus = 'RESOLVED';
-    if (i.verificationStatus !== 'RESOLVED') events.push({ type: 'VERIFICATION_RESOLVED' });
+    events.push({ type: 'VERIFICATION_RESOLVED' });
   } else if (i.verificationStatus === 'NEEDS_MANUAL_INVESTIGATION') {
     verificationStatus = 'NEEDS_MANUAL_INVESTIGATION';
   } else {
