@@ -59,6 +59,19 @@ describe('PSP webhooks (Cashfree, against a fake API)', () => {
     return { payment, txnRef: t!.txnRef!, pspId: t!.pspId! };
   };
 
+  it('POST /v1/payments requires the customer phone Cashfree needs, and passes it through', async () => {
+    const m = await app.inject({ method: 'POST', url: '/v1/merchants', headers: { authorization: `Bearer ${'x'.repeat(20)}` }, payload: { name: 'Shop' } });
+    const auth = { authorization: `Bearer ${m.json().apiKey}` };
+    const missing = await app.inject({ method: 'POST', url: '/v1/payments', headers: auth, payload: { amountPaise: rs(100), payerVpa: 'asha@okhdfc', idempotencyKey: 'o1' } });
+    expect(missing.statusCode).toBe(400);
+    expect(missing.json().error.message).toMatch(/customerPhone is required by the payment provider \(cashfree\)/);
+    const bad = await app.inject({ method: 'POST', url: '/v1/payments', headers: auth, payload: { amountPaise: rs(100), payerVpa: 'asha@okhdfc', idempotencyKey: 'o2', customerPhone: '123' } });
+    expect(bad.statusCode).toBe(400);
+    const ok = await app.inject({ method: 'POST', url: '/v1/payments', headers: auth, payload: { amountPaise: rs(100), payerVpa: 'asha@okhdfc', idempotencyKey: 'o3', customerPhone: '9876543210' } });
+    expect(ok.statusCode).toBe(201);
+    expect(ok.json()).toMatchObject({ state: 'PENDING', merchantStatus: 'PROCESSING' });
+  });
+
   it('a Cashfree collect starts pending while the customer approves', async () => {
     const { payment, pspId } = await collect();
     expect(payment.state).toBe('PENDING');

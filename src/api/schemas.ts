@@ -70,6 +70,8 @@ export const createPayment = z.object({
   idempotencyKey,
   orderId: orderId.optional(),
   quoteId: z.string().optional(),
+  /** Required when a configured PSP needs it (e.g. Cashfree): 10 digits, or + and country code. */
+  customerPhone: z.string().regex(/^(\d{10}|\+\d{8,15})$/, 'expected 10 digits or +<country code><number>').optional(),
 });
 
 export const savingsQuery = z.object({ from: z.iso.datetime({ offset: true }).optional(), to: z.iso.datetime({ offset: true }).optional() });

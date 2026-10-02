@@ -12,8 +12,15 @@ const schema = z.object({
   /** Signs payment-scoped customer status tokens. Required in production. */
   CUSTOMER_TOKEN_SECRET: z.string().min(32).optional(),
   WORKER_POLL_MS: z.coerce.number().int().min(100).default(1000),
-  /** Comma-separated mock PSP ids. Replace with real adapters when integrating gateways. */
+  /** Comma-separated mock PSP ids (may be empty). Mocks never reach a real PSP. */
   MOCK_PSPS: z.string().default('pspA,pspB'),
+  /** Mock PSPs are refused in production unless this is explicitly 'true'. */
+  ALLOW_MOCK_PSPS: z.enum(['true', 'false']).default('false'),
+  /** Cashfree Payments (real PSP). Set both id and secret to enable. */
+  CASHFREE_CLIENT_ID: z.string().min(1).optional(),
+  CASHFREE_CLIENT_SECRET: z.string().min(1).optional(),
+  CASHFREE_ENV: z.enum(['sandbox', 'production']).default('sandbox'),
+  CASHFREE_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60_000).default(10_000),
   /** Optional JSON map of pspId -> MockRates, e.g. {"pspA":{"bankUnavailable":0.3}} */
   MOCK_PSP_RATES: z.string().optional(),
 });

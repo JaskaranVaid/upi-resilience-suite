@@ -46,6 +46,11 @@ export class PaymentService {
     const existing = await this.findByKey(merchantId, input.idempotencyKey);
     if (existing) return this.replay(existing, input);
 
+    const needsPhone = pspIds.filter((id) => router.adapter(id).capabilities.collectRequires.includes('customerPhone'));
+    if (needsPhone.length > 0 && !input.customerPhone) {
+      throw new AppError('VALIDATION', `customerPhone is required by the payment provider (${needsPhone.join(', ')})`);
+    }
+
     const now = clock.now();
     const id = newId('pay');
     try {
