@@ -14,7 +14,7 @@ async function main() {
     .filter(Boolean)
     .map((id, i) => new MockPsp(id, { rates: rates[id] ?? {}, seed: i + 1, latencyMs: 50 }));
 
-  const ctx = buildContext({ db, adapters, adminToken: env.ADMIN_TOKEN, secureCookies: env.NODE_ENV === 'production' });
+  const ctx = buildContext({ db, adapters, adminToken: env.ADMIN_TOKEN, secureCookies: env.NODE_ENV === 'production', customerTokenSecret: env.CUSTOMER_TOKEN_SECRET });
   const mock = adapters.filter((a) => a.mode === 'MOCK').map((a) => a.id);
   if (env.NODE_ENV === 'production' && mock.length > 0) {
     console.warn(`WARNING: running in production with MOCK PSP adapters (${mock.join(', ')}). No real PSP or NPCI calls are made.`);

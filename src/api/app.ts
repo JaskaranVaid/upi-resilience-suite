@@ -12,6 +12,7 @@ import { mandateRoutes } from './routes/mandates.js';
 import { merchantRoutes } from './routes/merchants.js';
 import { opsRoutes } from './routes/ops.js';
 import { paymentRoutes } from './routes/payments.js';
+import { publicRoutes } from './routes/public.js';
 
 export type Merchant = typeof merchants.$inferSelect;
 
@@ -82,5 +83,6 @@ export function buildApp(ctx: AppContext, opts: { logger?: boolean } = {}): Fast
   app.register(mandateRoutes(ctx));
   app.register(checkoutRoutes(ctx));
   app.register(paymentRoutes(ctx));
+  app.register(publicRoutes(ctx));
   return app;
 }

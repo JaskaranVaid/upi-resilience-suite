@@ -38,6 +38,8 @@ export interface AppContext {
   queries: PaymentQueryService;
   /** Set the Secure flag on session cookies (true in production / behind HTTPS). */
   secureCookies: boolean;
+  /** HMAC key for payment-scoped customer status tokens. */
+  customerTokenSecret: string;
 }
 
 export function buildContext(args: {
@@ -54,6 +56,7 @@ export function buildContext(args: {
   polling?: Partial<PollingConfig>;
   auth?: Partial<AuthConfig>;
   secureCookies?: boolean;
+  customerTokenSecret?: string;
 }): AppContext {
   const clock = args.clock ?? systemClock;
   const sleep = args.sleep ?? realSleep;
@@ -84,5 +87,6 @@ export function buildContext(args: {
     sessions: new SessionService({ db: args.db, clock, ...(args.auth ? { cfg: args.auth } : {}) }),
     queries: new PaymentQueryService({ db: args.db, clock, cfg: polling, psps }),
     secureCookies: args.secureCookies ?? false,
+    customerTokenSecret: args.customerTokenSecret ?? 'dev-customer-token-secret-not-for-production',
   };
 }
