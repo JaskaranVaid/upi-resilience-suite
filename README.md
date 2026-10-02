@@ -10,6 +10,7 @@ October 2026 UPI changes from a cost into a managed problem:
 | **Smart Router (Phase 2)** | Bank/PSP technical declines | Health-scored PSP selection with circuit breakers, failover, and timeout handling that checks status before any retry |
 | **Savings ledger** | Proving ROI | Every rescued payment and saved fee is recorded once, exposed at `/v1/savings` |
 | **Status poller (Phase 3)** | Payments stuck "pending", or failed after the customer was debited | Backend poller checks unresolved payments on a configurable schedule (5s/15s/30s/45s → every minute to 15 min → every 15 min to 48h), tracks debit / capture / bank auto-reversal, then hands over to manual investigation |
+| **Value analytics (Phase 4)** | Proving ROI every billing cycle | Value delivered per source (each with a method note), success uplift vs a no-recovery baseline, PSP performance, payment-issue outcomes, monthly statement (printable + CSV line items) |
 | **Payment Resolution Console (Phase 3)** | "I was charged but my order failed" | Merchant dashboard at `/dashboard`: search by 12-digit UPI reference, see what happened to the customer's money, Dispute Desk queues, recheck, notes, raise UDIR complaints, audit timeline |
 
 Source brief: *UPI Taxation Business Gap Analysis* (Section 5, Phases 1–3).
@@ -42,7 +43,7 @@ effective date. **Verify them against the current NPCI/RBI circulars before go-l
 
 ```bash
 npm install
-npm test                 # 249 tests, in-process PGlite Postgres — no Docker needed
+npm test                 # 291 tests, in-process PGlite Postgres — no Docker needed
 npm run demo             # Phase 1–2 time-compressed simulation with mock PSPs
 npm run demo:dashboard   # Phase 3: seeds investigation scenarios, serves http://localhost:3100/dashboard/
 npm run dev              # API + worker + poller on :3000, data in .data/pg
@@ -165,6 +166,31 @@ that payment's customer-safe status and never touches a PSP.
 **Audit.** Every state change, status check, UDIR action, note, view and login is appended to
 `payment_events`, which feeds the timelines and, later, Phase 4 analytics.
 
+## Phase 4 — value & revenue-recovery analytics
+
+The **Value** section of the console (all roles, read-only) answers "what did the suite deliver
+this billing month?" using only the merchant's own data. Billing month = calendar month in IST;
+custom ranges up to 366 days are also supported.
+
+| Line | Counted from | Notes |
+|---|---|---|
+| **Recovered by smart routing & safe retries** (headline) | `TD_RECOVERED` | First attempt failed technically, payment later captured via failover / safe retry / status verification |
+| Protected from the peak-hour AutoPay embargo | `PEAK_DEFERRAL_RESCUED` | Counted at full amount, assuming a peak-window attempt would have been declined — stated on screen |
+| MDR saved through payment-method steering | `MDR_STEERING_ACCEPTED` | Net of the customer discount |
+| Further MDR savings offered but not taken | offered − accepted | Context only, not in totals |
+
+- **Success uplift**: actual success rate vs "without recovery" (payments that succeeded and whose
+  first attempt didn't fail technically) on the same traffic.
+- **PSP performance**: technical success (customer declines and pending approvals don't count
+  against a provider), failure categories, p50/p95 response times, daily trend, live routing state.
+- **Payment issues**: opened/resolved, median time to resolve, bank auto-reversals completed,
+  UDIR complaints (simulated ones counted separately).
+- **Monthly statement**: printable page, `statement.csv` (summary with method notes) and
+  `value-events.csv` (every payment behind each rupee). CSV cells are formula-injection safe.
+
+API: `GET /dashboard/api/analytics/{value,psps,issues}?month=YYYY-MM | from&to`,
+`GET /dashboard/api/analytics/{statement,value-events}.csv?month=YYYY-MM`.
+
 ## What is mocked / not yet built
 
 - **PSPs are mocks.** Integrating a real gateway = implementing `PspAdapter` and normalising its
@@ -177,5 +203,4 @@ that payment's customer-safe status and never touches a PSP.
 - **Savings attribution** for peak rescues assumes the debit would otherwise have fired in the
   embargo window (it was *requested* during one). That's the brief's model; confirm it matches
   how you'll bill customers.
-- **Phase 4** (analytics) is not built; `payment_events`, `payment_tracking` and `savings_events`
-  are its data sources.
+- **Invoicing / pricing** from the value delivered is not built (Phase 4 reports value only).

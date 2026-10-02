@@ -46,7 +46,7 @@ export const VALUE_LINES: Record<ValueKey, { type: SavingsType; label: string; m
 };
 
 const UPLIFT_NOTE =
-  'Without recovery = payments that succeeded and whose first attempt had no technical failure: what a single-PSP integration without retries or status checks would have achieved on the same traffic. Peak-hour protection is reported separately.';
+  'Without recovery = payments that succeeded and whose first attempt had no technical failure: what a single-PSP integration without retries or status checks would have achieved on the same traffic. Payments are dated by their first attempt, and "recovered" includes AutoPay debits whose value is attributed to peak-hour protection above (value is counted once, under one source).';
 
 type Rows<T> = { rows: T[] };
 const n = (v: unknown) => Number(v ?? 0);

@@ -103,3 +103,22 @@ value lines from seeded savings events (no double count, headline = routing), po
 collect now credited (gap 1), success uplift maths, PSP percentiles/categories/rates, issue summary,
 CSV columns/quoting/injection escaping/headers, merchant isolation, viewer access, invalid periods.
 Static: new modules parse, no inline styles. Manual: browser walkthrough of all tabs + print preview.
+
+---
+
+## 9. Implementation notes
+
+1. **Success uplift** compares against "first attempt did not fail technically" rather than "first
+   attempt returned SUCCESS" (see §4.2) — collects normally return PENDING first.
+2. **PSP technical success** = (attempts − technical declines) / attempts (see §4.3).
+3. **Uplift "recovered" vs the routing value line can differ**: value is attributed once per payment
+   (an AutoPay debit requested at peak and rescued by failover counts under peak protection), while
+   uplift counts every payment recovered after a technical failure and dates it by its first attempt.
+   The UI method note says so.
+4. **Charts**: categorical slots 1–3 validated all-pairs with the dataviz validator against the
+   dashboard surfaces (light `#ffffff`, dark `#171b21`); aqua is < 3:1 on light, relieved by legend,
+   direct end labels and the table view. Revenue and MDR fees are never on one axis.
+5. **Follow-up found (not changed — Phase 2 behaviour)**: the router's health score has no time
+   decay and no periodic probing. In the seeded demo PSP A received 9 of 254 attempts after a few
+   early failures: once a PSP's score drops it can be starved of the traffic it needs to recover.
+   Recommend time-decayed scores or a small probe share before production.

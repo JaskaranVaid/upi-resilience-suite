@@ -63,8 +63,10 @@ async function main() {
   const HISTORY_DAYS = 30;
   // History (30 days) + settling (3 days) + scenarios (~4.5 days, two 48h budgets) must end before now.
   const clock = new DemoClock(new Date(realNow.getTime() - (HISTORY_DAYS + 10) * 24 * 3600_000));
-  const pspA = new MockPsp('pspA', { seed: 3 });
-  const pspB = new MockPsp('pspB', { seed: 5, complaintScript: ['IN_PROGRESS', 'IN_PROGRESS', 'RESOLVED_REVERSED'] });
+  const COMPLAINT_SCRIPT = ['IN_PROGRESS', 'IN_PROGRESS', 'RESOLVED_REVERSED'] as const;
+  // Constant simulated latencies (on the demo clock) so PSP performance shows realistic numbers.
+  const pspA = new MockPsp('pspA', { seed: 3, latencyMs: 180, sleep: (ms) => clock.sleep(ms), complaintScript: [...COMPLAINT_SCRIPT] });
+  const pspB = new MockPsp('pspB', { seed: 5, latencyMs: 120, sleep: (ms) => clock.sleep(ms), complaintScript: [...COMPLAINT_SCRIPT] });
   const ctx = buildContext({ db, adapters: [pspA, pspB], adminToken: 'demo-admin-token-0000', clock, sleep: clock.sleep });
   const app = buildApp(ctx);
 
@@ -141,40 +143,52 @@ async function main() {
   pspB.setRates({});
 
   console.log('Seeding scenarios…');
+  // Scenarios must not depend on which PSP the router tries first (that depends on health,
+  // which the history above has shaped). So: queue single-shot responses on the PSP the
+  // router will try first, and script inquiries on the PSP + txnRef a payment actually ended on.
+  const pspById = (id: string | null) => (id === 'pspB' ? pspB : pspA);
+  const firstPsp = () => pspById(ctx.health.rank(['pspA', 'pspB'])[0] ?? 'pspA');
+  const scriptFor = async (paymentId: string, steps: TransactionInquiry[]) => {
+    const t = await trackingOf(paymentId);
+    pspById(t.pspId).scriptInquiry(t.txnRef!, steps);
+  };
+  /** A collect that fails on infrastructure at every PSP, then reports the given facts. */
+  const failedThen = async (amountPaise: number, steps: TransactionInquiry[], order?: string) => {
+    failBoth();
+    const p = await collect(amountPaise, order);
+    await scriptFor(p.id, steps);
+    return p;
+  };
+
   // Ordinary traffic.
   for (let i = 0; i < 18; i++) {
     await collect([49900, 129900, 250000, 79900, 499900][i % 5]!);
     clock.advance(37 * 60_000);
   }
-  pspA.enqueue({ kind: 'BUSINESS_DECLINE', code: 'INSUFFICIENT_FUNDS' });
+  firstPsp().enqueue({ kind: 'BUSINESS_DECLINE', code: 'INSUFFICIENT_FUNDS' });
   await collect(320000);
 
   // Pending at the PSP, confirmed a few checks later.
-  pspA.enqueue(PENDING_TIMEOUT);
-  pspA.scriptNextInquiry([
+  firstPsp().enqueue(PENDING_TIMEOUT);
+  const pending = await collect(189900);
+  await scriptFor(pending.id, [
     { found: true, outcome: 'PENDING', customerDebit: 'UNKNOWN', capture: 'UNKNOWN', reversal: { status: 'NONE' } },
     { found: true, outcome: 'SUCCESS', customerDebit: 'DEBITED', capture: 'CAPTURED', reversal: { status: 'NONE' } },
   ]);
-  await poll((await collect(189900)).id);
+  await poll(pending.id);
 
   // Debited, not captured → bank auto-reversal completed.
-  failBoth();
-  pspB.scriptNextInquiry([debited(), debited({ status: 'INITIATED' }), debited({ status: 'COMPLETED' })]);
-  await poll((await collect(275000)).id);
+  await poll((await failedThen(275000, [debited(), debited({ status: 'INITIATED' }), debited({ status: 'COMPLETED' })])).id);
 
   // Debited, no reversal ever observed → verification budget exhausted → needs action.
-  failBoth();
-  pspB.scriptNextInquiry([debited()]);
-  await poll((await collect(899900)).id);
+  await poll((await failedThen(899900, [debited()])).id);
 
   // Never resolved at the PSP → needs manual investigation.
-  pspA.enqueue(PENDING_TIMEOUT);
+  firstPsp().enqueue(PENDING_TIMEOUT);
   await poll((await collect(59900)).id);
 
   // PSP captured after we reported failure → status mismatch.
-  failBoth();
-  pspB.scriptNextInquiry([{ found: true, outcome: 'SUCCESS', customerDebit: 'DEBITED', capture: 'CAPTURED', reversal: { status: 'NONE' } }]);
-  await poll((await collect(1249900)).id);
+  await poll((await failedThen(1249900, [{ found: true, outcome: 'SUCCESS', customerDebit: 'DEBITED', capture: 'CAPTURED', reversal: { status: 'NONE' } }])).id);
 
   // AutoPay: one executed, one scheduled for the future.
   const mandate = await app.inject({ method: 'POST', url: '/v1/mandates', headers: { authorization: `Bearer ${apiKey}` }, payload: { mandateRef: 'UMN-DEMO-1', customerVpa: 'subscriber@okaxis', maxAmountPaise: 100000 } });
@@ -188,13 +202,9 @@ async function main() {
   if (clock.now() > realNow) console.warn('Warning: simulated seeding ran past real time; some records are future-dated.');
   clock.goLive();
   await ctx.scheduler.createDebit(merchantId, md, { amountPaise: 49900, idempotencyKey: 'INV-2026-10', orderId: 'INV-2026-10' });
-  failBoth();
-  pspB.scriptNextInquiry([debited()]);
-  const live = await collect(349900, 'ORD-LIVE-1');
+  const live = await failedThen(349900, [debited()], 'ORD-LIVE-1');
   // Debited, not captured → the bank starts the auto-reversal on the first live check.
-  failBoth();
-  pspB.scriptNextInquiry([debited({ status: 'INITIATED' })]);
-  await collect(149900, 'ORD-LIVE-2');
+  await failedThen(149900, [debited({ status: 'INITIATED' })], 'ORD-LIVE-2');
 
   const [merchant] = await db.select({ name: merchants.name }).from(merchants).where(eq(merchants.id, merchantId));
   await app.listen({ port: PORT, host: '127.0.0.1' });

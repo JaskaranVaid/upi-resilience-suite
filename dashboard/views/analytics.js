@@ -14,7 +14,7 @@ const TABS = [
 const compactInr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', notation: 'compact', maximumFractionDigits: 1 });
 const pct = (r, digits = 1) => (r === null || r === undefined ? '—' : `${(r * 100).toFixed(digits)}%`);
 const ms = (v) => (v === null || v === undefined ? '—' : v < 1000 ? `${Math.round(v)} ms` : `${(v / 1000).toFixed(1)} s`);
-const duration = (v) => (v === null || v === undefined ? '—' : v < 3600_000 ? `${Math.round(v / 60_000)} min` : v < 172_800_000 ? `${(v / 3600_000).toFixed(1)} h` : `${(v / 86_400_000).toFixed(1)} days`);
+const duration = (v) => (v === null || v === undefined ? '—' : v < 60_000 ? '< 1 min' : v < 3600_000 ? `${Math.round(v / 60_000)} min` : v < 172_800_000 ? `${(v / 3600_000).toFixed(1)} h` : `${(v / 86_400_000).toFixed(1)} days`);
 const plural = (n, one, many) => `${n.toLocaleString('en-IN')} ${n === 1 ? one : many}`;
 
 /** Current IST month and the 11 before it, for the billing-cycle picker. */
@@ -122,7 +122,7 @@ async function valueTab(el, params) {
         <div class="grid grid-3">
           <div class="stat"><div class="label">Actual success rate</div><div class="value">${pct(u.actualSuccessRate)}</div><div class="sub">${plural(u.submitted, 'payment', 'payments')} sent to a provider</div></div>
           <div class="stat"><div class="label">Without recovery</div><div class="value">${pct(u.withoutRecoverySuccessRate)}</div><div class="sub">Same traffic, single PSP, no retries</div></div>
-          <div class="stat"><div class="label">Uplift</div><div class="value">${u.upliftPp === null ? '—' : `+${u.upliftPp.toFixed(1)} pts`}</div><div class="sub">${plural(u.recovered, 'payment', 'payments')} recovered</div></div>
+          <div class="stat"><div class="label">Uplift</div><div class="value">${u.upliftPp === null ? '—' : `+${u.upliftPp.toFixed(1)} pts`}</div><div class="sub">${plural(u.recovered, 'payment', 'payments')} recovered after a technical failure</div></div>
         </div>
         <p class="method">${u.methodNote}</p>
       </section>
