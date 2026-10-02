@@ -61,7 +61,9 @@ Over payments (collects + AutoPay debits) whose **first PSP attempt** falls in t
 Per PSP over `execute`/`collect` attempts in period: `attempts`, `succeeded`, `technicalDeclines`
 (by category: Timeouts, Bank unavailable, Network switch errors, Provider errors — our normalized
 categories, never raw PSP codes), `customerDeclines`, `technicalSuccessRate` = succeeded /
-(attempts − customerDeclines), `latencyP50Ms`, `latencyP95Ms` (`percentile_cont`), daily
+(attempts − customerDeclines) — *revised during implementation to* (attempts − technicalDeclines) / attempts,
+since collects legitimately return PENDING while the customer approves and that is not the provider's
+fault — `latencyP50Ms`, `latencyP95Ms` (`percentile_cont`), daily
 `technicalSuccessRate` series, and current routing state from the health tracker (`CLOSED`/`OPEN`/
 `HALF_OPEN`, labelled "Healthy / Temporarily avoided / Being re-tested").
 
