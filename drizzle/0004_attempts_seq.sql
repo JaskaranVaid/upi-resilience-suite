@@ -1,0 +1,1 @@
+ALTER TABLE "payment_attempts" ADD COLUMN "seq" integer DEFAULT 0 NOT NULL;

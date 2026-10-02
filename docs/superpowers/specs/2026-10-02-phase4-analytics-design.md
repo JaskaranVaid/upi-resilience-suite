@@ -44,10 +44,18 @@ Response: `{ period, headline: line, lines: Line[], grossTotalPaise (routing + p
 
 ### 4.2 Success uplift (`ValueService.successUplift`)
 Over payments (collects + AutoPay debits) whose **first PSP attempt** falls in the period:
-- `submitted` = count; `firstAttemptSuccessRate` = first attempt outcome `SUCCESS` / submitted;
-  `finalSuccessRate` = subject finally `SUCCEEDED` / submitted; `upliftPp` = difference in percentage points.
-- Method note: "First-attempt rate is what a single-PSP, no-retry integration would have achieved on
-  the same traffic; final rate is what you got."
+- `submitted` = count; `actualSuccessRate` = finally `SUCCEEDED` / submitted;
+  `recovered` = succeeded **and** first attempt was a `TECHNICAL_DECLINE`;
+  `withoutRecoverySuccessRate` = (succeeded − recovered) / submitted; `upliftPp` = difference in points.
+- *Revised during implementation:* the draft compared against "first attempt returned SUCCESS", but
+  a real UPI collect's first response is normally `PENDING` (customer approves in their app), which
+  would make the baseline near zero and overstate uplift. The counterfactual is "the first attempt
+  did not fail technically", which also reconciles with the `TD_RECOVERED` value line.
+- "First attempt" is ordered by `created_at` then `payment_attempts.seq` (new column; attempts from
+  one routing call share a timestamp).
+- Method note: "Without recovery = payments that succeeded and whose first attempt had no technical
+  failure: what a single-PSP integration without retries or status checks would have achieved on
+  the same traffic. Peak-hour protection is reported separately."
 
 ### 4.3 PSP performance (`PspAnalytics.summary`)
 Per PSP over `execute`/`collect` attempts in period: `attempts`, `succeeded`, `technicalDeclines`

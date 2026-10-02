@@ -122,7 +122,7 @@ export class PaymentService {
   private async recordAttempts(merchantId: string, paymentId: string, records: AttemptRecord[]) {
     if (records.length === 0) return;
     await this.deps.db.insert(paymentAttempts).values(
-      records.map((a) => ({
+      records.map((a, seq) => ({
         id: newId('att'),
         merchantId,
         paymentId,
@@ -132,6 +132,7 @@ export class PaymentService {
         outcome: a.result.kind,
         code: 'code' in a.result ? a.result.code : null,
         latencyMs: a.latencyMs,
+        seq,
         createdAt: this.deps.clock.now(),
       })),
     );

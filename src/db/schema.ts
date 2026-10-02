@@ -128,6 +128,8 @@ export const paymentAttempts = pgTable(
     outcome: text('outcome').notNull(),
     code: text('code'),
     latencyMs: integer('latency_ms').notNull(),
+    /** Order within one routing call (attempts from a single call share created_at). */
+    seq: integer('seq').notNull().default(0),
     createdAt: createdAt(),
   },
   (t) => [

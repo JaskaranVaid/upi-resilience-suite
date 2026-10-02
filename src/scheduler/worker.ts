@@ -305,7 +305,7 @@ export class DebitWorker {
   private async recordAttempts(d: Debit, records: AttemptRecord[]): Promise<void> {
     if (records.length === 0) return;
     await this.db.insert(paymentAttempts).values(
-      records.map((a) => ({
+      records.map((a, seq) => ({
         id: newId('att'),
         merchantId: d.merchantId,
         debitId: d.id,
@@ -315,6 +315,7 @@ export class DebitWorker {
         outcome: a.result.kind,
         code: 'code' in a.result ? a.result.code : null,
         latencyMs: a.latencyMs,
+        seq,
         createdAt: this.clock.now(),
       })),
     );
