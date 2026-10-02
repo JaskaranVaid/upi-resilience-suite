@@ -78,7 +78,15 @@ describe('DisputeService', () => {
       await tick();
       const detail = await ctx.disputes.getCase(merchantId, c.id);
       expect(detail.complaints[0]!.status).toBe('RESOLVED_REVERSED');
-      expect(detail.case).toMatchObject({ status: 'RESOLVED', resolution: 'COMPLAINT_RESOLVED' });
+      // A complaint resolved as "reversed" is an observed reversal: money facts agree with it.
+      expect(detail.case).toMatchObject({ status: 'RESOLVED', resolution: 'REVERSED_TO_CUSTOMER' });
+      const [t] = await ctx.db.select().from(paymentTracking).where(eq(paymentTracking.subjectId, p.id));
+      expect(t).toMatchObject({ reversalStatus: 'COMPLETED', verificationStatus: 'RESOLVED' });
+      expect(t!.reversalCompletedAt).not.toBeNull();
+      await expect(ctx.disputes.raiseComplaint(merchantId, ref(p.id), user, 'DEBITED_NOT_CREDITED')).rejects.toMatchObject({
+        code: 'COMPLAINT_NOT_ALLOWED',
+        message: expect.stringMatching(/already been reversed/),
+      });
     });
 
     it('refuses when the customer was not debited', async () => {

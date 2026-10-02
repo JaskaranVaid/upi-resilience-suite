@@ -10,10 +10,12 @@ export function complaintEligibility(i: {
   customerDebit: CustomerDebit | null;
   submittedToPsp: boolean;
   activeComplaint: boolean;
+  reversalCompleted: boolean;
 }): { ok: true } | { ok: false; reason: string } {
   if (!i.submittedToPsp) return { ok: false, reason: 'This payment never reached a payment provider' };
   if (i.domainState === 'SUCCEEDED') return { ok: false, reason: 'This payment was captured successfully' };
   if (i.customerDebit === 'NOT_DEBITED') return { ok: false, reason: 'The customer was not debited for this payment' };
   if (i.activeComplaint) return { ok: false, reason: 'A UDIR complaint is already open for this payment' };
+  if (i.reversalCompleted) return { ok: false, reason: 'The amount has already been reversed to the customer' };
   return { ok: true };
 }

@@ -2,6 +2,7 @@ import { api } from '../api/client.js';
 import { caseBadge, mockBadge, statusBadge } from '../components/badges.js';
 import { errorBox, loading, moneyPanel, timeline } from '../components/panels.js';
 import { busy, confirmDialog, toast } from '../components/ui.js';
+import { watchForUpdates } from '../components/watch.js';
 import { dash, money, typeLabel, when } from '../lib/format.js';
 import { html, mount } from '../lib/html.js';
 
@@ -100,6 +101,13 @@ export async function renderPaymentDetail(el, { params, navigate }) {
   );
 
   const rerender = () => renderPaymentDetail(el, { params, navigate });
+  watchForUpdates(el, {
+    load: () => api.timeline(type, id),
+    // Routine status checks aren't news; only meaningful events trigger the prompt.
+    signature: (t) => JSON.stringify(t.events.filter((e) => e.type !== 'STATUS_CHECKED').map((e) => e.type)),
+    settled: () => d.resolution.verification.code !== 'IN_PROGRESS' && !d.resolution.openCase,
+    onRefresh: rerender,
+  });
   el.querySelector('#recheck')?.addEventListener('click', async (e) => {
     const res = await busy(e.currentTarget, () => api.recheckPayment(type, id));
     if (res) {

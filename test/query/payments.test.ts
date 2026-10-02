@@ -89,3 +89,12 @@ describe('merchantStatusSql ≡ merchantStatus()', () => {
     expect(r.data.every((p) => p.merchantStatus === 'DEBITED_NOT_CAPTURED')).toBe(true);
   });
 });
+
+describe('nextStep', () => {
+  it('reflects an open UDIR complaint instead of suggesting raising one', async () => {
+    const { nextStep } = await import('../../src/query/payments.js');
+    expect(nextStep('DEBITED_NOT_CAPTURED', 'INVESTIGATING')).toMatch(/complaint is open/);
+    expect(nextStep('DEBITED_NOT_CAPTURED', 'REVERSAL_PENDING')).toMatch(/raise a UDIR complaint/);
+    expect(nextStep('REVERSED', null)).toMatch(/No action needed/);
+  });
+});

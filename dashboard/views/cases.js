@@ -2,6 +2,7 @@ import { api } from '../api/client.js';
 import { caseBadge, mockBadge } from '../components/badges.js';
 import { errorBox, loading, moneyPanel, timeline } from '../components/panels.js';
 import { busy, confirmDialog, toast } from '../components/ui.js';
+import { watchForUpdates } from '../components/watch.js';
 import { dash, money, typeLabel, when } from '../lib/format.js';
 import { html, mount } from '../lib/html.js';
 import { raiseComplaintFlow } from './payment-detail.js';
@@ -143,6 +144,13 @@ export async function renderCaseDetail(el, { params }) {
           </section>
         </div>`,
     );
+
+    watchForUpdates(el, {
+      load: () => api.case(c.id),
+      signature: (x) => JSON.stringify([x.status, x.timeline.filter((e) => e.type !== 'STATUS_CHECKED').length, x.complaints.map((k) => k.status), x.notes.length]),
+      settled: (x) => x.status === 'RESOLVED',
+      onRefresh: async () => draw(await api.case(c.id)),
+    });
 
     el.querySelector('#recheck')?.addEventListener('click', async (e) => {
       const fresh = await busy(e.currentTarget, () => api.recheckCase(c.id));

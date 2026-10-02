@@ -202,6 +202,13 @@ export class TrackingService {
     // A resolved complaint ends the watch even if the PSP enquiry is still inconclusive.
     const complaintDone = complaintStatus !== null && RESOLVED_COMPLAINT.has(complaintStatus) && complaintStatus !== 'REJECTED';
     const verificationStatus = complaintDone && out.verificationStatus === 'IN_PROGRESS' ? 'RESOLVED' : out.verificationStatus;
+    // The PSP resolving a UDIR complaint as "reversed" is an observed reversal: record it, so
+    // the money panel, merchant status and customer status all agree with the complaint.
+    if (complaintStatus === 'RESOLVED_REVERSED' && out.facts.reversalStatus !== 'COMPLETED') {
+      if (out.facts.reversalStatus !== 'INITIATED') out.events.push({ type: 'REVERSAL_INITIATED' });
+      out.events.push({ type: 'REVERSAL_COMPLETED', data: { via: 'UDIR_COMPLAINT' } });
+      out.facts = { ...out.facts, reversalStatus: 'COMPLETED', reversalInitiatedAt: out.facts.reversalInitiatedAt ?? now, reversalCompletedAt: now };
+    }
 
     return db.transaction(async (tx) => {
       const [updated] = await tx

@@ -165,7 +165,13 @@ export class PaymentQueryService {
       ? (await db.select().from(udirComplaints).where(eq(udirComplaints.caseId, openCase.id)).orderBy(desc(udirComplaints.raisedAt)).limit(1))[0]
       : undefined;
     const activeComplaint = complaint?.status === 'SUBMITTED' || complaint?.status === 'IN_PROGRESS';
-    const eligibility = complaintEligibility({ domainState: row.domainState, customerDebit: row.customerDebit, submittedToPsp: Boolean(row.pspId), activeComplaint });
+    const eligibility = complaintEligibility({
+      domainState: row.domainState,
+      customerDebit: row.customerDebit,
+      submittedToPsp: Boolean(row.pspId),
+      activeComplaint,
+      reversalCompleted: row.reversalStatus === 'COMPLETED',
+    });
     const actions: string[] = [];
     // An AutoPay debit still waiting for its slot hasn't been sent anywhere yet, so there's nothing to check.
     if (viewer.canOperate && !row.awaitingExecution) actions.push('RECHECK');
@@ -287,6 +293,7 @@ export class PaymentQueryService {
 /** Plain-language "what happens next" for the payment detail view. */
 export function nextStep(status: MerchantStatus, caseStatus: string | null): string {
   if (caseStatus === 'NEEDS_ACTION') return 'Action needed: review this issue on the Dispute Desk.';
+  if (caseStatus === 'INVESTIGATING') return 'A UDIR complaint is open with the payment provider. We are tracking it automatically.';
   switch (status) {
     case 'SCHEDULED':
       return 'Will be collected at the scheduled time. No action needed.';

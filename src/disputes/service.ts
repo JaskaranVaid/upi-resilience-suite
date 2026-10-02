@@ -56,6 +56,7 @@ export class DisputeService {
       customerDebit: t.customerDebit,
       submittedToPsp: Boolean(t.pspId && t.txnRef),
       activeComplaint: false,
+      reversalCompleted: t.reversalStatus === 'COMPLETED',
     });
     if (!eligible.ok) throw new AppError('COMPLAINT_NOT_ALLOWED', eligible.reason);
 

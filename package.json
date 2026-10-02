@@ -14,7 +14,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
-    "demo": "tsx scripts/demo.ts"
+    "demo": "tsx scripts/demo.ts",
+    "demo:dashboard": "tsx scripts/demo-dashboard.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",
