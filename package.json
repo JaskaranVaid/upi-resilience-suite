@@ -15,7 +15,8 @@
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "demo": "tsx scripts/demo.ts",
-    "demo:dashboard": "tsx scripts/demo-dashboard.ts"
+    "demo:dashboard": "tsx scripts/demo-dashboard.ts",
+    "smoke:cashfree": "tsx scripts/cashfree-sandbox-smoke.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",

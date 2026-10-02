@@ -28,6 +28,8 @@ export interface WorkerOptions extends PlanningOptions {
   /** Give up on a PENDING debit after this long and hand it to ops. */
   maxPendingMs: number;
   noticeRetryMs: number;
+  /** Stop retrying a refused pre-debit notice this long after the due date (or request). */
+  noticeRetryWindowMs: number;
 }
 
 export const DEFAULT_WORKER: WorkerOptions = {
@@ -38,6 +40,7 @@ export const DEFAULT_WORKER: WorkerOptions = {
   pendingRecheckMs: 5 * 60_000,
   maxPendingMs: 48 * 3600_000,
   noticeRetryMs: 15 * 60_000,
+  noticeRetryWindowMs: 48 * 3600_000,
 };
 
 /**
@@ -233,6 +236,10 @@ export class DebitWorker {
         noticeSentAt = now;
       } catch (e) {
         if (!(e instanceof AppError)) throw e;
+        // A provider that keeps refusing the notice (limits, cancelled mandate) must not be
+        // hammered forever: give up once the retry window past the due date has elapsed.
+        const since = d.dueDate ? istMidnight(d.dueDate).getTime() : d.requestedAt.getTime();
+        if (now.getTime() - since >= this.opts.noticeRetryWindowMs) return this.fail(d, 'NOTICE_FAILED', { kind: 'NOT_SUBMITTED' }, null, null);
         await this.db
           .update(debits)
           .set({ state: 'SCHEDULED', scheduledAt: new Date(now.getTime() + this.opts.noticeRetryMs), lastErrorCode: 'NOTICE_FAILED', updatedAt: now })

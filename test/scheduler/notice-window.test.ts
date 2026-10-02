@@ -98,6 +98,24 @@ describe('Scheduler honours the provider notice window', () => {
     expect((await mandate()).json().eligiblePsps).toEqual(['loose']); // default excludes non-portable
   });
 
+  it('stops retrying a notice the provider keeps refusing, and fails the debit after the retry window', async () => {
+    const d = await create('strict', { dueDate: '2026-11-04' }); // deferred notice
+    (strict as unknown as { opts: { failNotices: boolean } }).opts.failNotices = true;
+    let row = await load(d.id);
+    let tries = 0;
+    while (row.state === 'SCHEDULED' && tries < 1000) {
+      clock.set(row.scheduledAt);
+      await ctx.worker.runOnce();
+      row = await load(d.id);
+      tries++;
+    }
+    expect(row).toMatchObject({ state: 'FAILED', lastErrorCode: 'NOTICE_FAILED', attempts: 0 });
+    expect(strict.calls.filter((c) => c.op === 'execute')).toHaveLength(0);
+    // Retried every 15 minutes until 48 h after the due date — bounded, not forever.
+    expect(clock.now().getTime() - ist('2026-11-04T00:00:00').getTime()).toBeGreaterThanOrEqual(48 * H);
+    expect(clock.now().getTime() - ist('2026-11-04T00:00:00').getTime()).toBeLessThan(49 * H);
+  });
+
   it('shows a pending notice in the debit view', async () => {
     const { debitView } = await import('../../src/scheduler/service.js');
     const d = await create('strict', { dueDate: '2026-11-04' });

@@ -10,6 +10,7 @@ October 2026 UPI changes from a cost into a managed problem:
 | **Smart Router (Phase 2)** | Bank/PSP technical declines | Health-scored PSP selection (time-weighted, with low-rate probing so no provider is starved after a bad patch) with circuit breakers, failover, and timeout handling that checks status before any retry |
 | **Savings ledger** | Proving ROI | Every rescued payment and saved fee is recorded once, exposed at `/v1/savings` |
 | **Status poller (Phase 3)** | Payments stuck "pending", or failed after the customer was debited | Backend poller checks unresolved payments on a configurable schedule (5s/15s/30s/45s → every minute to 15 min → every 15 min to 48h), tracks debit / capture / bank auto-reversal, then hands over to manual investigation |
+| **Cashfree integration** | Running on a real PSP | UPI AutoPay via Cashfree's controlled notify → execute flow (Engine A keeps timing control), UPI collect, status/inquiry with auto-refund reversal facts, signed webhooks — see the [runbook](docs/runbooks/cashfree.md) |
 | **Value analytics (Phase 4)** | Proving ROI every billing cycle | Value delivered per source (each with a method note), success uplift vs a no-recovery baseline, PSP performance, payment-issue outcomes, monthly statement (printable + CSV line items) |
 | **Payment Resolution Console (Phase 3)** | "I was charged but my order failed" | Merchant dashboard at `/dashboard`: search by 12-digit UPI reference, see what happened to the customer's money, Dispute Desk queues, recheck, notes, raise UDIR complaints, audit timeline |
 
@@ -43,7 +44,7 @@ effective date. **Verify them against the current NPCI/RBI circulars before go-l
 
 ```bash
 npm install
-npm test                 # 304 tests, in-process PGlite Postgres — no Docker needed
+npm test                 # 377 tests, in-process PGlite Postgres — no Docker needed
 npm run demo             # Phase 1–2 time-compressed simulation with mock PSPs
 npm run demo:dashboard   # Phase 3: seeds investigation scenarios, serves http://localhost:3100/dashboard/
 npm run dev              # API + worker + poller on :3000, data in .data/pg
@@ -193,12 +194,15 @@ API: `GET /dashboard/api/analytics/{value,psps,issues}?month=YYYY-MM | from&to`,
 
 ## What is mocked / not yet built
 
-- **PSPs are mocks.** Integrating a real gateway = implementing `PspAdapter` and normalising its
-  codes into `PspResult` / `TransactionInquiry`. Router health is per-process (move to Redis when
-  running many API instances).
-- **UDIR is mock-backed.** `inquire`, `raiseComplaint` and `complaintStatus` are implemented by
-  `MockPsp` (mode `MOCK`, labelled in the UI). A real PSP adapter replaces it without touching the
-  dashboard. Lookups go through PSP/aggregator APIs; non-bank entities can't query the NPCI switch.
+- **Real PSP: Cashfree** (`src/psp/cashfree/`), verified against Cashfree's documented API with
+  contract tests; run `npm run smoke:cashfree` against the sandbox before go-live and work through
+  the runbook checklist. Mock PSPs remain for development and demos (refused in production unless
+  `ALLOW_MOCK_PSPS=true`). Adding another PSP = implementing `PspAdapter` (incl. its
+  `capabilities`). Router health is per-process (move to Redis when running many API instances).
+- **UDIR complaints depend on the PSP.** Cashfree offers no merchant-raised UDIR API, so for
+  Cashfree payments the dashboard explains that the customer raises it from their UPI app; the
+  mock PSP still demonstrates the flow (labelled simulated). Lookups always go through PSP APIs —
+  non-bank entities can't query the NPCI switch.
 - **Merchant-initiated refunds** are out of scope for Phase 3 (bank auto-reversals are tracked).
 - **Savings attribution** for peak rescues assumes the debit would otherwise have fired in the
   embargo window (it was *requested* during one). That's the brief's model; confirm it matches
