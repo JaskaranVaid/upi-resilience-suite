@@ -44,10 +44,13 @@ export const createMandate = z.object({
   eligiblePsps: z.array(z.string().min(1)).min(1).optional(),
 });
 
+export const orderId = z.string().min(1).max(200);
+
 export const createDebit = z.object({
   amountPaise: positivePaise,
   idempotencyKey,
   dueDate: istDate.optional(),
+  orderId: orderId.optional(),
 });
 
 export const quoteRequest = z.object({ amountPaise: positivePaise });
@@ -65,6 +68,7 @@ export const createPayment = z.object({
   amountPaise: positivePaise,
   payerVpa: vpa,
   idempotencyKey,
+  orderId: orderId.optional(),
   quoteId: z.string().optional(),
 });
 

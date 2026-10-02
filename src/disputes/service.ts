@@ -9,6 +9,7 @@ import type { PspRegistry } from '../psp/registry.js';
 import type { ComplaintReason } from '../psp/types.js';
 import type { InitialOutcome, PaymentCase, Tracking, TrackingService } from '../tracking/service.js';
 import type { CaseStatus, DomainState, SubjectType } from '../tracking/types.js';
+import { complaintEligibility } from './rules.js';
 
 export interface SubjectRef {
   type: SubjectType;
@@ -46,20 +47,22 @@ export class DisputeService {
     const { db, clock, psps, tracking } = this.deps;
     const subject = await this.subject(merchantId, ref);
     const t = await this.ensureTracking(merchantId, ref);
-    if (!t.pspId || !t.txnRef) throw new AppError('COMPLAINT_NOT_ALLOWED', 'This payment never reached a payment provider');
-    if (t.customerDebit === 'NOT_DEBITED') throw new AppError('COMPLAINT_NOT_ALLOWED', 'The customer was not debited for this payment');
-    if (subject.domainState === 'SUCCEEDED') throw new AppError('COMPLAINT_NOT_ALLOWED', 'This payment was captured successfully');
-
     const existingCase = await tracking.openCase(db, ref.type, ref.id);
-    if (existingCase) {
-      const latest = await tracking.latestComplaint(db, existingCase.id);
-      if (latest && ACTIVE_COMPLAINT.has(latest.status)) return existingCase; // idempotent
-    }
+    const latest = existingCase ? await tracking.latestComplaint(db, existingCase.id) : undefined;
+    if (existingCase && latest && ACTIVE_COMPLAINT.has(latest.status)) return existingCase; // idempotent
+
+    const eligible = complaintEligibility({
+      domainState: subject.domainState,
+      customerDebit: t.customerDebit,
+      submittedToPsp: Boolean(t.pspId && t.txnRef),
+      activeComplaint: false,
+    });
+    if (!eligible.ok) throw new AppError('COMPLAINT_NOT_ALLOWED', eligible.reason);
 
     const priorComplaints = await db.select({ n: count() }).from(udirComplaints).innerJoin(paymentCases, eq(paymentCases.id, udirComplaints.caseId)).where(eq(paymentCases.trackingId, t.id));
-    const adapter = psps.get(t.pspId);
+    const adapter = psps.get(t.pspId!);
     const res = await adapter.raiseComplaint({
-      txnRef: t.txnRef,
+      txnRef: t.txnRef!,
       ...(t.upiRrn ? { upiRrn: t.upiRrn } : {}),
       amountPaise: subject.amountPaise,
       reason,

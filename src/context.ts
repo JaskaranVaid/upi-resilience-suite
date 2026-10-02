@@ -8,6 +8,7 @@ import { DisputeService } from './disputes/service.js';
 import { PaymentService } from './payments/service.js';
 import { PspRegistry } from './psp/registry.js';
 import type { PspAdapter } from './psp/types.js';
+import { PaymentQueryService } from './query/payments.js';
 import { HealthTracker, type HealthOptions } from './routing/health.js';
 import { Router, type RouterOptions } from './routing/router.js';
 import { SchedulerService, type SchedulerOptions } from './scheduler/service.js';
@@ -34,6 +35,7 @@ export interface AppContext {
   disputes: DisputeService;
   users: UserService;
   sessions: SessionService;
+  queries: PaymentQueryService;
   /** Set the Secure flag on session cookies (true in production / behind HTTPS). */
   secureCookies: boolean;
 }
@@ -59,7 +61,8 @@ export function buildContext(args: {
   const router = new Router(args.adapters, health, clock, sleep, args.router);
   const pspIds = args.adapters.map((a) => a.id);
   const psps = new PspRegistry(args.adapters);
-  const tracking = new TrackingService({ db: args.db, clock, psps, cfg: { ...DEFAULT_POLLING, ...args.polling } });
+  const polling = { ...DEFAULT_POLLING, ...args.polling };
+  const tracking = new TrackingService({ db: args.db, clock, psps, cfg: polling });
   const fetchImpl: FetchLike = args.fetchImpl ?? ((url, init) => fetch(url, init));
   return {
     db: args.db,
@@ -79,6 +82,7 @@ export function buildContext(args: {
     disputes: new DisputeService({ db: args.db, clock, psps, tracking }),
     users: new UserService({ db: args.db, clock }),
     sessions: new SessionService({ db: args.db, clock, ...(args.auth ? { cfg: args.auth } : {}) }),
+    queries: new PaymentQueryService({ db: args.db, clock, cfg: polling, psps }),
     secureCookies: args.secureCookies ?? false,
   };
 }
