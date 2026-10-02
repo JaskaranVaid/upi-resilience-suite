@@ -8,6 +8,7 @@ import { newId } from '../ids.js';
 import type { Router } from '../routing/router.js';
 import { istMidnight } from '../rules/time.js';
 import { isPeak } from '../rules/windows.js';
+import { recordEvents, SYSTEM } from '../events/record.js';
 import { enqueueWebhook } from '../webhooks/outbox.js';
 import { DEFAULT_PLANNING, plan, sendNotice, type PlanningOptions } from './planning.js';
 
@@ -18,6 +19,8 @@ export interface CreateDebitInput {
   idempotencyKey: string;
   /** Earliest IST date the merchant wants this debit to run (billing date). */
   dueDate?: string;
+  /** Merchant's own invoice/order reference. */
+  orderId?: string;
 }
 
 export interface SchedulerOptions extends PlanningOptions {
@@ -30,6 +33,7 @@ export function debitView(d: Debit) {
   return {
     id: d.id,
     mandateId: d.mandateId,
+    orderId: d.orderId,
     amountPaise: d.amountPaise,
     state: d.state,
     requestedAt: d.requestedAt,
@@ -93,6 +97,7 @@ export class SchedulerService {
             mandateId,
             amountPaise: input.amountPaise,
             idempotencyKey: input.idempotencyKey,
+            orderId: input.orderId ?? null,
             state: 'SCHEDULED',
             requestedAt: now,
             requestedInPeak: isPeak(now, getRuleSet(now).windows),
@@ -106,6 +111,7 @@ export class SchedulerService {
           })
           .returning();
         await enqueueWebhook(tx, { merchantId, event: 'debit.scheduled', payload: debitView(row!), now });
+        await recordEvents(tx, { merchantId, subjectType: 'AUTOPAY', subjectId: id, actor: SYSTEM, now }, [{ type: 'PAYMENT_CREATED' }]);
         return row!;
       });
       return { debit, created: true };

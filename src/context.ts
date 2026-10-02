@@ -1,12 +1,16 @@
 import { realSleep, systemClock, type Clock, type Sleep } from './clock.js';
 import { CheckoutService } from './checkout/service.js';
+import { DEFAULT_POLLING, type PollingConfig } from './config/polling.js';
 import type { Db } from './db/client.js';
 import { PaymentService } from './payments/service.js';
+import { PspRegistry } from './psp/registry.js';
 import type { PspAdapter } from './psp/types.js';
 import { HealthTracker, type HealthOptions } from './routing/health.js';
 import { Router, type RouterOptions } from './routing/router.js';
 import { SchedulerService, type SchedulerOptions } from './scheduler/service.js';
 import { DebitWorker, type WorkerOptions } from './scheduler/worker.js';
+import { StatusPoller } from './tracking/poller.js';
+import { TrackingService } from './tracking/service.js';
 import { WebhookDispatcher, type FetchLike } from './webhooks/outbox.js';
 
 export interface AppContext {
@@ -21,6 +25,9 @@ export interface AppContext {
   payments: PaymentService;
   worker: DebitWorker;
   dispatcher: WebhookDispatcher;
+  psps: PspRegistry;
+  tracking: TrackingService;
+  poller: StatusPoller;
 }
 
 export function buildContext(args: {
@@ -34,12 +41,15 @@ export function buildContext(args: {
   router?: RouterOptions;
   scheduler?: Partial<SchedulerOptions>;
   worker?: Partial<WorkerOptions>;
+  polling?: Partial<PollingConfig>;
 }): AppContext {
   const clock = args.clock ?? systemClock;
   const sleep = args.sleep ?? realSleep;
   const health = new HealthTracker(args.health ?? {}, clock);
   const router = new Router(args.adapters, health, clock, sleep, args.router);
   const pspIds = args.adapters.map((a) => a.id);
+  const psps = new PspRegistry(args.adapters);
+  const tracking = new TrackingService({ db: args.db, clock, psps, cfg: { ...DEFAULT_POLLING, ...args.polling } });
   const fetchImpl: FetchLike = args.fetchImpl ?? ((url, init) => fetch(url, init));
   return {
     db: args.db,
@@ -50,8 +60,11 @@ export function buildContext(args: {
     router,
     scheduler: new SchedulerService({ db: args.db, clock, router, opts: args.scheduler }),
     checkout: new CheckoutService({ db: args.db, clock }),
-    payments: new PaymentService({ db: args.db, clock, router, pspIds }),
-    worker: new DebitWorker({ db: args.db, clock, router, opts: args.worker }),
+    payments: new PaymentService({ db: args.db, clock, router, pspIds, tracking }),
+    worker: new DebitWorker({ db: args.db, clock, router, tracking, opts: args.worker }),
     dispatcher: new WebhookDispatcher(args.db, clock, fetchImpl),
+    psps,
+    tracking,
+    poller: new StatusPoller({ db: args.db, clock, tracking }),
   };
 }

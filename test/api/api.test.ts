@@ -130,13 +130,19 @@ describe('HTTP API (end to end)', () => {
     expect(health.data.map((p: { pspId: string }) => p.pspId)).toEqual(['pspA', 'pspB']);
   });
 
-  it('Phase 2: a pending payment is refreshed from the PSP on read', async () => {
+  it('Phase 3: a pending payment is resolved by the status poller; reads never call the PSP', async () => {
     pspA.enqueue({ kind: 'TECHNICAL_DECLINE', code: 'TIMEOUT', settleAs: { kind: 'PENDING' } });
     const p = (await call('POST', '/v1/payments', { amountPaise: rs(100), payerVpa: 'ravi@okicici', idempotencyKey: 'ord-2' })).json();
     expect(p.state).toBe('PENDING');
     pspA.settle(`${p.id}-1`, { kind: 'SUCCESS', pspTxnId: 'A-1' });
-    const refreshed = (await call('GET', `/v1/payments/${p.id}`)).json();
-    expect(refreshed.state).toBe('SUCCEEDED');
+
+    const callsBefore = pspA.calls.length;
+    expect((await call('GET', `/v1/payments/${p.id}`)).json().state).toBe('PENDING');
+    expect(pspA.calls.length).toBe(callsBefore);
+
+    clock.advance(5_000);
+    await ctx.poller.runOnce();
+    expect((await call('GET', `/v1/payments/${p.id}`)).json().state).toBe('SUCCEEDED');
   });
 
   it('exposes the rule set in force for auditability', async () => {

@@ -15,6 +15,10 @@ async function main() {
     .map((id, i) => new MockPsp(id, { rates: rates[id] ?? {}, seed: i + 1, latencyMs: 50 }));
 
   const ctx = buildContext({ db, adapters, adminToken: env.ADMIN_TOKEN });
+  const mock = adapters.filter((a) => a.mode === 'MOCK').map((a) => a.id);
+  if (env.NODE_ENV === 'production' && mock.length > 0) {
+    console.warn(`WARNING: running in production with MOCK PSP adapters (${mock.join(', ')}). No real PSP or NPCI calls are made.`);
+  }
   const stops: Array<() => Promise<void>> = [];
 
   if (env.ROLE !== 'worker') {
@@ -29,6 +33,7 @@ async function main() {
       while (running) {
         try {
           await ctx.worker.runOnce();
+          await ctx.poller.runOnce();
           await ctx.dispatcher.runOnce();
         } catch (e) {
           console.error('worker tick failed', e);

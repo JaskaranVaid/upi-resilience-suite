@@ -7,7 +7,13 @@ export type ErrorCode =
   | 'MANDATE_INACTIVE'
   | 'NOTICE_FAILED'
   | 'SPLIT_INVALID'
-  | 'CONFLICT';
+  | 'CONFLICT'
+  | 'FORBIDDEN'
+  | 'CHECK_IN_PROGRESS'
+  | 'RECHECK_TOO_SOON'
+  | 'COMPLAINT_NOT_ALLOWED'
+  | 'COMPLAINT_FAILED'
+  | 'ACCOUNT_LOCKED';
 
 const STATUS: Record<ErrorCode, number> = {
   NOT_FOUND: 404,
@@ -19,6 +25,12 @@ const STATUS: Record<ErrorCode, number> = {
   NOTICE_FAILED: 502,
   SPLIT_INVALID: 422,
   CONFLICT: 409,
+  FORBIDDEN: 403,
+  CHECK_IN_PROGRESS: 409,
+  RECHECK_TOO_SOON: 429,
+  COMPLAINT_NOT_ALLOWED: 422,
+  COMPLAINT_FAILED: 502,
+  ACCOUNT_LOCKED: 429,
 };
 
 export class AppError extends Error {

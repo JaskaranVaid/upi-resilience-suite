@@ -3,57 +3,64 @@ import type { Clock } from '../clock.js';
 import type { Db } from '../db/client.js';
 import { paymentAttempts, payments } from '../db/schema.js';
 import { AppError } from '../errors.js';
+import { recordEvents, SYSTEM } from '../events/record.js';
 import { newId } from '../ids.js';
-import { recordSavings } from '../ledger/savings.js';
 import type { PspResult } from '../psp/types.js';
 import type { AttemptRecord, Router } from '../routing/router.js';
-import { enqueueWebhook } from '../webhooks/outbox.js';
+import type { InitialOutcome, TrackingService } from '../tracking/service.js';
+import { applyPaymentOutcome, paymentView, type Payment } from './outcome.js';
 
-export type Payment = typeof payments.$inferSelect;
+export { paymentView, type Payment };
 
 export interface CreatePaymentInput {
   amountPaise: number;
   payerVpa: string;
   idempotencyKey: string;
+  orderId?: string;
   quoteId?: string;
 }
 
-export function paymentView(p: Payment) {
-  return {
-    id: p.id,
-    amountPaise: p.amountPaise,
-    payerVpa: p.payerVpa,
-    state: p.state,
-    pspId: p.pspId,
-    pspTxnId: p.pspTxnId,
-    lastErrorCode: p.lastErrorCode,
-    quoteId: p.quoteId,
-    createdAt: p.createdAt,
-  };
+function initialOutcome(result: PspResult, pspId: string | null): InitialOutcome {
+  if (!pspId) return { kind: 'NOT_SUBMITTED' };
+  switch (result.kind) {
+    case 'SUCCESS':
+      return { kind: 'SUCCEEDED', ...(result.upiRrn ? { upiRrn: result.upiRrn } : {}) };
+    case 'PENDING':
+      return { kind: 'PENDING' };
+    case 'BUSINESS_DECLINE':
+      return { kind: 'FAILED_BUSINESS' };
+    case 'TECHNICAL_DECLINE':
+    case 'NOT_FOUND':
+      return { kind: 'FAILED_TECHNICAL' };
+  }
 }
 
 /** One-off UPI collect at checkout, routed through the smart router (Phase 2). */
 export class PaymentService {
-  constructor(private readonly deps: { db: Db; clock: Clock; router: Router; pspIds: string[] }) {}
+  constructor(private readonly deps: { db: Db; clock: Clock; router: Router; pspIds: string[]; tracking: TrackingService }) {}
 
   async create(merchantId: string, input: CreatePaymentInput): Promise<{ payment: Payment; created: boolean }> {
-    const { db, clock, router, pspIds } = this.deps;
+    const { db, clock, router, pspIds, tracking } = this.deps;
     const existing = await this.findByKey(merchantId, input.idempotencyKey);
     if (existing) return this.replay(existing, input);
 
     const now = clock.now();
     const id = newId('pay');
     try {
-      await db.insert(payments).values({
-        id,
-        merchantId,
-        amountPaise: input.amountPaise,
-        payerVpa: input.payerVpa,
-        idempotencyKey: input.idempotencyKey,
-        quoteId: input.quoteId ?? null,
-        state: 'PENDING',
-        createdAt: now,
-        updatedAt: now,
+      await db.transaction(async (tx) => {
+        await tx.insert(payments).values({
+          id,
+          merchantId,
+          amountPaise: input.amountPaise,
+          payerVpa: input.payerVpa,
+          idempotencyKey: input.idempotencyKey,
+          orderId: input.orderId ?? null,
+          quoteId: input.quoteId ?? null,
+          state: 'PENDING',
+          createdAt: now,
+          updatedAt: now,
+        });
+        await recordEvents(tx, { merchantId, subjectType: 'COLLECT', subjectId: id, actor: SYSTEM, now }, [{ type: 'PAYMENT_CREATED' }]);
       });
     } catch (e) {
       const raced = await this.findByKey(merchantId, input.idempotencyKey);
@@ -69,56 +76,35 @@ export class PaymentService {
       baseRef: id,
     });
     await this.recordAttempts(merchantId, id, outcome.attempts);
-    const payment = await this.settle(id, outcome.result, outcome.pspId ?? null, outcome.hadTechnicalDecline);
+    const pspId = outcome.pspId ?? null;
+    const doneAt = clock.now();
+    const payment = await db.transaction(async (tx) => {
+      await recordEvents(tx, { merchantId, subjectType: 'COLLECT', subjectId: id, actor: SYSTEM, now: doneAt }, [
+        { type: 'PAYMENT_SUBMITTED', data: { pspId, attempts: outcome.attempts.length } },
+      ]);
+      const p = await applyPaymentOutcome(tx, { id, result: outcome.result, pspId, hadTechnicalDecline: outcome.hadTechnicalDecline, now: doneAt });
+      await tracking.recordOutcome(tx, {
+        merchantId,
+        subjectType: 'COLLECT',
+        subjectId: id,
+        pspId,
+        txnRef: outcome.txnRef ?? null,
+        outcome: initialOutcome(outcome.result, pspId),
+        now: doneAt,
+      });
+      return p;
+    });
     return { payment, created: true };
   }
 
-  /** Fetch a payment; a PENDING one is refreshed from the PSP first. */
+  /**
+   * Read the canonical payment. Read-only: pending payments are resolved by the status
+   * poller, never by a read (Phase 3, C2).
+   */
   async get(merchantId: string, paymentId: string): Promise<Payment> {
-    const { db, router } = this.deps;
-    const [p] = await db.select().from(payments).where(and(eq(payments.id, paymentId), eq(payments.merchantId, merchantId)));
+    const [p] = await this.deps.db.select().from(payments).where(and(eq(payments.id, paymentId), eq(payments.merchantId, merchantId)));
     if (!p) throw new AppError('NOT_FOUND', `Payment ${paymentId} not found`);
-    if (p.state !== 'PENDING' || !p.pspId) return p;
-
-    const [last] = await db
-      .select()
-      .from(paymentAttempts)
-      // The router uses one txnRef per PSP, so any collect attempt on that PSP carries it.
-      .where(and(eq(paymentAttempts.paymentId, p.id), eq(paymentAttempts.pspId, p.pspId), eq(paymentAttempts.op, 'collect')))
-      .limit(1);
-    if (!last) return p;
-    const result = await router.status(p.pspId, last.txnRef);
-    if (result.kind === 'PENDING' || result.kind === 'NOT_FOUND') return p;
-    return this.settle(p.id, result, p.pspId, false);
-  }
-
-  private async settle(id: string, result: PspResult, pspId: string | null, hadTechnicalDecline: boolean): Promise<Payment> {
-    const { db, clock } = this.deps;
-    const now = clock.now();
-    return db.transaction(async (tx) => {
-      const state = result.kind === 'SUCCESS' ? 'SUCCEEDED' : result.kind === 'PENDING' ? 'PENDING' : 'FAILED';
-      const [row] = await tx
-        .update(payments)
-        .set({
-          state,
-          pspId,
-          pspTxnId: result.kind === 'SUCCESS' ? result.pspTxnId : null,
-          lastErrorCode: 'code' in result ? result.code : null,
-          updatedAt: now,
-        })
-        .where(eq(payments.id, id))
-        .returning();
-      const p = row!;
-      if (state === 'SUCCEEDED') {
-        await enqueueWebhook(tx, { merchantId: p.merchantId, event: 'payment.succeeded', payload: paymentView(p), now });
-        if (hadTechnicalDecline) {
-          await recordSavings(tx, { merchantId: p.merchantId, type: 'TD_RECOVERED', amountPaise: p.amountPaise, refId: p.id, now });
-        }
-      } else if (state === 'FAILED') {
-        await enqueueWebhook(tx, { merchantId: p.merchantId, event: 'payment.failed', payload: paymentView(p), now });
-      }
-      return p;
-    });
+    return p;
   }
 
   private async findByKey(merchantId: string, key: string): Promise<Payment | undefined> {

@@ -10,6 +10,8 @@ import type { PspResult } from '../psp/types.js';
 import type { AttemptRecord, Router } from '../routing/router.js';
 import { istDateString } from '../rules/time.js';
 import { isRestricted } from '../rules/windows.js';
+import { recordEvents, SYSTEM } from '../events/record.js';
+import type { InitialOutcome, TrackingService } from '../tracking/service.js';
 import { enqueueWebhook } from '../webhooks/outbox.js';
 import { DEFAULT_PLANNING, plan, sendNotice, type PlanningOptions } from './planning.js';
 import { debitView, type Debit } from './service.js';
@@ -48,15 +50,19 @@ export class DebitWorker {
   private readonly router: Router;
   private readonly opts: WorkerOptions;
   private readonly log: (msg: string, err?: unknown) => void;
+  /** Phase 3 hook: records money facts and starts verification watches. Optional so Engine A runs standalone. */
+  private readonly tracking: TrackingService | undefined;
 
   constructor(deps: {
     db: Db;
     clock: Clock;
     router: Router;
+    tracking?: TrackingService;
     opts?: Partial<WorkerOptions>;
     log?: (msg: string, err?: unknown) => void;
   }) {
     this.db = deps.db;
+    this.tracking = deps.tracking;
     this.clock = deps.clock;
     this.router = deps.router;
     this.opts = { ...DEFAULT_WORKER, ...deps.opts };
@@ -111,7 +117,7 @@ export class DebitWorker {
   private async execute(d: Debit): Promise<void> {
     const now = this.clock.now();
     const mandate = await this.mandate(d.mandateId);
-    if (!mandate || mandate.status !== 'ACTIVE') return this.fail(d, 'MANDATE_INACTIVE');
+    if (!mandate || mandate.status !== 'ACTIVE') return this.fail(d, 'MANDATE_INACTIVE', { kind: 'NOT_SUBMITTED' }, null, null);
 
     // Guardrails: never debit inside a restricted window or on a date the customer wasn't notified of.
     if (isRestricted(now, getRuleSet(now).windows) || istDateString(now) !== d.noticeDate) {
@@ -132,13 +138,16 @@ export class DebitWorker {
       baseRef,
     });
     await this.recordAttempts(d, outcome.attempts);
+    await recordEvents(this.db, { merchantId: d.merchantId, subjectType: 'AUTOPAY', subjectId: d.id, actor: SYSTEM, now: this.clock.now() }, [
+      { type: 'PAYMENT_SUBMITTED', data: { pspId: outcome.pspId ?? null, attempt, attempts: outcome.attempts.length } },
+    ]);
     await this.handle(current, mandate, outcome.result, outcome.pspId ?? null, outcome.txnRef ?? null);
   }
 
   /** Resolve a PENDING or orphaned debit purely by status lookups. */
   private async confirm(d: Debit): Promise<void> {
     const mandate = await this.mandate(d.mandateId);
-    if (!mandate) return this.fail(d, 'MANDATE_INACTIVE');
+    if (!mandate) return this.fail(d, 'MANDATE_INACTIVE', { kind: 'NOT_SUBMITTED' }, null, null);
     if (!d.lastTxnRef) return this.execute(d); // crashed before any PSP call
 
     const records: AttemptRecord[] = [];
@@ -175,12 +184,12 @@ export class DebitWorker {
     const now = this.clock.now();
     switch (result.kind) {
       case 'SUCCESS':
-        return this.succeed(d, result.pspTxnId);
+        return this.succeed(d, result.pspTxnId, pspId, txnRef, result.upiRrn);
       case 'BUSINESS_DECLINE':
-        return this.fail(d, result.code);
+        return this.fail(d, result.code, { kind: 'FAILED_BUSINESS' }, pspId, txnRef);
       case 'PENDING': {
         const since = d.executingSince ?? now;
-        if (now.getTime() - since.getTime() >= this.opts.maxPendingMs) return this.fail(d, 'UNRESOLVED_PENDING');
+        if (now.getTime() - since.getTime() >= this.opts.maxPendingMs) return this.fail(d, 'UNRESOLVED_PENDING', { kind: 'UNRESOLVED' }, pspId ?? d.lastPspId, txnRef ?? d.lastTxnRef);
         await this.db
           .update(debits)
           .set({
@@ -196,7 +205,7 @@ export class DebitWorker {
       case 'TECHNICAL_DECLINE':
       case 'NOT_FOUND': {
         const code = result.kind === 'TECHNICAL_DECLINE' ? result.code : 'NOT_FOUND';
-        if (d.attempts >= d.maxAttempts) return this.fail(d, code);
+        if (d.attempts >= d.maxAttempts) return this.fail(d, code, { kind: 'FAILED_TECHNICAL' }, pspId, txnRef);
         return this.reschedule(d, mandate, new Date(now.getTime() + this.opts.retryGapMs), code);
       }
     }
@@ -234,7 +243,7 @@ export class DebitWorker {
       .where(eq(debits.id, d.id));
   }
 
-  private async succeed(d: Debit, pspTxnId: string): Promise<void> {
+  private async succeed(d: Debit, pspTxnId: string, pspId: string | null, txnRef: string | null, upiRrn?: string): Promise<void> {
     const now = this.clock.now();
     const hadTechnicalDecline =
       (
@@ -255,10 +264,11 @@ export class DebitWorker {
       // One attribution per rescued debit so revenue-protected totals never double count.
       const type = d.requestedInPeak ? 'PEAK_DEFERRAL_RESCUED' : hadTechnicalDecline ? 'TD_RECOVERED' : null;
       if (type) await recordSavings(tx, { merchantId: d.merchantId, type, amountPaise: d.amountPaise, refId: d.id, now });
+      await this.afterOutcome(tx, d, 'SUCCEEDED', { kind: 'SUCCEEDED', ...(upiRrn ? { upiRrn } : {}) }, pspId, txnRef, now);
     });
   }
 
-  private async fail(d: Debit, code: string): Promise<void> {
+  private async fail(d: Debit, code: string, outcome: InitialOutcome, pspId: string | null, txnRef: string | null): Promise<void> {
     const now = this.clock.now();
     await this.db.transaction(async (tx) => {
       const [row] = await tx
@@ -267,7 +277,24 @@ export class DebitWorker {
         .where(eq(debits.id, d.id))
         .returning();
       await enqueueWebhook(tx, { merchantId: d.merchantId, event: 'debit.failed', payload: debitView(row!), now });
+      await this.afterOutcome(tx, d, 'FAILED', outcome, pspId, txnRef, now);
     });
+  }
+
+  /** Audit + Phase 3 tracking for a terminal debit, inside the same transaction as the state change. */
+  private async afterOutcome(
+    tx: Parameters<Parameters<Db['transaction']>[0]>[0],
+    d: Debit,
+    to: 'SUCCEEDED' | 'FAILED',
+    outcome: InitialOutcome,
+    pspId: string | null,
+    txnRef: string | null,
+    now: Date,
+  ): Promise<void> {
+    await recordEvents(tx, { merchantId: d.merchantId, subjectType: 'AUTOPAY', subjectId: d.id, actor: SYSTEM, now }, [
+      { type: 'PAYMENT_STATE_CHANGED', data: { to } },
+    ]);
+    await this.tracking?.recordOutcome(tx, { merchantId: d.merchantId, subjectType: 'AUTOPAY', subjectId: d.id, pspId, txnRef, outcome, now });
   }
 
   private async mandate(id: string): Promise<Mandate | undefined> {
