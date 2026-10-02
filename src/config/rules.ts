@@ -73,3 +73,20 @@ export function getRuleSet(at: Date, sets: readonly RuleSet[] = RULE_SETS): Rule
   if (!chosen) throw new Error(`No rule set effective at ${at.toISOString()}`);
   return chosen;
 }
+
+/**
+ * Extension point for regulatory reversal/refund deadlines (Phase 3 decision D1).
+ *
+ * Intentionally EMPTY. Different UPI failure categories carry different RBI treatment, so a
+ * rule may only be added with an explicitly confirmed mapping to a transaction category and
+ * a cited source. Nothing in the product computes or displays a due date while this is empty.
+ */
+export interface ReversalDeadlineRule {
+  /** The documented UPI failure category this rule applies to. */
+  failureCategory: string;
+  /** Citation of the circular/notification the rule comes from. Required. */
+  source: string;
+  dueBy(debitedAt: Date): Date;
+}
+
+export const REVERSAL_DEADLINE_RULES: readonly ReversalDeadlineRule[] = [];
