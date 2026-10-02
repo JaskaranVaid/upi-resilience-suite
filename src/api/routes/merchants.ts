@@ -6,7 +6,9 @@ import { merchants, vendors } from '../../db/schema.js';
 import { AppError } from '../../errors.js';
 import { newId } from '../../ids.js';
 import { DEFAULT_STEERING } from '../../rules/steering.js';
+import { userView } from '../../auth/users.js';
 import { hashApiKey, merchantOf, requireAdmin, type Merchant } from '../app.js';
+import { createUserBody } from '../dashboard/plugin.js';
 import { createMerchant, createVendor } from '../schemas.js';
 
 export function merchantView(m: Merchant) {
@@ -61,6 +63,17 @@ export const merchantRoutes = (ctx: AppContext) => async (app: FastifyInstance) 
     } catch {
       throw new AppError('CONFLICT', `Vendor ${body.externalId} already exists`);
     }
+  });
+
+  /**
+   * Create a dashboard user with the merchant API key — how the first admin is bootstrapped.
+   * After that, admins manage users from the dashboard.
+   */
+  app.post('/v1/dashboard-users', async (req, reply) => {
+    const merchant = merchantOf(req);
+    const body = createUserBody.parse(req.body);
+    const user = await ctx.users.create(merchant.id, body, { type: 'API_KEY', id: merchant.id });
+    return reply.status(201).send(userView(user));
   });
 
   app.get('/v1/vendors', async (req) => {

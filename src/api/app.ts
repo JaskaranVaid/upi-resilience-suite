@@ -1,10 +1,12 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
+import fastifyCookie from '@fastify/cookie';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { ZodError } from 'zod';
 import type { AppContext } from '../context.js';
 import { merchants } from '../db/schema.js';
 import { AppError } from '../errors.js';
+import { dashboardApi } from './dashboard/plugin.js';
 import { checkoutRoutes } from './routes/checkout.js';
 import { mandateRoutes } from './routes/mandates.js';
 import { merchantRoutes } from './routes/merchants.js';
@@ -73,6 +75,8 @@ export function buildApp(ctx: AppContext, opts: { logger?: boolean } = {}): Fast
     return reply.status(500).send({ error: { code: 'INTERNAL', message: 'Internal error' } });
   });
 
+  app.register(fastifyCookie);
+  app.register(dashboardApi(ctx));
   app.register(opsRoutes(ctx));
   app.register(merchantRoutes(ctx));
   app.register(mandateRoutes(ctx));

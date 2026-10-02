@@ -1,4 +1,6 @@
 import { realSleep, systemClock, type Clock, type Sleep } from './clock.js';
+import { SessionService, type AuthConfig } from './auth/sessions.js';
+import { UserService } from './auth/users.js';
 import { CheckoutService } from './checkout/service.js';
 import { DEFAULT_POLLING, type PollingConfig } from './config/polling.js';
 import type { Db } from './db/client.js';
@@ -30,6 +32,10 @@ export interface AppContext {
   tracking: TrackingService;
   poller: StatusPoller;
   disputes: DisputeService;
+  users: UserService;
+  sessions: SessionService;
+  /** Set the Secure flag on session cookies (true in production / behind HTTPS). */
+  secureCookies: boolean;
 }
 
 export function buildContext(args: {
@@ -44,6 +50,8 @@ export function buildContext(args: {
   scheduler?: Partial<SchedulerOptions>;
   worker?: Partial<WorkerOptions>;
   polling?: Partial<PollingConfig>;
+  auth?: Partial<AuthConfig>;
+  secureCookies?: boolean;
 }): AppContext {
   const clock = args.clock ?? systemClock;
   const sleep = args.sleep ?? realSleep;
@@ -69,5 +77,8 @@ export function buildContext(args: {
     tracking,
     poller: new StatusPoller({ db: args.db, clock, tracking }),
     disputes: new DisputeService({ db: args.db, clock, psps, tracking }),
+    users: new UserService({ db: args.db, clock }),
+    sessions: new SessionService({ db: args.db, clock, ...(args.auth ? { cfg: args.auth } : {}) }),
+    secureCookies: args.secureCookies ?? false,
   };
 }
