@@ -1,10 +1,12 @@
 import { buildApp } from './api/app.js';
+import { choosePort, loadDotEnv } from './config/dotenv.js';
 import { loadEnv } from './config/env.js';
 import { buildContext } from './context.js';
 import { createDb } from './db/client.js';
 import { buildAdapters } from './psp/factory.js';
 
 async function main() {
+  loadDotEnv();
   const env = loadEnv();
   const { db, close } = await createDb(env.DATABASE_URL);
 
@@ -16,7 +18,8 @@ async function main() {
 
   if (env.ROLE !== 'worker') {
     const app = buildApp(ctx, { logger: true });
-    await app.listen({ host: env.HOST, port: env.PORT });
+    // Configured port only (no silent switching for the real server); a busy port is a clear error.
+    await app.listen({ host: env.HOST, port: await choosePort(env.PORT, { explicit: true, host: env.HOST }) });
     stops.push(() => app.close());
   }
 
@@ -52,6 +55,8 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error(e);
+  // Configuration problems get their message, not a stack trace.
+  const configError = e instanceof Error && (e.name === 'PspConfigError' || e.name === 'ZodError' || /already in use|required in production/.test(e.message));
+  console.error(configError ? `Cannot start: ${e.message}` : e);
   process.exit(1);
 });

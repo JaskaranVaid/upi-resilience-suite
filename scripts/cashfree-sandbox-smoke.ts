@@ -12,7 +12,10 @@
  * The script prints what to verify; it never prints credentials.
  */
 import { randomBytes } from 'node:crypto';
+import { loadDotEnv } from '../src/config/dotenv.js';
 import { CashfreeAdapter } from '../src/psp/cashfree/adapter.js';
+
+loadDotEnv(); // credentials can live in .env (gitignored); shell variables still win
 
 const env = process.env;
 let failures = 0;
@@ -24,7 +27,11 @@ const fail = (msg: string) => {
 
 async function main() {
   if (!env.CASHFREE_CLIENT_ID || !env.CASHFREE_CLIENT_SECRET) {
-    console.log('Skipped: set CASHFREE_CLIENT_ID and CASHFREE_CLIENT_SECRET (sandbox credentials) to run.');
+    console.log('Skipped: no Cashfree sandbox credentials found.');
+    console.log('  Put them in a .env file in the project folder (it is gitignored):');
+    console.log('    CASHFREE_CLIENT_ID=<your sandbox app id>');
+    console.log('    CASHFREE_CLIENT_SECRET=<your sandbox secret key>');
+    console.log('  then run: npm run smoke:cashfree');
     return;
   }
   if ((env.CASHFREE_ENV ?? 'sandbox') !== 'sandbox') {

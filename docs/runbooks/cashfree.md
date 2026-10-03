@@ -36,9 +36,26 @@ works without them, just with more latency.
 
 ## 3. Sandbox smoke test (before go-live, and after any Cashfree API version change)
 
-```bash
-CASHFREE_CLIENT_ID=… CASHFREE_CLIENT_SECRET=… npm run smoke:cashfree
+Put your **sandbox** keys (Cashfree dashboard → Developers → API keys, test mode) in a `.env` file in
+the project folder. It is gitignored; never commit real keys:
+
 ```
+CASHFREE_CLIENT_ID=<sandbox app id>
+CASHFREE_CLIENT_SECRET=<sandbox secret key>
+```
+
+Then, from any shell (PowerShell, cmd or bash):
+
+```
+npm run smoke:cashfree
+```
+
+Or set them for one PowerShell session instead of using `.env`:
+
+```powershell
+$env:CASHFREE_CLIENT_ID = "<sandbox app id>"; $env:CASHFREE_CLIENT_SECRET = "<sandbox secret key>"; npm run smoke:cashfree
+```
+
 Optional: `SMOKE_UPI_ID` (a Cashfree sandbox test VPA) + `SMOKE_PHONE` to run a ₹1 collect;
 `SMOKE_SUBSCRIPTION_ID` (an active sandbox UPI subscription) to send a pre-debit notification, then
 after 25 h `SMOKE_EXECUTE_PAYMENT_ID=<printed id>` to execute it. The script refuses `CASHFREE_ENV=production`.

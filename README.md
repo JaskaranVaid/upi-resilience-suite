@@ -50,7 +50,12 @@ npm run demo:dashboard   # Phase 3: seeds investigation scenarios, serves http:/
 npm run dev              # API + worker + poller on :3000, data in .data/pg
 ```
 
-`demo:dashboard` prints local demo logins (admin / support / viewer). Everything is mock: no real
+Configuration is read from environment variables, or from a `.env` file in the project folder
+(see [`.env.example`](.env.example); shell variables win over `.env`). On Windows PowerShell set a
+variable with `$env:NAME = "value"`, not `NAME=value command`.
+
+`demo:dashboard` prints local demo logins (admin / support / viewer); if port 3100 is busy it picks
+the next free port and says so. Everything is mock: no real
 PSP, NPCI or money is involved, and simulated UDIR complaints are labelled as such in the UI.
 
 Production: set `DATABASE_URL=postgres://…`, `ADMIN_TOKEN` and `CUSTOMER_TOKEN_SECRET`, run `ROLE=api` and `ROLE=worker`

@@ -12,13 +12,15 @@
 import { eq } from 'drizzle-orm';
 import { buildApp } from '../src/api/app.js';
 import type { Clock } from '../src/clock.js';
+import { choosePort, loadDotEnv } from '../src/config/dotenv.js';
 import { buildContext } from '../src/context.js';
 import { createDb } from '../src/db/client.js';
 import { merchants, paymentTracking } from '../src/db/schema.js';
 import { MockPsp } from '../src/psp/mock.js';
 import type { PspResult, TransactionInquiry } from '../src/psp/types.js';
 
-const PORT = Number(process.env.PORT ?? 3100);
+loadDotEnv();
+const REQUESTED_PORT = Number(process.env.PORT ?? 3100);
 
 // Local demo credentials (dev only — never reuse elsewhere).
 const DEMO_USERS = [
@@ -58,6 +60,9 @@ const debited = (reversal: Extract<TransactionInquiry, { found: true }>['reversa
 });
 
 async function main() {
+  // Check the port before the (slow) seeding, so a busy port fails fast — or moves to a free one.
+  const PORT = await choosePort(REQUESTED_PORT, { explicit: process.env.PORT !== undefined, host: '127.0.0.1' });
+  if (PORT !== REQUESTED_PORT) console.log(`Port ${REQUESTED_PORT} is busy (another copy running?) — using ${PORT} instead.`);
   const { db, close } = await createDb('pglite://memory');
   const realNow = new Date();
   const HISTORY_DAYS = 30;
@@ -231,6 +236,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error(e);
+  console.error(e instanceof Error ? e.message : e);
   process.exit(1);
 });
