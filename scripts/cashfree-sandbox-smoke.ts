@@ -6,14 +6,17 @@
  *
  * Optional steps (set the variables to enable them):
  *   SMOKE_UPI_ID + SMOKE_PHONE        UPI collect of ₹1 to a Cashfree sandbox test VPA, then poll its status
+ *   SMOKE_CREATE_SUBSCRIPTION=1       create a sandbox ON_DEMAND UPI subscription and authorise it with
+ *                                     testsuccess@gocash (needs UPI AutoPay activated on the account)
  *   SMOKE_SUBSCRIPTION_ID             send a pre-debit notification for an active sandbox UPI subscription
  *   SMOKE_SUBSCRIPTION_ID + SMOKE_EXECUTE_PAYMENT_ID
  *                                     execute a previously notified payment (≥ 25 h after notifying)
  * The script prints what to verify; it never prints credentials.
  */
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { loadDotEnv } from '../src/config/dotenv.js';
-import { CashfreeAdapter } from '../src/psp/cashfree/adapter.js';
+import { CashfreeAdapter, CASHFREE_API_VERSION } from '../src/psp/cashfree/adapter.js';
+import { requestJson } from '../src/psp/http.js';
 import { looksLikePlaceholder } from '../src/psp/factory.js';
 
 loadDotEnv(); // credentials can live in .env (gitignored); shell variables still win
@@ -25,6 +28,73 @@ const fail = (msg: string) => {
   failures++;
   console.log(`  ✘ ${msg}`);
 };
+
+/**
+ * Test-data setup, not part of the adapter (mandates are registered outside the suite): create an
+ * ON_DEMAND UPI subscription in the sandbox and authorise it via Cashfree's success test VPA.
+ */
+async function createTestSubscription(run: string): Promise<string | null> {
+  const call = (method: 'GET' | 'POST', path: string, body?: unknown) =>
+    requestJson((url, init) => fetch(url, init), {
+      method,
+      url: `https://sandbox.cashfree.com/pg${path}`,
+      headers: {
+        'content-type': 'application/json',
+        'x-api-version': CASHFREE_API_VERSION,
+        'x-client-id': env.CASHFREE_CLIENT_ID!,
+        'x-client-secret': env.CASHFREE_CLIENT_SECRET!,
+        'x-idempotency-key': randomUUID(),
+      },
+      ...(body === undefined ? {} : { body }),
+      timeoutMs: 15_000,
+    });
+  const why = (r: { status: number; json: unknown }) => {
+    const b = r.json as { code?: string; message?: string } | null;
+    return `HTTP ${r.status}${b?.code ? ` ${b.code}` : ''}${b?.message ? `: ${b.message}` : ''}`;
+  };
+  const id = `${run}_sub`;
+  const created = await call('POST', '/subscriptions', {
+    subscription_id: id,
+    customer_details: { customer_name: 'Smoke Test', customer_email: 'smoke-test@example.com', customer_phone: '9999999999' },
+    plan_details: { plan_name: 'smoke on-demand', plan_type: 'ON_DEMAND', plan_max_amount: 1000, plan_currency: 'INR' },
+    authorization_details: { authorization_amount: 1, authorization_amount_refund: true, payment_methods: ['upi'] },
+    subscription_meta: { return_url: 'https://example.com/return' },
+    subscription_expiry_time: new Date(Date.now() + 365 * 86_400_000).toISOString(),
+  });
+  const sessionId = (created.json as { subscription_session_id?: string } | null)?.subscription_session_id;
+  if (created.status !== 200 || !sessionId) {
+    fail(`create subscription: ${why(created)}`);
+    return null;
+  }
+  const auth = await call('POST', '/subscriptions/pay', {
+    subscription_id: id,
+    subscription_session_id: sessionId,
+    payment_id: `${id}_auth`,
+    payment_type: 'AUTH',
+    payment_method: { upi: { channel: 'collect', upi_id: 'testsuccess@gocash' } },
+  });
+  if (auth.status !== 200) {
+    fail(`authorise subscription: ${why(auth)}`);
+    return null;
+  }
+  ok(`subscription ${id} created; authorisation requested from testsuccess@gocash`);
+  let status = 'INITIALIZED';
+  for (let i = 0; i < 12 && (status === 'INITIALIZED' || status === 'BANK_APPROVAL_PENDING'); i++) {
+    await new Promise((r) => setTimeout(r, 10_000));
+    const s = await call('GET', `/subscriptions/${id}`);
+    status = (s.json as { subscription_status?: string } | null)?.subscription_status ?? `unknown (${why(s)})`;
+    console.log(`     status after ${(i + 1) * 10}s: ${status}`);
+  }
+  if (status !== 'ACTIVE') {
+    fail(
+      `subscription is ${status}, not ACTIVE. If it stays INITIALIZED, UPI AutoPay is not activated on this Cashfree ` +
+        'account — it is not self-serve: ask Cashfree support to enable it for the sandbox (and production).',
+    );
+    return null;
+  }
+  ok('subscription ACTIVE');
+  return id;
+}
 
 async function main() {
   if (!env.CASHFREE_CLIENT_ID || !env.CASHFREE_CLIENT_SECRET) {
@@ -78,7 +148,14 @@ async function main() {
     }
   } else console.log('2. UPI collect — skipped (set SMOKE_UPI_ID to a Cashfree sandbox test VPA and SMOKE_PHONE)');
 
-  if (env.SMOKE_SUBSCRIPTION_ID && !env.SMOKE_EXECUTE_PAYMENT_ID) {
+  if (env.SMOKE_CREATE_SUBSCRIPTION === '1' && !env.SMOKE_SUBSCRIPTION_ID) {
+    console.log('3. UPI AutoPay test subscription');
+    const id = await createTestSubscription(run);
+    if (id) {
+      console.log('     Next, send a pre-debit notification for it (PowerShell):');
+      console.log(`       $env:SMOKE_SUBSCRIPTION_ID = "${id}"; npm run smoke:cashfree`);
+    }
+  } else if (env.SMOKE_SUBSCRIPTION_ID && !env.SMOKE_EXECUTE_PAYMENT_ID) {
     console.log('3. UPI AutoPay pre-debit notification');
     const paymentId = `${run}-debit`;
     // Two days out (IST): inside T+1..T+7 and clear of the 25 h execution gap.
@@ -96,7 +173,7 @@ async function main() {
     console.log(`     execute → ${JSON.stringify(res)}`);
     console.log(`     status  → ${JSON.stringify(await cf.status(txnRef, ctx))}`);
     console.log('     Record the execution_status / payment_status strings you see: the adapter maps unknown ones to PENDING.');
-  } else console.log('3. UPI AutoPay — skipped (set SMOKE_SUBSCRIPTION_ID to an active sandbox UPI subscription)');
+  } else console.log('3. UPI AutoPay — skipped (SMOKE_CREATE_SUBSCRIPTION=1 creates a sandbox test subscription; SMOKE_SUBSCRIPTION_ID uses an active one)');
 
   console.log(failures === 0 ? 'Smoke test passed.' : `Smoke test: ${failures} failure(s).`);
   // Set the exit code rather than calling process.exit(): exiting while fetch is still closing its

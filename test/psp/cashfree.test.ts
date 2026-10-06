@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { CashfreeAdapter, CASHFREE_API_VERSION } from '../../src/psp/cashfree/adapter.js';
-import { classifyFailure, customerIdFor, idempotencyKey, inquiryFromOrder } from '../../src/psp/cashfree/mapping.js';
+import { classifyFailure, customerIdFor, idempotencyKey, inquiryFromOrder, mapOrderPayment } from '../../src/psp/cashfree/mapping.js';
 import { verifyCashfreeWebhook } from '../../src/psp/cashfree/webhook.js';
 import type { FetchFn } from '../../src/psp/http.js';
 
@@ -272,6 +272,51 @@ describe('CashfreeAdapter — inquiry and auto-refunds (debited but failed)', ()
 
   it('pure mapping agrees with the adapter path', () => {
     expect(inquiryFromOrder([], [])).toEqual({ found: false });
+  });
+});
+
+/**
+ * Real responses from the Cashfree sandbox (API 2026-01-01), recorded 2026-10-06 with the published
+ * test VPAs (testsuccess / testfailure / testinsufficientfunds / testtimeoutbank @gocash).
+ * Only the fields the mapping reads are kept, verbatim.
+ */
+describe('Cashfree mapping — recorded sandbox responses', () => {
+  const failed = (error_details: Record<string, string>, cf_payment_id: string, payment_time: string) => ({
+    payment_status: 'FAILED', cf_payment_id, bank_reference: '1234567890', is_captured: false, payment_time, error_details,
+  });
+  it.each([
+    [
+      'testsuccess@gocash',
+      { payment_status: 'SUCCESS', cf_payment_id: '1461039309445300736', bank_reference: '1234567890', is_captured: true, payment_time: '2026-10-06T22:18:36+05:30', error_details: null },
+      { kind: 'SUCCESS', pspTxnId: '1461039309445300736', upiRrn: '1234567890' },
+      { outcome: 'SUCCESS', customerDebit: 'DEBITED', capture: 'CAPTURED' },
+    ],
+    [
+      'testfailure@gocash',
+      failed({ error_code: 'TRANSACTION_DECLINED', error_description: 'Issue originating from user. Request user to try again', error_reason: 'decline_originating_from_user', error_source: 'customer', error_code_raw: 'U30' }, '1461039501695418880', '2026-10-06T22:19:22+05:30'),
+      { kind: 'BUSINESS_DECLINE', code: 'OTHER' },
+      { outcome: 'FAILED', customerDebit: 'NOT_DEBITED', failureCode: 'TRANSACTION_DECLINED' },
+    ],
+    [
+      'testinsufficientfunds@gocash',
+      failed({ error_code: 'CUSTOMER_AUTH_FAILURE', error_description: "Insufficient funds in user's account, request user to retry after adding funds", error_reason: 'insufficient_funds', error_source: 'customer', error_code_raw: 'U30', error_subcode_raw: 'Z9' }, '1461039521714411008', '2026-10-06T22:19:27+05:30'),
+      { kind: 'BUSINESS_DECLINE', code: 'INSUFFICIENT_FUNDS' },
+      { outcome: 'FAILED', customerDebit: 'NOT_DEBITED', failureCode: 'CUSTOMER_AUTH_FAILURE' },
+    ],
+    [
+      'testtimeoutbank@gocash',
+      failed({ error_code: 'TECHNICAL_FAILURE', error_description: 'Transaction failed because issuing bank did not respond in time. Request user to try again', error_reason: 'high_response_time_from_issuing_bank', error_source: 'issuing_bank', error_code_raw: 'U90' }, '1461039518677734912', '2026-10-06T22:19:26+05:30'),
+      { kind: 'TECHNICAL_DECLINE', code: 'PSP_ERROR' },
+      { outcome: 'FAILED', customerDebit: 'UNKNOWN', failureCode: 'TECHNICAL_FAILURE' },
+    ],
+  ] as const)('%s', (_vpa, payment, status, inquiry) => {
+    expect(mapOrderPayment(payment)).toEqual(status);
+    expect(inquiryFromOrder([payment], [])).toMatchObject({ found: true, ...inquiry, reversal: { status: 'NONE' } });
+  });
+
+  it('keeps 19-digit Cashfree ids exact (they arrive as JSON strings)', () => {
+    const [p] = JSON.parse('[{"payment_status":"SUCCESS","cf_payment_id":"1461039309445300736"}]');
+    expect(mapOrderPayment(p)).toMatchObject({ pspTxnId: '1461039309445300736' });
   });
 });
 

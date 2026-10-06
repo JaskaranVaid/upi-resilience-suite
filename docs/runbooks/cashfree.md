@@ -56,22 +56,44 @@ Or set them for one PowerShell session instead of using `.env`:
 $env:CASHFREE_CLIENT_ID = "<sandbox app id>"; $env:CASHFREE_CLIENT_SECRET = "<sandbox secret key>"; npm run smoke:cashfree
 ```
 
-Optional: `SMOKE_UPI_ID` (a Cashfree sandbox test VPA) + `SMOKE_PHONE` to run a ₹1 collect;
-`SMOKE_SUBSCRIPTION_ID` (an active sandbox UPI subscription) to send a pre-debit notification, then
-after 25 h `SMOKE_EXECUTE_PAYMENT_ID=<printed id>` to execute it. The script refuses `CASHFREE_ENV=production`.
+Optional steps (set in `.env` or with `$env:NAME = "value"` in PowerShell):
+
+| Variables | Step |
+|---|---|
+| `SMOKE_UPI_ID` + `SMOKE_PHONE` | ₹1 UPI collect to a [Cashfree test VPA](https://www.cashfree.com/docs/api-reference/payments/data-to-test-integration), e.g. `testsuccess@gocash`, `testfailure@gocash`, `testinsufficientfunds@gocash`, `testtimeoutbank@gocash`; any 10-digit phone |
+| `SMOKE_CREATE_SUBSCRIPTION=1` | Create a sandbox ON_DEMAND UPI subscription and authorise it with `testsuccess@gocash`; prints its id |
+| `SMOKE_SUBSCRIPTION_ID` | Send a pre-debit notification for that (ACTIVE) subscription; prints a payment id |
+| `SMOKE_SUBSCRIPTION_ID` + `SMOKE_EXECUTE_PAYMENT_ID` | ≥ 25 h later: execute the notified payment |
+
+The script refuses `CASHFREE_ENV=production` and never prints credentials.
+
+### Sandbox results so far (2026-10-06)
+
+- Credentials and the order lookup path work (unknown order → `NOT_FOUND`).
+- UPI collect works end to end with the adapter's default headers: `testsuccess` → `SUCCESS`
+  (debited, captured); `testfailure` → customer decline; `testinsufficientfunds` →
+  `INSUFFICIENT_FUNDS`; `testtimeoutbank` → technical decline with the customer debit `UNKNOWN`
+  (kept under watch). The raw responses are pinned in `test/psp/cashfree.test.ts`.
+- Cashfree ids are 19-digit JSON strings (kept exact).
+- **UPI AutoPay: blocked on account activation.** Subscriptions can be created, but authorisation
+  stays `INITIALIZED`. Cashfree's FAQ: UPI AutoPay activation is *not self-serve*; it must be
+  requested from Cashfree for the sandbox and production accounts.
 
 ## 4. Go-live checklist — confirm these in sandbox first
 
 These are documented gaps in Cashfree's API reference; the adapter is deliberately conservative
 about each, but confirm and, if needed, tighten the mapping in `src/psp/cashfree/mapping.ts`:
 
+0. [ ] **Ask Cashfree to activate UPI AutoPay** on the sandbox and production accounts (support form
+       or account manager). Then: `SMOKE_CREATE_SUBSCRIPTION=1` → notify → execute 25 h later.
 1. [ ] Exact `execution_status` / `payment_status` strings for controlled executions (unknown values
        are treated as `PENDING`: re-checked, never retried).
-2. [ ] Whether `POST /orders/sessions` (UPI collect) needs the `x-client-*` device headers for a
-       server-side call (configurable via `collectClientHeaders`).
+2. [x] `POST /orders/sessions` (UPI collect) works server-side with the adapter's default `x-client-*`
+       headers (sandbox, 2026-10-06; configurable via `collectClientHeaders`).
 3. [ ] Auto-refunds for failed payments appear in `GET /orders/{id}/refunds` (refund webhooks also
        trigger a re-check either way).
-4. [ ] UPI collect is enabled for your merchant account (NPCI restricts collect for some P2M use).
+4. [ ] UPI collect is enabled for your **production** merchant account (works in sandbox; NPCI
+       restricts collect for some P2M use).
 5. [ ] Webhook timestamp unit (ms per docs example; seconds also accepted).
 6. [ ] `CASHFREE_ENV=production`, production keys, `MOCK_PSPS=` empty, webhook URL updated.
 
