@@ -272,6 +272,6 @@ describe('StatusPoller + TrackingService', () => {
       expect(d).toMatchObject({ state: 'FAILED', lastErrorCode: 'UNRESOLVED_PENDING' });
       expect((await tracking(debit.id)).verificationStatus).toBe('NEEDS_MANUAL_INVESTIGATION');
       expect(await caseOf(debit.id)).toMatchObject({ reason: 'VERIFICATION_EXHAUSTED', status: 'NEEDS_ACTION' });
-    });
+    }, 120_000); // simulates ~200 worker cycles over 48 h
   });
 });

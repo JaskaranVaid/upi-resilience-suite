@@ -114,7 +114,7 @@ describe('Scheduler honours the provider notice window', () => {
     // Retried every 15 minutes until 48 h after the due date — bounded, not forever.
     expect(clock.now().getTime() - ist('2026-11-04T00:00:00').getTime()).toBeGreaterThanOrEqual(48 * H);
     expect(clock.now().getTime() - ist('2026-11-04T00:00:00').getTime()).toBeLessThan(49 * H);
-  });
+  }, 120_000); // simulates hundreds of 15-minute retry cycles
 
   it('shows a pending notice in the debit view', async () => {
     const { debitView } = await import('../../src/scheduler/service.js');
