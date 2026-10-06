@@ -2,7 +2,7 @@
  * Cashfree SANDBOX smoke test — verifies the adapter against the real Cashfree test environment.
  * Never runs in CI and refuses to touch production.
  *
- *   CASHFREE_CLIENT_ID=… CASHFREE_CLIENT_SECRET=… npm run smoke:cashfree
+ *   npm run smoke:cashfree      (CASHFREE_CLIENT_ID / CASHFREE_CLIENT_SECRET from .env or the shell)
  *
  * Optional steps (set the variables to enable them):
  *   SMOKE_UPI_ID + SMOKE_PHONE        UPI collect of ₹1 to a Cashfree sandbox test VPA, then poll its status
@@ -14,6 +14,7 @@
 import { randomBytes } from 'node:crypto';
 import { loadDotEnv } from '../src/config/dotenv.js';
 import { CashfreeAdapter } from '../src/psp/cashfree/adapter.js';
+import { looksLikePlaceholder } from '../src/psp/factory.js';
 
 loadDotEnv(); // credentials can live in .env (gitignored); shell variables still win
 
@@ -34,9 +35,19 @@ async function main() {
     console.log('  then run: npm run smoke:cashfree');
     return;
   }
+  const placeholders = (['CASHFREE_CLIENT_ID', 'CASHFREE_CLIENT_SECRET'] as const).filter((k) => looksLikePlaceholder(env[k]!));
+  if (placeholders.length > 0) {
+    console.error(`Not calling Cashfree: ${placeholders.join(' and ')} still look like placeholders (e.g. "<your sandbox app id>").`);
+    console.error('  Use the real sandbox keys from the Cashfree dashboard (Test mode → Developers → API Keys).');
+    console.error('  Variables set in this PowerShell window override .env; to clear them run:');
+    console.error('    Remove-Item Env:CASHFREE_CLIENT_ID, Env:CASHFREE_CLIENT_SECRET');
+    process.exitCode = 2;
+    return;
+  }
   if ((env.CASHFREE_ENV ?? 'sandbox') !== 'sandbox') {
     console.error('Refusing to run: this smoke test only runs against the Cashfree sandbox (CASHFREE_ENV=sandbox).');
-    process.exit(2);
+    process.exitCode = 2;
+    return;
   }
   const cf = new CashfreeAdapter({ clientId: env.CASHFREE_CLIENT_ID, clientSecret: env.CASHFREE_CLIENT_SECRET, env: 'sandbox' });
   const run = `smoke_${randomBytes(4).toString('hex')}`;
@@ -88,10 +99,12 @@ async function main() {
   } else console.log('3. UPI AutoPay — skipped (set SMOKE_SUBSCRIPTION_ID to an active sandbox UPI subscription)');
 
   console.log(failures === 0 ? 'Smoke test passed.' : `Smoke test: ${failures} failure(s).`);
-  process.exit(failures === 0 ? 0 : 1);
+  // Set the exit code rather than calling process.exit(): exiting while fetch is still closing its
+  // connection aborts Node on Windows ("Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)").
+  process.exitCode = failures === 0 ? 0 : 1;
 }
 
 main().catch((e) => {
   console.error(e instanceof Error ? e.message : e);
-  process.exit(1);
+  process.exitCode = 1;
 });

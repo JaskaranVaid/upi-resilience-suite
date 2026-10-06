@@ -8,6 +8,15 @@ export class PspConfigError extends Error {
   override name = 'PspConfigError';
 }
 
+/**
+ * True for values that are clearly not real API keys — a docs placeholder such as
+ * `<your sandbox app id>` or `…` copied verbatim. Real Cashfree keys never contain angle
+ * brackets, ellipses, whitespace or quotes.
+ */
+export function looksLikePlaceholder(value: string): boolean {
+  return /[<>…\s"']|\.\.\./.test(value);
+}
+
 type PspEnv = Pick<
   Env,
   'NODE_ENV' | 'MOCK_PSPS' | 'MOCK_PSP_RATES' | 'ALLOW_MOCK_PSPS' | 'CASHFREE_CLIENT_ID' | 'CASHFREE_CLIENT_SECRET' | 'CASHFREE_ENV' | 'CASHFREE_TIMEOUT_MS'
@@ -25,6 +34,11 @@ export function buildAdapters(env: PspEnv, opts: { fetch?: FetchFn; warn?: (msg:
   const hasSecret = Boolean(env.CASHFREE_CLIENT_SECRET);
   if (hasId !== hasSecret) throw new PspConfigError('Set both CASHFREE_CLIENT_ID and CASHFREE_CLIENT_SECRET, or neither');
   if (hasId && hasSecret) {
+    for (const name of ['CASHFREE_CLIENT_ID', 'CASHFREE_CLIENT_SECRET'] as const) {
+      if (looksLikePlaceholder(env[name]!)) {
+        throw new PspConfigError(`${name} looks like a placeholder, not a real key. Replace it with the value from the Cashfree dashboard.`);
+      }
+    }
     if (env.NODE_ENV === 'production' && env.CASHFREE_ENV === 'sandbox') {
       warn('WARNING: NODE_ENV=production but CASHFREE_ENV=sandbox — payments go to the Cashfree test environment.');
     }
