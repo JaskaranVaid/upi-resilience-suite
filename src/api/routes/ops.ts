@@ -7,6 +7,22 @@ import { merchantOf } from '../app.js';
 import { savingsQuery } from '../schemas.js';
 
 export const opsRoutes = (ctx: AppContext) => async (app: FastifyInstance) => {
+  // Probes run every few seconds from the load balancer and container runtime: keep them out of the logs.
+  /** Liveness: the process is up and serving. Never touches the database, so a database outage doesn't restart every task. */
+  app.get('/healthz', { logLevel: 'silent' }, async () => ({ status: 'ok' }));
+
+  /** Readiness: send traffic here. Fails while shutting down (draining) or when the database is unreachable. */
+  app.get('/readyz', { logLevel: 'silent' }, async (req, reply) => {
+    if (ctx.lifecycle.draining) return reply.status(503).send({ status: 'draining' });
+    try {
+      await ctx.db.execute(sql`select 1`);
+    } catch (e) {
+      req.log.warn({ err: e }, 'readiness: database unreachable');
+      return reply.status(503).send({ status: 'unavailable' });
+    }
+    return { status: 'ready' };
+  });
+
   app.get('/health', async () => {
     await ctx.db.execute(sql`select 1`);
     return { status: 'ok', time: ctx.clock.now(), ruleSet: getRuleSet(ctx.clock.now()).id };

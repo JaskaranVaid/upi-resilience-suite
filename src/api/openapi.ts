@@ -116,6 +116,8 @@ export const ROUTE_DOCS: RouteDoc[] = [
   { method: 'get', path: '/v1/settlements', tag: 'Reporting', auth: 'apiKey', query: settlementsQuery, summary: 'Settlement report lines, as reconciled' },
   { method: 'get', path: '/v1/rules', tag: 'Reporting', auth: 'apiKey', summary: 'Regulatory parameters in force (peak windows, MDR)' },
   { method: 'get', path: '/health', tag: 'Operations', auth: 'none', summary: 'Liveness and database check' },
+  { method: 'get', path: '/healthz', tag: 'Operations', auth: 'none', summary: 'Liveness probe (no database call)' },
+  { method: 'get', path: '/readyz', tag: 'Operations', auth: 'none', summary: 'Readiness probe', description: '503 while the instance is shutting down or cannot reach its database.' },
 ];
 
 const SECURITY: Record<Exclude<Auth, 'none'>, object> = {

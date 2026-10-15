@@ -12,6 +12,17 @@ const schema = z.object({
   /** Signs payment-scoped customer status tokens. Required in production. */
   CUSTOMER_TOKEN_SECRET: z.string().min(32).optional(),
   WORKER_POLL_MS: z.coerce.number().int().min(100).default(1000),
+  /**
+   * On SIGTERM the api first reports not-ready (/readyz 503) and waits this long so the load
+   * balancer stops routing to it, then finishes in-flight requests and exits.
+   */
+  SHUTDOWN_DRAIN_MS: z.coerce.number().int().min(0).max(60_000).default(0),
+  /** Exit with an error if a graceful shutdown takes longer than this. */
+  SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().min(1000).max(600_000).default(25_000),
+  /** The worker writes the time of each completed tick here; the container health check reads it. */
+  HEARTBEAT_FILE: z.string().optional(),
+  /** The health check fails when the worker's last completed tick is older than this. */
+  WORKER_STALL_MS: z.coerce.number().int().min(10_000).default(600_000),
   /** Comma-separated mock PSP ids (may be empty). Mocks never reach a real PSP. */
   MOCK_PSPS: z.string().default('pspA,pspB'),
   /** Mock PSPs are refused in production unless this is explicitly 'true'. */

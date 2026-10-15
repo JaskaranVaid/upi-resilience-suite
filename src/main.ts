@@ -4,20 +4,24 @@ import { loadEnv } from './config/env.js';
 import { configureMdrEffectiveFrom, mdrStatus } from './config/rules.js';
 import { buildContext } from './context.js';
 import { createDb } from './db/client.js';
+import { DEFAULT_HEARTBEAT_FILE, writeHeartbeat } from './ops/lifecycle.js';
+import { jsonLogger } from './ops/log.js';
 import { buildAdapters } from './psp/factory.js';
 import { connectionAdapterFactory } from './psp/connections.js';
 import { SecretBox } from './security/secrets.js';
+
+const log = jsonLogger();
 
 async function main() {
   loadDotEnv();
   const env = loadEnv();
   configureMdrEffectiveFrom(env.MDR_EFFECTIVE_FROM ?? null);
   const mdr = mdrStatus(new Date());
-  console.log(`UPI MDR: ${mdr.status}${mdr.effectiveFrom ? ` (from ${env.MDR_EFFECTIVE_FROM} IST)` : ' — set MDR_EFFECTIVE_FROM once NPCI confirms the start date'}`);
+  log.info(`UPI MDR: ${mdr.status}${mdr.effectiveFrom ? ` (from ${env.MDR_EFFECTIVE_FROM} IST)` : ' — set MDR_EFFECTIVE_FROM once NPCI confirms the start date'}`);
   const { db, close } = await createDb(env.DATABASE_URL);
 
   const adapters = buildAdapters(env);
-  console.log(`shared payment providers (test-mode merchants): ${adapters.map((a) => `${a.id} (${a.mode})`).join(', ') || 'none'}`);
+  log.info(`shared payment providers (test-mode merchants): ${adapters.map((a) => `${a.id} (${a.mode})`).join(', ') || 'none'}`);
   const secrets = SecretBox.fromEnv(env.CREDENTIALS_KEYS, env.NODE_ENV);
 
   const ctx = buildContext({
@@ -30,18 +34,22 @@ async function main() {
     secureCookies: env.NODE_ENV === 'production',
     customerTokenSecret: env.CUSTOMER_TOKEN_SECRET,
     webhookTargets: env.WEBHOOK_TARGETS ?? (env.NODE_ENV === 'production' ? 'public-only' : 'any'),
+    log,
   });
   const stops: Array<() => Promise<void>> = [];
+  const serving = env.ROLE !== 'worker';
 
-  if (env.ROLE !== 'worker') {
+  if (serving) {
     const app = buildApp(ctx, { logger: true, trustProxy: env.TRUST_PROXY });
     // Configured port only (no silent switching for the real server); a busy port is a clear error.
     await app.listen({ host: env.HOST, port: await choosePort(env.PORT, { explicit: true, host: env.HOST }) });
-    stops.push(() => app.close());
+    stops.push(() => app.close()); // waits for in-flight requests
   }
 
   if (env.ROLE !== 'api') {
+    const heartbeatFile = env.HEARTBEAT_FILE ?? DEFAULT_HEARTBEAT_FILE;
     let running = true;
+    let wake: () => void = () => {};
     const loop = (async () => {
       while (running) {
         try {
@@ -50,31 +58,50 @@ async function main() {
           await ctx.reconciler.runDue(); // throttled internally (daily settlement reports)
           await ctx.dispatcher.runOnce();
         } catch (e) {
-          console.error('worker tick failed', e);
+          log.error('worker tick failed', e);
         }
-        await new Promise((r) => setTimeout(r, env.WORKER_POLL_MS));
+        await writeHeartbeat(heartbeatFile).catch((e) => log.warn('heartbeat write failed', { file: heartbeatFile, error: String(e) }));
+        if (running) await new Promise<void>((r) => ((wake = r), setTimeout(r, env.WORKER_POLL_MS)));
       }
     })();
     stops.push(async () => {
       running = false;
+      wake(); // skip the idle wait; a tick in progress finishes (claimed debits are never abandoned mid-call)
       await loop;
     });
-    console.log(`worker polling every ${env.WORKER_POLL_MS}ms`);
+    log.info(`worker polling every ${env.WORKER_POLL_MS}ms`);
   }
 
+  let shuttingDown = false;
   const shutdown = async (signal: string) => {
-    console.log(`${signal} received, shutting down`);
+    if (shuttingDown) return;
+    shuttingDown = true;
+    log.info('shutting down', { signal });
+    setTimeout(() => {
+      log.error('graceful shutdown timed out; exiting', undefined, { timeoutMs: env.SHUTDOWN_TIMEOUT_MS });
+      process.exit(1);
+    }, env.SHUTDOWN_TIMEOUT_MS).unref();
+    ctx.lifecycle.beginDrain();
+    // Let the load balancer see /readyz fail before we stop accepting connections.
+    if (serving && env.SHUTDOWN_DRAIN_MS > 0) await new Promise((r) => setTimeout(r, env.SHUTDOWN_DRAIN_MS));
     for (const stop of stops) await stop();
     await close();
+    log.info('stopped');
     process.exit(0);
   };
   process.once('SIGINT', () => void shutdown('SIGINT'));
   process.once('SIGTERM', () => void shutdown('SIGTERM'));
 }
 
+process.on('unhandledRejection', (e) => {
+  log.error('unhandled promise rejection', e);
+  process.exit(1);
+});
+
 main().catch((e) => {
   // Configuration problems get their message, not a stack trace.
   const configError = e instanceof Error && (e.name === 'PspConfigError' || e.name === 'ZodError' || /already in use|required in production/.test(e.message));
-  console.error(configError ? `Cannot start: ${e.message}` : e);
+  if (configError) log.error(`Cannot start: ${e.message}`);
+  else log.error('startup failed', e);
   process.exit(1);
 });
