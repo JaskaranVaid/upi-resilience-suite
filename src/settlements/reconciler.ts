@@ -63,7 +63,7 @@ export class SettlementReconciler {
       } catch {
         continue;
       }
-      if (!adapter.settlements) continue;
+      if (!adapter.settlements || !adapter.capabilities.settlementReports) continue;
       const done = new Set(
         (await db.select({ day: reconRuns.day }).from(reconRuns).where(and(eq(reconRuns.pspId, c.id), eq(reconRuns.status, 'DONE')))).map((r) => r.day),
       );
@@ -194,8 +194,10 @@ export class SettlementReconciler {
   }
 
   /**
-   * Captured payments still unsettled `notSettledAfterDays` after a reconciled day: open NOT_SETTLED
-   * cases. Only for connections whose report was actually read for that later day.
+   * Captured payments still unsettled `notSettledAfterDays` after they were captured: open NOT_SETTLED
+   * cases — only when the report was read for *every* day from the capture day through the grace
+   * period (so captures from before reconciliation began are never flagged), and never twice for one
+   * payment (a case the merchant closed stays closed).
    */
   async flagUnsettled(): Promise<number> {
     const { db, clock, tracking } = this.deps;
@@ -205,12 +207,16 @@ export class SettlementReconciler {
       from payment_tracking t
       join merchant_payments_v v on v.subject_type = t.subject_type and v.id = t.subject_id
       where v.domain_state = 'SUCCEEDED' and t.capture = 'CAPTURED' and t.settlement_status = 'UNSETTLED'
-        and not exists (select 1 from payment_cases c where c.subject_type = t.subject_type and c.subject_id = t.subject_id and c.status <> 'RESOLVED')
-        and exists (
-          select 1 from recon_runs r
-          where r.psp_id = t.psp_id and r.status = 'DONE'
-            and r.day >= to_char((v.last_updated_at at time zone 'Asia/Kolkata') + make_interval(days => ${this.opts.notSettledAfterDays}), 'YYYY-MM-DD')
+        and not exists (
+          select 1 from payment_cases c
+          where c.subject_type = t.subject_type and c.subject_id = t.subject_id and (c.status <> 'RESOLVED' or c.reason = 'NOT_SETTLED')
         )
+        and (
+          select count(distinct r.day) from recon_runs r
+          where r.psp_id = t.psp_id and r.status = 'DONE'
+            and r.day between to_char(v.last_updated_at at time zone 'Asia/Kolkata', 'YYYY-MM-DD')
+                          and to_char((v.last_updated_at at time zone 'Asia/Kolkata') + make_interval(days => ${this.opts.notSettledAfterDays}), 'YYYY-MM-DD')
+        ) = ${this.opts.notSettledAfterDays + 1}
       limit 500
     `)) as unknown as { rows: Array<{ id: string; domain_state: DomainState }> };
     let opened = 0;

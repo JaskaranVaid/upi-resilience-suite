@@ -114,6 +114,8 @@ export interface PspCapabilities {
   channels: PaymentChannel[];
   /** Can execute UPI AutoPay mandates when Merchantflo chooses (notice, then execute). */
   autopay: boolean;
+  /** Publishes settlement reports we can reconcile against (settlements()). */
+  settlementReports: boolean;
 }
 
 /** Identifies what a txnRef belongs to, for providers that need more than the reference. */

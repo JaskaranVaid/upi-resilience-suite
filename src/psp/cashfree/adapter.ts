@@ -83,6 +83,7 @@ export class CashfreeAdapter implements PspAdapter {
     collectRequires: ['customerPhone'],
     channels: ['UPI_COLLECT', 'UPI_INTENT', 'UPI_QR', 'NETBANKING', 'CARD'],
     autopay: true, // controlled notify → execute keeps timing with Engine A
+    settlementReports: true,
   };
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
@@ -219,7 +220,9 @@ export class CashfreeAdapter implements PspAdapter {
       cursor = body?.cursor ?? null;
       if (!cursor || (body?.data ?? []).length === 0) break;
     }
-    return items.filter((i) => !i.settledAt || (i.settledAt >= range.from && i.settledAt < range.to));
+    // No further filter by settlement date: a line belongs to the day the report filter returned it
+    // for, and lines are stored once per event, so overlap between days is harmless while a gap loses money facts.
+    return items;
   }
 
   /** A subscription (our mandate) is debitable only while ACTIVE. Lookup failures throw. */

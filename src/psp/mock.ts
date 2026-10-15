@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { realSleep, type Sleep } from '../clock.js';
+import { realSleep, type Clock, type Sleep } from '../clock.js';
 import type {
   ComplaintRequest,
   ComplaintResult,
@@ -27,6 +27,7 @@ export const MOCK_CAPABILITIES: PspCapabilities = {
   collectRequires: [],
   channels: ['UPI_COLLECT', 'UPI_INTENT', 'UPI_QR', 'NETBANKING', 'CARD'],
   autopay: true,
+  settlementReports: false,
 };
 
 /** A plausible customer action for a simulated payment (never a real PSP or bank URL). */
@@ -78,6 +79,11 @@ export interface MockPspOptions {
   complaintScript?: ComplaintStatus[];
   /** Override capabilities (e.g. to behave like a provider without UDIR complaints). */
   capabilities?: Partial<PspCapabilities>;
+  /**
+   * Simulate a settlement report: every success settles the next IST day at 10:00, net of
+   * `feeBps`. Used for test-mode connections so reconciliation works end to end.
+   */
+  autoSettle?: { clock: Clock; feeBps?: number };
   sleep?: Sleep;
 }
 
@@ -112,20 +118,35 @@ export class MockPsp implements PspAdapter {
     private readonly opts: MockPspOptions = {},
   ) {
     this.script = [...(opts.script ?? [])];
-    this.capabilities = { ...MOCK_CAPABILITIES, ...opts.capabilities };
+    this.capabilities = { ...MOCK_CAPABILITIES, ...(opts.autoSettle ? { settlementReports: true } : {}), ...opts.capabilities };
     this.rngState = opts.seed ?? 42;
   }
 
   private readonly mandateStatuses = new Map<string, MandateLookup>();
   private readonly settlementItems: SettlementItem[] = [];
 
-  /** Lines this mock's settlement report returns (filtered by settledAt). */
+  /** Lines this mock's settlement report returns (filtered by settledAt). Turns reporting on. */
   addSettlements(...items: SettlementItem[]): void {
+    this.capabilities.settlementReports = true;
     this.settlementItems.push(...items);
   }
 
   async settlements(range: { from: Date; to: Date }): Promise<SettlementItem[]> {
     return this.settlementItems.filter((s) => s.settledAt && s.settledAt >= range.from && s.settledAt < range.to);
+  }
+
+  /** autoSettle: a success settles the next IST day at 10:00 (T+1), net of the configured fee. */
+  private autoSettleSuccess(txnRef: string, pspTxnId: string, amountPaise: number): void {
+    const auto = this.opts.autoSettle;
+    if (!auto) return;
+    const at = auto.clock.now();
+    const nextDay = new Date(at.getTime() + 5.5 * 3_600_000).toISOString().slice(0, 10);
+    const settledAt = new Date(new Date(`${nextDay}T10:00:00+05:30`).getTime() + 86_400_000);
+    const fee = Math.round((amountPaise * (auto.feeBps ?? 0)) / 10_000);
+    this.settlementItems.push({
+      pspEventId: `auto:${pspTxnId}`, kind: 'PAYMENT', pspPaymentId: pspTxnId, orderRef: txnRef, amountPaise,
+      feePaise: fee, taxPaise: 0, settledAmountPaise: amountPaise - fee, settlementId: `mockstl-${nextDay}`, utr: `MOCKUTR${nextDay.replaceAll('-', '')}`, settledAt,
+    });
   }
 
   /** What mandateStatus() reports for a mandate (default ACTIVE). */
@@ -170,12 +191,12 @@ export class MockPsp implements PspAdapter {
 
   async executeMandate(req: ExecuteMandateRequest): Promise<PspResult> {
     this.calls.push({ op: 'execute', txnRef: req.txnRef, amountPaise: req.amountPaise, noticeRef: req.noticeRef });
-    return this.respond(req.txnRef);
+    return this.respond(req.txnRef, req.amountPaise);
   }
 
   async collect(req: CollectRequest): Promise<PspResult> {
     this.calls.push({ op: 'collect', txnRef: req.txnRef, amountPaise: req.amountPaise });
-    const result = await this.respond(req.txnRef);
+    const result = await this.respond(req.txnRef, req.amountPaise);
     if (req.channel === 'UPI_COLLECT' || result.kind !== 'SUCCESS') return result;
     // Intent/QR/redirect/checkout payments need the customer to act first: report PENDING with the
     // action, while the ledger keeps the success a later status check will find (customer paid).
@@ -238,7 +259,7 @@ export class MockPsp implements PspAdapter {
     return { ok: true, status, updatedAt: new Date() };
   }
 
-  private async respond(txnRef: string): Promise<PspResult> {
+  private async respond(txnRef: string, amountPaise: number): Promise<PspResult> {
     if (this.opts.latencyMs) await (this.opts.sleep ?? realSleep)(this.opts.latencyMs);
     const existing = this.ledger.get(txnRef);
     if (existing?.kind === 'SUCCESS') return existing; // idempotent on txnRef, like real PSPs
@@ -250,6 +271,7 @@ export class MockPsp implements PspAdapter {
     if (!scripted && result.kind === 'SUCCESS') result.upiRrn = mockRrn(this.id, txnRef);
     const settled = settleAs ?? (result.kind === 'TECHNICAL_DECLINE' && result.code === 'TIMEOUT' ? null : (result as PspResult));
     if (settled) this.ledger.set(txnRef, settled);
+    if (settled?.kind === 'SUCCESS') this.autoSettleSuccess(txnRef, settled.pspTxnId, amountPaise);
     return result as PspResult;
   }
 

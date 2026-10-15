@@ -57,6 +57,7 @@ describe('CashfreeAdapter — configuration', () => {
       collectRequires: ['customerPhone'],
       channels: ['UPI_COLLECT', 'UPI_INTENT', 'UPI_QR', 'NETBANKING', 'CARD'],
       autopay: true,
+      settlementReports: true,
     });
   });
 

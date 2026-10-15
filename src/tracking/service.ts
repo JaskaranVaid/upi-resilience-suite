@@ -304,6 +304,8 @@ export class TrackingService {
   ): Promise<PaymentCase | null> {
     const existing = await this.openCase(tx, t.subjectType, t.subjectId);
     let reason: CaseReason | null = existing?.reason ?? forceReason ?? null;
+    // A short-paid settlement is the more specific problem than "not settled yet": it takes over.
+    if (forceReason === 'SETTLEMENT_MISMATCH' && existing?.reason === 'NOT_SETTLED') reason = forceReason;
     if (mismatch) reason = 'STATUS_MISMATCH';
     if (!reason) {
       if (t.verificationStatus === 'NEEDS_MANUAL_INVESTIGATION') reason = 'VERIFICATION_EXHAUSTED';

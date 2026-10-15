@@ -105,7 +105,7 @@ export function buildContext(args: {
   const sleep = args.sleep ?? realSleep;
   const health = new HealthTracker(args.health ?? {}, clock);
   const secrets = args.secrets ?? SecretBox.development();
-  const connectionAdapters = args.connectionAdapters ?? connectionAdapterFactory();
+  const connectionAdapters = args.connectionAdapters ?? connectionAdapterFactory({ clock });
   const psps = new PspRegistry(args.adapters, { db: args.db, secrets, clock, build: connectionAdapters });
   const router = new Router(psps, health, clock, sleep, args.router);
   const polling = { ...DEFAULT_POLLING, ...args.polling };

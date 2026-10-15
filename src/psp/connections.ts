@@ -1,3 +1,4 @@
+import { systemClock, type Clock } from '../clock.js';
 import { hashToInt } from '../rules/slots.js';
 import { CashfreeAdapter } from './cashfree/adapter.js';
 import type { FetchFn } from './http.js';
@@ -9,7 +10,7 @@ import type { ConnectionAdapterFactory } from './registry.js';
  * The adapter for a merchant's own PSP account. The connection id becomes the adapter id, so
  * every record (mandates, payments, attempts, tracking, health) refers to that account.
  */
-export function connectionAdapterFactory(opts: { fetch?: FetchFn; cashfreeTimeoutMs?: number } = {}): ConnectionAdapterFactory {
+export function connectionAdapterFactory(opts: { fetch?: FetchFn; cashfreeTimeoutMs?: number; clock?: Clock } = {}): ConnectionAdapterFactory {
   return (row, credentials) => {
     switch (row.provider) {
       case 'cashfree': {
@@ -34,8 +35,9 @@ export function connectionAdapterFactory(opts: { fetch?: FetchFn; cashfreeTimeou
         });
       }
       case 'mock':
-        // Test-mode connection: simulated results only (never a real PSP).
-        return new MockPsp(row.id, { seed: hashToInt(row.id) % 1000, latencyMs: 50 });
+        // Test-mode connection: simulated results only (never a real PSP), settled T+1 so
+        // reconciliation can be tried end to end.
+        return new MockPsp(row.id, { seed: hashToInt(row.id) % 1000, latencyMs: 50, autoSettle: { clock: opts.clock ?? systemClock } });
     }
   };
 }

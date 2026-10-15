@@ -66,6 +66,7 @@ export class RazorpayAdapter implements PspAdapter {
     collectRequires: ['customerPhone'],
     channels: ['UPI_COLLECT', 'UPI_INTENT', 'NETBANKING', 'CARD'],
     autopay: false,
+    settlementReports: true,
   };
   private readonly auth: string;
   private readonly timeoutMs: number;
