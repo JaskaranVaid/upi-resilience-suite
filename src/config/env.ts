@@ -49,6 +49,13 @@ const schema = z.object({
    * and to any http(s) URL elsewhere, so local development can use http://localhost.
    */
   WEBHOOK_TARGETS: z.enum(['public-only', 'any']).optional(),
+  /**
+   * Key ring encrypting merchants' PSP credentials: "k2:<base64 32 bytes>,k1:<…>" (first = active).
+   * Required in production. Generate a key with: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+   */
+  CREDENTIALS_KEYS: z.string().optional(),
+  /** Public base URL of this API (e.g. https://api.merchantflo.in), used to show PSP webhook URLs. */
+  PUBLIC_BASE_URL: z.url().optional(),
   /** Optional JSON map of pspId -> MockRates, e.g. {"pspA":{"bankUnavailable":0.3}} */
   MOCK_PSP_RATES: z.string().optional(),
 });
