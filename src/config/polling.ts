@@ -21,6 +21,8 @@ export interface PollingConfig {
   /** Minimum gap between manual "Recheck now" requests for the same payment. */
   manualRecheckCooldownMs: number;
   batchSize: number;
+  /** Checks run in parallel per poller tick (each is still exclusive per payment via its lease). */
+  concurrency: number;
 }
 
 const SECOND = 1000;
@@ -38,4 +40,5 @@ export const DEFAULT_POLLING: PollingConfig = {
   verifyingAfterMs: 45 * SECOND,
   manualRecheckCooldownMs: 10 * SECOND,
   batchSize: 50,
+  concurrency: 8,
 };

@@ -204,6 +204,26 @@ describe('StatusPoller + TrackingService', () => {
     expect(await tracking(payment.id)).toMatchObject({ verificationStatus: 'IN_PROGRESS', checkCount: 1, leaseUntil: null });
   });
 
+  it('checks due payments concurrently, each exactly once, so one slow enquiry does not stall the rest', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const slow = new MockPsp('pspA', { script: Array.from({ length: 6 }, () => ({ kind: 'PENDING' }) as const) });
+    const inquire = slow.inquire.bind(slow);
+    slow.inquire = async (ref, c) => {
+      maxInFlight = Math.max(maxInFlight, ++inFlight);
+      await new Promise((r) => setTimeout(r, 30)); // real time: the enquiry API is slow
+      inFlight--;
+      return inquire(ref, c);
+    };
+    const c2 = buildContext({ db: ctx.db, adapters: [slow], adminToken: 'x'.repeat(20), clock, sleep: clock.sleep, polling: { concurrency: 4 } });
+    for (let i = 0; i < 6; i++) await c2.payments.create(merchantId, { amountPaise: rs(100), payerVpa: 'ravi@okicici', idempotencyKey: `slow-${i}` });
+    clock.advance(5_000);
+    expect(await c2.poller.runOnce()).toBe(6);
+    expect(maxInFlight).toBeGreaterThan(1);
+    expect(maxInFlight).toBeLessThanOrEqual(4);
+    expect(slow.calls.filter((c) => c.op === 'inquire')).toHaveLength(6);
+  });
+
   it('never runs two checks for the same payment at once', async () => {
     pspA.enqueue({ kind: 'TECHNICAL_DECLINE', code: 'TIMEOUT', settleAs: { kind: 'PENDING' } });
     const { payment } = await pay();

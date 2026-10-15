@@ -37,14 +37,19 @@ export class StatusPoller {
       .orderBy(asc(paymentTracking.nextCheckAt))
       .limit(tracking.config.batchSize);
 
+    // A slow PSP enquiry must not hold up every other payment's check: run a bounded pool.
     let done = 0;
-    for (const { id } of due) {
-      try {
-        if (await tracking.check(id, SYSTEM, { manual: false })) done++;
-      } catch (e) {
-        (this.deps.log ?? ((m, err) => console.error(m, err)))(`status check ${id} failed`, e);
+    const queue = due.map((d) => d.id);
+    const worker = async () => {
+      for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
+        try {
+          if (await tracking.check(id, SYSTEM, { manual: false })) done++;
+        } catch (e) {
+          (this.deps.log ?? ((m, err) => console.error(m, err)))(`status check ${id} failed`, e);
+        }
       }
-    }
+    };
+    await Promise.all(Array.from({ length: Math.min(Math.max(1, tracking.config.concurrency), queue.length) }, worker));
     return done;
   }
 }
