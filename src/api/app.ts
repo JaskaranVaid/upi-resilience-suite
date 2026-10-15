@@ -105,6 +105,24 @@ export function buildApp(ctx: AppContext, opts: { logger?: boolean; trustProxy?:
     },
   });
   app.get('/dashboard', async (_req, reply) => reply.redirect('/dashboard/'));
+  // checkout.js and its stylesheet load from merchants' pages (any origin); demo.html is ours.
+  app.register(fastifyStatic, {
+    root: fileURLToPath(new URL('../../checkout', import.meta.url)),
+    prefix: '/checkout/',
+    decorateReply: false,
+    cacheControl: false,
+    setHeaders: (res, path) => {
+      res.setHeader('cross-origin-resource-policy', 'cross-origin');
+      res.setHeader('x-content-type-options', 'nosniff');
+      res.setHeader('cache-control', 'public, max-age=300');
+      if (path.endsWith('.html')) {
+        res.setHeader(
+          'content-security-policy',
+          "default-src 'self'; img-src 'self' data:; script-src 'self' https://sdk.cashfree.com https://checkout.razorpay.com; connect-src 'self' https:; frame-src https:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+        );
+      }
+    },
+  });
   app.register(dashboardApi(ctx));
   app.register(opsRoutes(ctx));
   app.register(merchantRoutes(ctx));

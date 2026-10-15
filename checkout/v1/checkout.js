@@ -7,39 +7,31 @@
  *     Merchantflo.mount(document.getElementById('pay'), {
  *       sessionId: 'cks_…',            // from POST /v1/checkout/sessions (your server)
  *       token: '…',                    // that response's clientToken
- *       apiBase: 'https://<your-merchantflo-host>',
+ *       apiBase: 'https://<your-merchantflo-host>',   // default: where this script was loaded from
  *       onComplete: (r) => { … },      // { status: 'success' | 'failed', paymentId }
  *     });
  *   </script>
  *
- * Renders inside a shadow root (no style clashes with your page), talks only to Merchantflo's
- * public checkout endpoints, never sees card data (cards open the PSP's own checkout), and tells
- * the customer not to pay again while a payment is being verified.
+ * Renders inside a shadow root (no style clashes with your page; styles come from checkout.css next
+ * to this file, so a strict style-src CSP on your page needs only that origin), talks only to
+ * Merchantflo's public checkout endpoints, never sees card data (cards open the PSP's own checkout),
+ * and tells the customer not to pay again while a payment is being verified.
  */
 (function () {
   'use strict';
 
-  var STYLE = [
-    ':host{all:initial;display:block;font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#16191f}',
-    '.mf{--bg:#fff;--fg:#16191f;--mut:#5b6472;--line:#e2e5ea;--acc:#2f5bd3;--acc-fg:#fff;--good:#1f7a4d;--good-bg:#e6f4ec;--warn-bg:#fdf3dc;--bad:#b3261e;',
-    'background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:12px;padding:18px;max-width:440px;box-sizing:border-box}',
-    '@media (prefers-color-scheme:dark){.mf{--bg:#171b21;--fg:#e8ebf0;--mut:#9aa3b2;--line:#2b313b;--acc:#7b9cff;--acc-fg:#0d1220;--good:#6fd3a0;--good-bg:#133324;--warn-bg:#3a2c0d;--bad:#ff8a80}}',
-    '.amt{font-size:24px;font-weight:650;margin:0 0 2px}.sub{color:var(--mut);font-size:13px;margin:0 0 14px}',
-    '.m{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:1px solid var(--line);background:transparent;color:inherit;font:inherit;border-radius:10px;padding:12px;margin:0 0 8px;cursor:pointer}',
-    '.m[aria-pressed="true"]{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc)}.m:focus-visible,.btn:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset:2px}',
-    '.m .n{flex:1;font-weight:600}.m .p{font-variant-numeric:tabular-nums}.tag{font-size:12px;font-weight:600;color:var(--good);background:var(--good-bg);border-radius:999px;padding:2px 8px}',
-    '.btn{display:block;width:100%;box-sizing:border-box;border:0;border-radius:10px;padding:12px;font:inherit;font-weight:650;cursor:pointer;text-align:center;text-decoration:none;background:var(--acc);color:var(--acc-fg);margin-top:10px}',
-    '.btn.sec{background:transparent;color:var(--acc);border:1px solid var(--line)}.btn[disabled]{opacity:.6;cursor:default}',
-    '.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.row .btn{flex:1;min-width:120px;margin-top:0}',
-    'input{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:8px;padding:10px;font:inherit;background:transparent;color:inherit;margin-top:6px}',
-    '.note{background:var(--warn-bg);border-radius:8px;padding:10px;margin-top:12px;font-size:14px}.ok{background:var(--good-bg);color:var(--good);border-radius:8px;padding:12px;font-weight:600}',
-    '.err{color:var(--bad);font-size:14px;margin-top:8px}.qr{display:block;width:220px;height:220px;margin:12px auto;background:#fff;border-radius:8px;padding:6px}',
-    '.mut{color:var(--mut);font-size:13px}.flows{display:flex;gap:6px;margin:4px 0 8px}.flows button{flex:1}',
-  ].join('');
+  var script = typeof document !== 'undefined' && document.currentScript && document.currentScript.src;
+  var ASSET_BASE = script ? script.replace(/[^/]*$/, '') : null;
+  var ORIGIN = script ? new URL(script).origin : '';
 
   var LABELS = { UPI: 'UPI', NETBANKING: 'Netbanking', CARD: 'Debit / credit card', RUPAY_DEBIT: 'RuPay debit card' };
   var FLOW_LABELS = { INTENT: 'UPI app', QR: 'Scan QR', COLLECT: 'UPI ID' };
+  // Payment links come from the PSP; only these schemes may reach an href or window.location.
+  var SAFE_URL = /^(?:upi|tez|phonepe|paytmmp|paytm|gpay|bhim|credpay|intent):|^https:\/\//i;
 
+  function safeUrl(u) {
+    return typeof u === 'string' && SAFE_URL.test(u) ? u : null;
+  }
   function rupees(paise) {
     return '₹' + (paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
@@ -58,7 +50,7 @@
       s.async = true;
       s.onload = resolve;
       s.onerror = function () {
-        reject(new Error('Could not load ' + src));
+        reject(new Error('Could not open the payment window. Please try again.'));
       };
       document.head.appendChild(s);
     });
@@ -66,9 +58,29 @@
 
   function mount(host, opts) {
     if (!host || !opts || !opts.sessionId || !opts.token) throw new Error('Merchantflo.mount(element, { sessionId, token, apiBase })');
-    var base = (opts.apiBase || '').replace(/\/$/, '') + '/public/checkout/sessions/' + encodeURIComponent(opts.sessionId);
-    var root = host.attachShadow ? host.attachShadow({ mode: 'open' }) : host;
-    var state = { view: null, method: null, flow: isMobile() ? 'INTENT' : 'QR', timer: null, done: false };
+    var apiBase = (opts.apiBase || ORIGIN).replace(/\/$/, '');
+    var base = apiBase + '/public/checkout/sessions/' + encodeURIComponent(opts.sessionId);
+    var root = host.shadowRoot || (host.attachShadow ? host.attachShadow({ mode: 'open' }) : host);
+    var state = { view: null, method: null, flow: isMobile() ? 'INTENT' : 'QR', timer: null, done: false, destroyed: false };
+
+    // Stylesheet + container, built once; render() only swaps the container's content.
+    root.innerHTML = '';
+    var link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = (ASSET_BASE || apiBase + '/checkout/v1/') + 'checkout.css';
+    var box = document.createElement('div');
+    box.className = 'mf';
+    box.setAttribute('role', 'region');
+    box.setAttribute('aria-label', 'Payment');
+    box.hidden = true; // until styled, so the customer never sees an unstyled flash
+    link.onload = link.onerror = function () {
+      box.hidden = false;
+    };
+    var live = document.createElement('div');
+    live.setAttribute('aria-live', 'polite');
+    box.appendChild(live);
+    root.appendChild(link);
+    root.appendChild(box);
 
     function api(path, body) {
       return fetch(base + path, {
@@ -85,7 +97,8 @@
     }
 
     function render(inner) {
-      root.innerHTML = '<style>' + STYLE + '</style><div class="mf" role="region" aria-label="Payment"><div aria-live="polite">' + inner + '</div></div>';
+      if (state.destroyed) return;
+      live.innerHTML = inner;
     }
 
     function header() {
@@ -95,49 +108,54 @@
 
     function showMethods(error) {
       var v = state.view;
-      var m = state.method || v.methods[0].method;
-      state.method = m;
+      if (!v.methods.length) return render(header() + '<p class="err" role="alert">No payment method is available right now.</p>');
+      var sel = v.methods.filter(function (o) { return o.method === state.method; })[0] || v.methods[0];
+      state.method = sel.method;
       var html = header();
       v.methods.forEach(function (o) {
         var save = o.discountPaise > 0 ? '<span class="tag">Save ' + rupees(o.discountPaise) + '</span>' : '';
         html +=
-          '<button type="button" class="m" data-m="' + o.method + '" aria-pressed="' + (o.method === m) + '"><span class="n">' + esc(LABELS[o.method] || o.method) + '</span>' + save +
-          '<span class="p">' + rupees(o.payablePaise) + '</span></button>';
+          '<button type="button" class="m" data-m="' + esc(o.method) + '" aria-pressed="' + (o.method === sel.method) + '"><span class="n">' +
+          esc(LABELS[o.method] || o.method) + '</span>' + save + '<span class="p">' + rupees(o.payablePaise) + '</span></button>';
       });
-      var sel = v.methods.filter(function (o) { return o.method === m; })[0];
-      if (m === 'UPI' && sel.upiFlows && sel.upiFlows.length > 1) {
+      if (sel.method === 'UPI' && sel.upiFlows && sel.upiFlows.length) {
         if (sel.upiFlows.indexOf(state.flow) < 0) state.flow = sel.upiFlows[0];
-        html += '<div class="flows" role="group" aria-label="How to pay with UPI">';
-        sel.upiFlows.forEach(function (f) {
-          html += '<button type="button" class="btn sec" data-f="' + f + '" aria-pressed="' + (f === state.flow) + '">' + FLOW_LABELS[f] + '</button>';
-        });
-        html += '</div>';
-        if (state.flow === 'COLLECT') html += '<label class="mut">Your UPI ID<input id="vpa" autocomplete="off" placeholder="name@bank" /></label>';
+        if (sel.upiFlows.length > 1) {
+          html += '<div class="flows" role="group" aria-label="How to pay with UPI">';
+          sel.upiFlows.forEach(function (f) {
+            html += '<button type="button" class="btn sec" data-f="' + esc(f) + '" aria-pressed="' + (f === state.flow) + '">' + esc(FLOW_LABELS[f] || f) + '</button>';
+          });
+          html += '</div>';
+        }
+        if (state.flow === 'COLLECT') html += '<label class="mut">Your UPI ID<input id="vpa" autocomplete="off" inputmode="email" placeholder="name@bank" /></label>';
       }
       html += '<button type="button" class="btn" id="pay">Pay ' + rupees(sel.payablePaise) + '</button>';
       if (error) html += '<p class="err" role="alert">' + esc(error) + '</p>';
       render(html);
-      root.querySelectorAll('[data-m]').forEach(function (b) {
+      live.querySelectorAll('[data-m]').forEach(function (b) {
         b.addEventListener('click', function () {
           state.method = b.getAttribute('data-m');
           showMethods();
         });
       });
-      root.querySelectorAll('[data-f]').forEach(function (b) {
+      live.querySelectorAll('[data-f]').forEach(function (b) {
         b.addEventListener('click', function () {
           state.flow = b.getAttribute('data-f');
           showMethods();
         });
       });
-      root.getElementById ? null : null;
-      var payBtn = root.querySelector('#pay');
+      var payBtn = live.querySelector('#pay');
       payBtn.addEventListener('click', function () {
         payBtn.disabled = true;
         var body = { method: state.method };
         if (state.method === 'UPI') {
           body.upiFlow = state.flow;
-          var vpaInput = root.querySelector('#vpa');
-          if (state.flow === 'COLLECT') body.vpa = vpaInput ? vpaInput.value.trim() : '';
+          if (state.flow === 'COLLECT') {
+            var vpaInput = live.querySelector('#vpa');
+            body.vpa = vpaInput ? vpaInput.value.trim() : '';
+            // Same rule as the API's, worded for the customer.
+            if (!/^[\w.\-]{2,256}@[a-zA-Z][a-zA-Z0-9.\-]{1,64}$/.test(body.vpa)) return showMethods('Enter your UPI ID, like name@bank.');
+          }
         }
         api('/pay', body)
           .then(function (r) {
@@ -159,22 +177,29 @@
       if (p.status !== 'processing' || !p.action) return showStatus(p);
       var a = p.action;
       if (a.type === 'UPI_INTENT') {
-        var apps = Object.keys(a.appUrls || {}).map(function (k) {
-          return '<a class="btn sec" href="' + esc(a.appUrls[k]) + '">' + esc(k) + '</a>';
-        });
-        waiting(p, '<a class="btn" href="' + esc(a.url) + '">Open UPI app</a>' + (apps.length ? '<div class="row">' + apps.join('') + '</div>' : '') + '<p class="mut">Approve the payment in your UPI app, then come back here.</p>');
+        var url = safeUrl(a.url);
+        var apps = Object.keys(a.appUrls || {})
+          .filter(function (k) { return safeUrl(a.appUrls[k]); })
+          .map(function (k) {
+            return '<a class="btn sec" href="' + esc(a.appUrls[k]) + '">' + esc(k) + '</a>';
+          });
+        waiting(
+          p,
+          (url ? '<a class="btn" href="' + esc(url) + '">Open UPI app</a>' : '') + (apps.length ? '<div class="row">' + apps.join('') + '</div>' : '') +
+            '<p class="mut">Approve the payment in your UPI app, then come back here.</p>',
+        );
       } else if (a.type === 'UPI_QR') {
-        var src = a.qrImage || base + '/qr.svg?token=' + encodeURIComponent(opts.token);
+        var src = a.qrImage ? (/^data:image\/(png|jpeg|gif);base64,/.test(a.qrImage) ? a.qrImage : 'data:image/png;base64,' + a.qrImage) : base + '/qr.svg?token=' + encodeURIComponent(opts.token);
         waiting(p, '<img class="qr" alt="UPI QR code for ' + rupees(p.amountPaise) + '" src="' + esc(src) + '" /><p class="mut">Scan with any UPI app.</p>');
       } else if (a.type === 'UPI_COLLECT') {
         waiting(p, '<div class="note">A payment request was sent to <strong>' + esc(a.vpa) + '</strong>. Approve it in your UPI app.</div>');
-      } else if (a.type === 'REDIRECT') {
+      } else if (a.type === 'REDIRECT' && safeUrl(a.url)) {
         waiting(p, '<p>Taking you to your bank…</p>');
-        window.location.assign(a.url);
+        window.location.assign(safeUrl(a.url));
       } else if (a.type === 'PSP_CHECKOUT') {
         waiting(p, '<p>Opening secure payment…</p>');
         openPsp(a).catch(function (e) {
-          showMethods(e.message);
+          render(header() + '<p class="err" role="alert">' + esc(e.message) + '</p>');
         });
       } else {
         waiting(p, '');
@@ -203,7 +228,8 @@
         state.done = true;
         render(header() + '<div class="ok">Payment successful</div>');
         if (opts.onComplete) opts.onComplete({ status: 'success', paymentId: p.id });
-        if (state.view.returnUrl) setTimeout(function () { window.location.assign(state.view.returnUrl); }, 1500);
+        var ret = safeUrl(state.view.returnUrl);
+        if (ret && !state.destroyed) setTimeout(function () { window.location.assign(ret); }, 1500);
         return;
       }
       if (p.status === 'failed') {
@@ -221,11 +247,16 @@
     }
 
     function poll(now) {
-      if (state.timer || state.done) return;
+      if (state.done || state.destroyed) return;
+      if (state.timer) {
+        if (!now) return;
+        clearTimeout(state.timer);
+      }
       state.timer = setTimeout(function () {
         state.timer = null;
         api('/status')
           .then(function (s) {
+            if (state.done || state.destroyed) return;
             if (!s.payment) return;
             if (s.payment.status === 'processing' && s.payment.action) return poll();
             showStatus(s.payment);
@@ -254,12 +285,12 @@
     refresh();
     return {
       destroy: function () {
-        state.done = true;
+        state.destroyed = true;
         clearTimeout(state.timer);
         root.innerHTML = '';
       },
     };
   }
 
-  window.Merchantflo = { mount: mount, version: '1' };
+  window.Merchantflo = { mount: mount, safeUrl: safeUrl, version: '1' };
 })();
