@@ -60,8 +60,8 @@ export function buildApp(ctx: AppContext, opts: { logger?: boolean; trustProxy?:
   app.decorateRequest('merchant', null);
   app.addHook('preHandler', async (req) => {
     const route = req.routeOptions.url ?? '';
-    // Merchant onboarding uses the admin token instead of a merchant API key.
-    if (!route.startsWith('/v1/') || (route === '/v1/merchants' && req.method === 'POST')) return;
+    // Merchant onboarding and operator routes use the admin token instead of a merchant API key.
+    if (!route.startsWith('/v1/') || (route === '/v1/merchants' && req.method === 'POST') || route.startsWith('/v1/admin/')) return;
     const key = bearer(req);
     if (!key) throw new AppError('UNAUTHORIZED', 'Missing API key');
     ctx.authFailures?.assertAllowed(req.ip);

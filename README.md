@@ -105,6 +105,8 @@ or session cookies — checked before any lookup); over a limit → `429 RATE_LI
 | `POST /v1/api-keys`, `GET /v1/api-keys`, `POST /v1/api-keys/:id/revoke` | Key rotation (the key is shown once; the last active key can't be revoked) |
 | `POST /v1/psp-connections`, `GET /v1/psp-connections`, `PATCH /v1/psp-connections/:id` | The merchant's own PSP accounts (credentials checked, sealed, never returned) |
 | `POST /v1/mandates/import` | Bulk import of existing mandates: JSON `{ mandates, verify? }` or `text/csv` |
+| `PATCH /v1/mandates/:id`, `POST /v1/mandates/move-psp` | Re-point mandates to another of the merchant's PSPs (one, or every mandate on PSP `from`) |
+| `PATCH /v1/admin/merchants/:id` *(admin)* | Change a merchant's mode; revokes all keys and returns a new one |
 | `POST /v1/vendors`, `GET /v1/vendors` | Marketplace vendors (`externalId`, `category`, `smallMerchant`) |
 | `POST /v1/mandates` | Register a mandate (`eligiblePsps` omitted = all portable PSPs; `noAfaLimitPaise` ≤ ₹1 lakh for eligible categories) |
 | `POST /v1/mandates/:id/revoke` | Stop future debits |

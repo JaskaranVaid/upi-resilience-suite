@@ -75,6 +75,25 @@ export const merchantRoutes = (ctx: AppContext) => async (app: FastifyInstance) 
 
   app.get('/v1/merchants/me', async (req) => merchantView(merchantOf(req)));
 
+  /**
+   * Operator action (admin token): change a merchant's mode, e.g. a deployment that predates test
+   * and live modes. Every existing key is revoked and one new key with the matching prefix is
+   * returned once. The merchant then points its mandates at connections valid for the new mode.
+   */
+  app.patch('/v1/admin/merchants/:id', async (req) => {
+    requireAdmin(ctx, req);
+    const { id } = idParam.parse(req.params);
+    const { mode } = z.object({ mode: z.enum(['TEST', 'LIVE']) }).strict().parse(req.body);
+    return ctx.db.transaction(async (tx) => {
+      const [current] = await tx.select().from(merchants).where(eq(merchants.id, id)).for('update');
+      if (!current) throw new AppError('NOT_FOUND', `Merchant ${id} not found`);
+      if (current.mode === mode) throw new AppError('CONFLICT', `Merchant is already ${mode}`);
+      const [m] = await tx.update(merchants).set({ mode }).where(eq(merchants.id, id)).returning();
+      const apiKey = await ctx.apiKeys.replaceAll(tx, id, mode);
+      return { merchant: merchantView(m!), apiKey };
+    });
+  });
+
   app.patch('/v1/merchants/me', async (req) => {
     const merchant = merchantOf(req);
     const body = updateMerchant.parse(req.body);

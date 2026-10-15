@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { AppContext } from '../../context.js';
 import { debits, mandates } from '../../db/schema.js';
@@ -7,7 +7,7 @@ import { AppError } from '../../errors.js';
 import { newId } from '../../ids.js';
 import { debitView } from '../../scheduler/service.js';
 import { merchantOf } from '../app.js';
-import { createDebit, createMandate, idParam } from '../schemas.js';
+import { createDebit, createMandate, idParam, positivePaise } from '../schemas.js';
 import { resolveEligiblePsps } from '../../mandates/eligibility.js';
 import { parseCsv } from '../../mandates/csv.js';
 import { fromCsvRow } from '../../mandates/import.js';
@@ -66,6 +66,49 @@ export const mandateRoutes = (ctx: AppContext) => async (app: FastifyInstance) =
       throw new AppError('CONFLICT', `Mandate ${body.mandateRef} is already registered as ${existing?.id}`);
     }
     return reply.status(201).send(m);
+  });
+
+  /** Change which of the merchant's PSPs may execute a mandate, or its limits. */
+  app.patch('/v1/mandates/:id', async (req) => {
+    const merchant = merchantOf(req);
+    const { id } = idParam.parse(req.params);
+    const body = z
+      .object({ eligiblePsps: z.array(z.string().min(1)).min(1), maxAmountPaise: positivePaise, noAfaLimitPaise: createMandate.shape.noAfaLimitPaise.unwrap().nullable() })
+      .partial()
+      .strict()
+      .refine((b) => Object.keys(b).length > 0, 'Nothing to update')
+      .parse(req.body);
+    const available = new Map((await ctx.psps.requireForMerchant(merchant.id)).map((a) => [a.id, a]));
+    const patch = { ...body, ...(body.eligiblePsps ? { eligiblePsps: resolveEligiblePsps(available, body.eligiblePsps) } : {}) };
+    const [m] = await ctx.db.update(mandates).set(patch).where(and(eq(mandates.id, id), eq(mandates.merchantId, merchant.id))).returning();
+    if (!m) throw new AppError('NOT_FOUND', `Mandate ${id} not found`);
+    return m;
+  });
+
+  /**
+   * Move every mandate that lists PSP `from` to PSP `to` (e.g. after migrating to a new connection).
+   * A mandate whose list would then mix a non-portable PSP with others is pointed at `to` alone.
+   */
+  app.post('/v1/mandates/move-psp', async (req) => {
+    const merchant = merchantOf(req);
+    const { from, to } = z.object({ from: z.string().min(1), to: z.string().min(1) }).strict().parse(req.body);
+    const available = new Map((await ctx.psps.requireForMerchant(merchant.id)).map((a) => [a.id, a]));
+    resolveEligiblePsps(available, [to]); // `to` must be one of this merchant's routable PSPs
+    const affected = await ctx.db
+      .select()
+      .from(mandates)
+      .where(and(eq(mandates.merchantId, merchant.id), sql`${mandates.eligiblePsps} @> ${JSON.stringify([from])}::jsonb`));
+    for (const m of affected) {
+      const replaced = [...new Set(m.eligiblePsps.map((p) => (p === from ? to : p)))].filter((p) => available.has(p));
+      let next: string[];
+      try {
+        next = resolveEligiblePsps(available, replaced);
+      } catch {
+        next = [to];
+      }
+      await ctx.db.update(mandates).set({ eligiblePsps: next }).where(eq(mandates.id, m.id));
+    }
+    return { moved: affected.length };
   });
 
   app.get('/v1/mandates/:id', async (req) => {

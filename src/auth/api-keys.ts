@@ -57,6 +57,12 @@ export class ApiKeyService {
     return this.deps.db.select().from(apiKeys).where(eq(apiKeys.merchantId, merchantId)).orderBy(asc(apiKeys.createdAt));
   }
 
+  /** Revoke every active key and issue one new key (used when a merchant's mode changes). */
+  async replaceAll(db: DbOrTx, merchantId: string, mode: MerchantMode): Promise<string> {
+    await db.update(apiKeys).set({ revokedAt: this.deps.clock.now() }).where(and(eq(apiKeys.merchantId, merchantId), isNull(apiKeys.revokedAt)));
+    return (await this.issue(db, merchantId, mode, `Issued on switch to ${mode}`)).key;
+  }
+
   /** Revoke a key. A merchant must always keep at least one active key. */
   async revoke(merchantId: string, keyId: string): Promise<ApiKey> {
     const { db, clock } = this.deps;

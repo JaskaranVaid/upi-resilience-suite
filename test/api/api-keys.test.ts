@@ -96,3 +96,51 @@ describe('migration 0010 (keys move to api_keys)', () => {
     await client.close();
   });
 });
+
+describe('operator mode change (migrating a merchant to live)', () => {
+  it('switches mode, replaces every key, and lets the merchant move its mandates to its own connection', async () => {
+    const { db } = await freshDb();
+    const clock = new FakeClock(ist('2026-10-15T14:00:00'));
+    const ctx = buildContext({ db, adapters: [new MockPsp('pspA')], adminToken: ADMIN, clock, sleep: clock.sleep });
+    const app = buildApp(ctx);
+    const as = (key: string) => ({ authorization: `Bearer ${key}` });
+    const onboard = (await app.inject({ method: 'POST', url: '/v1/merchants', headers: as(ADMIN), payload: { name: 'Early Co' } })).json();
+    const oldKey = onboard.apiKey as string;
+    const merchantId = onboard.merchant.id as string;
+    for (const ref of ['UMN-1', 'UMN-2']) {
+      await app.inject({ method: 'POST', url: '/v1/mandates', headers: as(oldKey), payload: { mandateRef: ref, customerVpa: 'asha@okhdfc', maxAmountPaise: 50000 } });
+    }
+
+    expect((await app.inject({ method: 'PATCH', url: `/v1/admin/merchants/${merchantId}`, headers: as(oldKey), payload: { mode: 'LIVE' } })).statusCode).toBe(401);
+    const switched = await app.inject({ method: 'PATCH', url: `/v1/admin/merchants/${merchantId}`, headers: as(ADMIN), payload: { mode: 'LIVE' } });
+    expect(switched.json().merchant.mode).toBe('LIVE');
+    const liveKey = switched.json().apiKey as string;
+    expect(liveKey).toMatch(/^sk_live_/);
+    expect((await app.inject({ method: 'GET', url: '/v1/merchants/me', headers: as(oldKey) })).statusCode).toBe(401);
+
+    // Its mandates still name the shared mock, which a live merchant can't use…
+    const mandate = (await app.inject({ method: 'POST', url: '/v1/mandates', headers: as(liveKey), payload: { mandateRef: 'UMN-3', customerVpa: 'asha@okhdfc', maxAmountPaise: 1 } })).json();
+    expect(mandate.error.code).toBe('NO_PSP_CONNECTED');
+    // …until it connects its own account and moves them over.
+    const { pspConnections } = await import('../../src/db/schema.js');
+    const { newId } = await import('../../src/ids.js');
+    const [conn] = await db.insert(pspConnections).values({ id: newId('con'), merchantId, provider: 'mock', label: 'Own', environment: 'production' }).returning();
+    const moved = await app.inject({ method: 'POST', url: '/v1/mandates/move-psp', headers: as(liveKey), payload: { from: 'pspA', to: conn!.id } });
+    expect(moved.json()).toEqual({ moved: 2 });
+    const { mandates } = await import('../../src/db/schema.js');
+    expect((await db.select().from(mandates)).map((m) => m.eligiblePsps)).toEqual([[conn!.id], [conn!.id]]);
+  });
+
+  it('re-points one mandate, accepting only the merchant\'s own routable PSPs', async () => {
+    const { db } = await freshDb();
+    const clock = new FakeClock(ist('2026-10-15T14:00:00'));
+    const app = buildApp(buildContext({ db, adapters: [new MockPsp('pspA'), new MockPsp('pspB')], adminToken: ADMIN, clock, sleep: clock.sleep }));
+    const key = (await app.inject({ method: 'POST', url: '/v1/merchants', headers: { authorization: `Bearer ${ADMIN}` }, payload: { name: 'M' } })).json().apiKey;
+    const auth = { authorization: `Bearer ${key}` };
+    const m = (await app.inject({ method: 'POST', url: '/v1/mandates', headers: auth, payload: { mandateRef: 'U', customerVpa: 'asha@okhdfc', maxAmountPaise: 500 } })).json();
+    const ok = await app.inject({ method: 'PATCH', url: `/v1/mandates/${m.id}`, headers: auth, payload: { eligiblePsps: ['pspB'], maxAmountPaise: 900 } });
+    expect(ok.json()).toMatchObject({ eligiblePsps: ['pspB'], maxAmountPaise: 900 });
+    expect((await app.inject({ method: 'PATCH', url: `/v1/mandates/${m.id}`, headers: auth, payload: { eligiblePsps: ['con_someone_else'] } })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'PATCH', url: `/v1/mandates/${m.id}`, headers: auth, payload: { mandateRef: 'X' } })).statusCode).toBe(400);
+  });
+});
