@@ -26,6 +26,13 @@ const schema = z.object({
    * announced 15 Oct 2026 start with no new date, so no fee is quoted until this is set.
    */
   MDR_EFFECTIVE_FROM: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD').optional(),
+  /** 'true' behind a load balancer, so client IPs (used by rate limits) come from X-Forwarded-For. */
+  TRUST_PROXY: z.enum(['true', 'false']).default('false'),
+  /**
+   * Where merchant webhooks may point. Defaults to public-only (https, public hosts) in production
+   * and to any http(s) URL elsewhere, so local development can use http://localhost.
+   */
+  WEBHOOK_TARGETS: z.enum(['public-only', 'any']).optional(),
   /** Optional JSON map of pspId -> MockRates, e.g. {"pspA":{"bankUnavailable":0.3}} */
   MOCK_PSP_RATES: z.string().optional(),
 });

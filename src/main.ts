@@ -17,11 +17,18 @@ async function main() {
   const adapters = buildAdapters(env);
   console.log(`payment providers: ${adapters.map((a) => `${a.id} (${a.mode})`).join(', ')}`);
 
-  const ctx = buildContext({ db, adapters, adminToken: env.ADMIN_TOKEN, secureCookies: env.NODE_ENV === 'production', customerTokenSecret: env.CUSTOMER_TOKEN_SECRET });
+  const ctx = buildContext({
+    db,
+    adapters,
+    adminToken: env.ADMIN_TOKEN,
+    secureCookies: env.NODE_ENV === 'production',
+    customerTokenSecret: env.CUSTOMER_TOKEN_SECRET,
+    webhookTargets: env.WEBHOOK_TARGETS ?? (env.NODE_ENV === 'production' ? 'public-only' : 'any'),
+  });
   const stops: Array<() => Promise<void>> = [];
 
   if (env.ROLE !== 'worker') {
-    const app = buildApp(ctx, { logger: true });
+    const app = buildApp(ctx, { logger: true, trustProxy: env.TRUST_PROXY === 'true' });
     // Configured port only (no silent switching for the real server); a busy port is a clear error.
     await app.listen({ host: env.HOST, port: await choosePort(env.PORT, { explicit: true, host: env.HOST }) });
     stops.push(() => app.close());

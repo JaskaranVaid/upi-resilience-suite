@@ -21,6 +21,8 @@ import { DebitWorker, type WorkerOptions } from './scheduler/worker.js';
 import { StatusPoller } from './tracking/poller.js';
 import { TrackingService } from './tracking/service.js';
 import { WebhookDispatcher, type FetchLike } from './webhooks/outbox.js';
+import { publicTargetGuard, type ResolveHost, type WebhookTargetPolicy } from './webhooks/url.js';
+import { DEFAULT_RATE_LIMITS, type RateLimits } from './api/rate-limit.js';
 
 export interface AppContext {
   db: Db;
@@ -47,6 +49,10 @@ export interface AppContext {
   customerTokenSecret: string;
   analytics: { value: ValueService; psps: PspAnalytics; issues: IssueAnalytics; statement: StatementService };
   webhookIngest: PspWebhookIngest;
+  /** Per-caller request limits; null disables them. */
+  rateLimits: RateLimits | null;
+  /** 'public-only' refuses merchant webhook URLs that are not https or point at private networks. */
+  webhookTargets: WebhookTargetPolicy;
 }
 
 export function buildContext(args: {
@@ -64,6 +70,10 @@ export function buildContext(args: {
   auth?: Partial<AuthConfig>;
   secureCookies?: boolean;
   customerTokenSecret?: string;
+  rateLimits?: Partial<RateLimits> | null;
+  webhookTargets?: WebhookTargetPolicy;
+  /** Resolves a webhook hostname to IP addresses (DNS by default; stubbed in tests). */
+  resolveHost?: ResolveHost;
 }): AppContext {
   const clock = args.clock ?? systemClock;
   const sleep = args.sleep ?? realSleep;
@@ -76,6 +86,7 @@ export function buildContext(args: {
   const value = new ValueService({ db: args.db });
   const issues = new IssueAnalytics({ db: args.db });
   const fetchImpl: FetchLike = args.fetchImpl ?? ((url, init) => fetch(url, init));
+  const webhookTargets = args.webhookTargets ?? 'any';
   return {
     db: args.db,
     clock,
@@ -87,7 +98,9 @@ export function buildContext(args: {
     checkout: new CheckoutService({ db: args.db, clock }),
     payments: new PaymentService({ db: args.db, clock, router, pspIds, tracking }),
     worker: new DebitWorker({ db: args.db, clock, router, tracking, opts: args.worker }),
-    dispatcher: new WebhookDispatcher(args.db, clock, fetchImpl),
+    dispatcher: new WebhookDispatcher(args.db, clock, fetchImpl, {
+      ...(webhookTargets === 'public-only' ? { targetGuard: publicTargetGuard(args.resolveHost) } : {}),
+    }),
     psps,
     tracking,
     poller: new StatusPoller({ db: args.db, clock, tracking }),
@@ -99,5 +112,7 @@ export function buildContext(args: {
     customerTokenSecret: args.customerTokenSecret ?? 'dev-customer-token-secret-not-for-production',
     analytics: { value, psps: new PspAnalytics({ db: args.db }), issues, statement: new StatementService({ db: args.db, value, issues }) },
     webhookIngest: new PspWebhookIngest({ db: args.db, clock, tracking }),
+    rateLimits: args.rateLimits === null ? null : { ...DEFAULT_RATE_LIMITS, ...args.rateLimits },
+    webhookTargets,
   };
 }

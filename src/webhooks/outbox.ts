@@ -49,10 +49,16 @@ export interface DispatcherOptions {
   /** How long a claimed row stays invisible to other dispatchers while we deliver it. */
   leaseMs?: number;
   requestTimeoutMs?: number;
+  /**
+   * Checked before every delivery; a returned reason stops delivery for good (e.g. the URL now
+   * resolves to a private address). Throwing counts as a failed attempt and is retried.
+   */
+  targetGuard?: (url: string) => Promise<string | null>;
 }
 
 export class WebhookDispatcher {
-  private readonly opts: Required<DispatcherOptions>;
+  private readonly opts: Required<Omit<DispatcherOptions, 'targetGuard'>>;
+  private readonly targetGuard: DispatcherOptions['targetGuard'];
 
   constructor(
     private readonly db: Db,
@@ -60,7 +66,9 @@ export class WebhookDispatcher {
     private readonly fetchImpl: FetchLike,
     opts: DispatcherOptions = {},
   ) {
-    this.opts = { batchSize: 50, maxAttempts: 8, leaseMs: 60_000, requestTimeoutMs: 10_000, ...opts };
+    const { targetGuard, ...rest } = opts;
+    this.opts = { batchSize: 50, maxAttempts: 8, leaseMs: 60_000, requestTimeoutMs: 10_000, ...rest };
+    this.targetGuard = targetGuard;
   }
 
   /** Deliver due webhooks once. Returns the number delivered. */
@@ -86,12 +94,22 @@ export class WebhookDispatcher {
 
     let delivered = 0;
     for (const { outbox, url, secret } of claimed) {
-      const error = url ? await this.deliver(outbox, url, secret) : 'merchant has no webhook URL';
+      let refused: string | null = url ? null : 'merchant has no webhook URL';
+      let error: string | null = refused;
+      if (url && this.targetGuard) {
+        try {
+          refused = await this.targetGuard(url);
+          error = refused;
+        } catch (e) {
+          error = e instanceof Error ? e.message : String(e);
+        }
+      }
+      if (url && !error) error = await this.deliver(outbox, url, secret);
       const attempts = outbox.attempts + 1;
       if (!error) {
         delivered++;
         await this.db.update(webhookOutbox).set({ deliveredAt: this.clock.now(), attempts, lastError: null }).where(eq(webhookOutbox.id, outbox.id));
-      } else if (!url || attempts >= this.opts.maxAttempts) {
+      } else if (refused || attempts >= this.opts.maxAttempts) {
         await this.db.update(webhookOutbox).set({ deadAt: this.clock.now(), attempts, lastError: error }).where(eq(webhookOutbox.id, outbox.id));
       } else {
         const backoffMs = Math.min(2 ** attempts * 10_000, 3_600_000);

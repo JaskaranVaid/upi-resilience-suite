@@ -9,6 +9,7 @@ import type { AppContext } from '../context.js';
 import { merchants } from '../db/schema.js';
 import { AppError } from '../errors.js';
 import { dashboardApi } from './dashboard/plugin.js';
+import { registerRateLimits } from './rate-limit.js';
 import { checkoutRoutes } from './routes/checkout.js';
 import { mandateRoutes } from './routes/mandates.js';
 import { merchantRoutes } from './routes/merchants.js';
@@ -47,8 +48,9 @@ export function requireAdmin(ctx: AppContext, req: FastifyRequest): void {
   if (a.length !== b.length || !timingSafeEqual(a, b)) throw new AppError('UNAUTHORIZED', 'Admin token required');
 }
 
-export function buildApp(ctx: AppContext, opts: { logger?: boolean } = {}): FastifyInstance {
-  const app = Fastify({ logger: opts.logger ?? false });
+export function buildApp(ctx: AppContext, opts: { logger?: boolean; trustProxy?: boolean } = {}): FastifyInstance {
+  // Behind a load balancer, trustProxy makes req.ip the client's address (rate limits are per IP).
+  const app = Fastify({ logger: opts.logger ?? false, trustProxy: opts.trustProxy ?? false });
 
   app.decorateRequest('merchant', null);
   app.addHook('preHandler', async (req) => {
@@ -80,6 +82,7 @@ export function buildApp(ctx: AppContext, opts: { logger?: boolean } = {}): Fast
   });
 
   app.register(fastifyCookie);
+  if (ctx.rateLimits) registerRateLimits(app, ctx.rateLimits);
   // Static merchant console. API calls go to /dashboard/api/*, registered below (more specific routes win).
   app.register(fastifyStatic, {
     root: fileURLToPath(new URL('../../dashboard', import.meta.url)),

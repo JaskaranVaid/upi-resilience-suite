@@ -6,6 +6,7 @@ import { merchants, vendors } from '../../db/schema.js';
 import { AppError } from '../../errors.js';
 import { newId } from '../../ids.js';
 import { DEFAULT_STEERING } from '../../rules/steering.js';
+import { checkWebhookUrl } from '../../webhooks/url.js';
 import { userView } from '../../auth/users.js';
 import { hashApiKey, merchantOf, requireAdmin, type Merchant } from '../app.js';
 import { createUserBody } from '../dashboard/plugin.js';
@@ -29,6 +30,8 @@ export const merchantRoutes = (ctx: AppContext) => async (app: FastifyInstance) 
   app.post('/v1/merchants', async (req, reply) => {
     requireAdmin(ctx, req);
     const body = createMerchant.parse(req.body);
+    const urlProblem = body.webhookUrl ? checkWebhookUrl(body.webhookUrl, ctx.webhookTargets) : null;
+    if (urlProblem) throw new AppError('VALIDATION', `webhookUrl ${urlProblem}`);
     const apiKey = `sk_live_${randomBytes(24).toString('base64url')}`;
     const webhookSecret = `whsec_${randomBytes(24).toString('base64url')}`;
     const [m] = await ctx.db

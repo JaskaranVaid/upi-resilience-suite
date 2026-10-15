@@ -14,7 +14,8 @@ export type ErrorCode =
   | 'COMPLAINT_NOT_ALLOWED'
   | 'COMPLAINT_FAILED'
   | 'ACCOUNT_LOCKED'
-  | 'AFA_REQUIRED';
+  | 'AFA_REQUIRED'
+  | 'RATE_LIMITED';
 
 const STATUS: Record<ErrorCode, number> = {
   NOT_FOUND: 404,
@@ -33,6 +34,7 @@ const STATUS: Record<ErrorCode, number> = {
   COMPLAINT_FAILED: 502,
   ACCOUNT_LOCKED: 429,
   AFA_REQUIRED: 422,
+  RATE_LIMITED: 429,
 };
 
 export class AppError extends Error {

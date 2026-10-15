@@ -44,6 +44,38 @@ describe('webhook outbox', () => {
     expect(await d.runOnce()).toBe(0);
   });
 
+  it('never delivers to a target the guard refuses, and stops retrying it', async () => {
+    const clock = new FakeClock('2026-10-15T08:00:00Z');
+    const m = await seedMerchant(h.db, { webhookUrl: 'https://rebound.example/hooks' });
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls++;
+      return { ok: true, status: 200 };
+    };
+    const id = await enqueueWebhook(h.db, { merchantId: m.id, event: 'payment.succeeded', payload: {}, now: clock.now() });
+    const d = new WebhookDispatcher(h.db, clock, fetchImpl, { targetGuard: async () => 'webhook host resolves to a non-public address (10.0.0.5)' });
+    expect(await d.runOnce()).toBe(0);
+    expect(calls).toBe(0);
+    const [row] = await h.db.select().from(webhookOutbox).where(eq(webhookOutbox.id, id));
+    expect(row!.deadAt).not.toBeNull();
+    expect(row!.lastError).toMatch(/non-public/);
+  });
+
+  it('retries when the guard cannot resolve the host (transient DNS failure)', async () => {
+    const clock = new FakeClock('2026-10-15T08:00:00Z');
+    const m = await seedMerchant(h.db);
+    const id = await enqueueWebhook(h.db, { merchantId: m.id, event: 'payment.succeeded', payload: {}, now: clock.now() });
+    const d = new WebhookDispatcher(h.db, clock, async () => ({ ok: true, status: 200 }), {
+      targetGuard: async () => {
+        throw new Error('getaddrinfo EAI_AGAIN');
+      },
+    });
+    await d.runOnce();
+    const [row] = await h.db.select().from(webhookOutbox).where(eq(webhookOutbox.id, id));
+    expect(row).toMatchObject({ deadAt: null, deliveredAt: null, attempts: 1, lastError: 'getaddrinfo EAI_AGAIN' });
+    await h.db.delete(webhookOutbox).where(eq(webhookOutbox.id, id)); // this file shares one database
+  });
+
   it('backs off on failure and gives up after max attempts', async () => {
     const clock = new FakeClock('2026-10-15T08:00:00Z');
     const m = await seedMerchant(h.db);
