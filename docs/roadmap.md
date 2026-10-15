@@ -36,7 +36,7 @@ inbound webhooks; test vs live mode by API key (`sk_test_` / `sk_live_`); API ke
 merchant settings API; bulk mandate import.
 **Exit:** two merchants on separate sandbox accounts run side by side, fully isolated.
 
-## Phase 3 — Real payment rails
+## Phase 3 — Real payment rails ✅ code (2026-10-15; sandbox verification is founder action #10)
 Cashfree completion (AutoPay end to end once activated, UPI intent + QR, netbanking/card through the
 order); Razorpay adapter; settlement reconciliation (captured vs settled, mismatches open cases).
 **Exit:** all flows complete in sandboxes; failover between two real sandboxes; recon matches 100%.

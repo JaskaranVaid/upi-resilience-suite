@@ -11,6 +11,8 @@
  *   SMOKE_SUBSCRIPTION_ID             send a pre-debit notification for an active sandbox UPI subscription
  *   SMOKE_SUBSCRIPTION_ID + SMOKE_EXECUTE_PAYMENT_ID
  *                                     execute a previously notified payment (≥ 25 h after notifying)
+ *   SMOKE_CHANNELS=1 + SMOKE_PHONE    create ₹1 UPI intent, UPI QR and card-checkout payments, print the actions
+ *   SMOKE_RECON_DAY=YYYY-MM-DD        read that day's settlement report
  * The script prints what to verify; it never prints credentials.
  */
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -174,6 +176,26 @@ async function main() {
     console.log(`     status  → ${JSON.stringify(await cf.status(txnRef, ctx))}`);
     console.log('     Record the execution_status / payment_status strings you see: the adapter maps unknown ones to PENDING.');
   } else console.log('3. UPI AutoPay — skipped (SMOKE_CREATE_SUBSCRIPTION=1 creates a sandbox test subscription; SMOKE_SUBSCRIPTION_ID uses an active one)');
+
+  if (env.SMOKE_PHONE && env.SMOKE_CHANNELS === '1') {
+    console.log('4. Checkout channels (₹1 each): UPI intent, UPI QR, card checkout');
+    for (const channel of ['UPI_INTENT', 'UPI_QR', 'CARD'] as const) {
+      const res = await cf.collect({ txnRef: `${run}-${channel.toLowerCase()}`, channel, amountPaise: 100, customerPhone: env.SMOKE_PHONE });
+      if (res.kind === 'PENDING' && res.action) ok(`${channel}: ${res.action.type} ${JSON.stringify(res.action).slice(0, 140)}`);
+      else fail(`${channel} returned ${JSON.stringify(res)} — record the raw response shape in the runbook`);
+    }
+  } else console.log('4. Checkout channels — skipped (set SMOKE_CHANNELS=1 and SMOKE_PHONE)');
+
+  if (env.SMOKE_RECON_DAY) {
+    console.log(`5. Settlement report for ${env.SMOKE_RECON_DAY} (IST)`);
+    try {
+      const from = new Date(`${env.SMOKE_RECON_DAY}T00:00:00+05:30`);
+      const lines = await cf.settlements({ from, to: new Date(from.getTime() + 86_400_000) });
+      ok(`${lines.length} settlement line(s)${lines[0] ? `; first: ${JSON.stringify(lines[0])}` : ''}`);
+    } catch (e) {
+      fail(`settlement report: ${e instanceof Error ? e.message : e}`);
+    }
+  } else console.log('5. Settlement report — skipped (set SMOKE_RECON_DAY=YYYY-MM-DD)');
 
   console.log(failures === 0 ? 'Smoke test passed.' : `Smoke test: ${failures} failure(s).`);
   // Set the exit code rather than calling process.exit(): exiting while fetch is still closing its

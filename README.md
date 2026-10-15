@@ -88,6 +88,25 @@ Merchantflo never holds funds: each merchant connects **its own** PSP accounts
   PSP's webhooks at the connection's `webhookUrl`. `provider: "mock"` gives a test merchant a simulated PSP.
 - **No PSP, no payment.** A merchant with nothing to route through gets `422 NO_PSP_CONNECTED`.
 - **Existing mandates.** `POST /v1/mandates/import` (JSON or CSV, ≤ 5,000 rows, `verify` asks the PSP).
+- **Providers.** Cashfree (AutoPay + every checkout channel) and Razorpay (one-off payments only — it can't
+  run AutoPay on our timing); runbooks: [Cashfree](docs/runbooks/cashfree.md), [Razorpay](docs/runbooks/razorpay.md).
+
+## Checkout channels
+
+`POST /v1/payments { channel }` — `UPI_COLLECT` (needs `payerVpa`), `UPI_INTENT` (default without a VPA),
+`UPI_QR`, `NETBANKING` (optionally `netbankingBankCode`) or `CARD`. The response's `customerAction` says what
+the customer does next: open `UPI_INTENT.url` (or an app-specific `appUrls` entry), render `UPI_QR.qrData`,
+follow a `REDIRECT`, or open the PSP's own checkout with `PSP_CHECKOUT.params` (card details never touch
+Merchantflo). Only PSPs supporting the channel are tried; an idempotent replay returns the same action.
+
+## Settlement reconciliation
+
+The worker reads each connection's settlement report every morning (yesterday, IST; failed or missing days
+are retried for a week), stores each line once and matches it to payments. Payment detail shows
+**Settled to your bank?** with UTR, net amount and PSP fees; `GET /v1/settlements` lists report lines
+(matched/unmatched); the monthly statement has a settlement section. A settled amount that differs from the
+captured one, or a capture still unsettled 3 days after its day was reconciled, opens a *needs action* case.
+Settlement data never changes a payment's state.
 
 ## API
 
@@ -116,7 +135,8 @@ or session cookies — checked before any lookup); over a limit → `429 RATE_LI
 | `POST /v1/checkout/quotes/:id/accept` | Record the method the customer chose (books nothing) |
 | `POST /v1/checkout/quotes/:id/paid` | `{ method, paymentReference }` — the payment succeeded; books the steering saving once |
 | `POST /v1/checkout/split` | Vendor-ownership split with per-leg MDR |
-| `POST /v1/payments`, `GET /v1/payments/:id` | One-off UPI collect via the smart router |
+| `POST /v1/payments`, `GET /v1/payments/:id` | One-off payment via the smart router: `channel`, `payerVpa?`, `netbankingBankCode?`, `client?`; returns `customerAction` |
+| `GET /v1/settlements?from&to&match=` | Settlement report lines from the merchant's PSPs, matched to payments where possible |
 | `GET /v1/savings?from&to` | Revenue protected and fees saved |
 | `GET /v1/psps/health` | Router health and circuit state |
 | `GET /v1/rules` | The regulatory parameters currently applied |

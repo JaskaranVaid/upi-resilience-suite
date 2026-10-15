@@ -40,6 +40,13 @@ POST /v1/psp-connections
   - Due dates more than 6 days out: the notice is **deferred** and sent ~6 days before
     (Cashfree accepts notices for T+1…T+7). The debit shows `noticePending: true` until then.
   - Execution: at the off-peak slot Engine A chose; execution id = our txnRef, base payment id = our debit id.
+- **Checkout channels**: UPI intent (`upi.channel=link` → deeplinks in `data.payload`, passed through
+  unmodified), UPI QR (`qrcode` → `data.payload.qrData`, or a base64 image), netbanking to a chosen bank
+  (`netbanking.channel=link` → redirect), and cards/bank-less netbanking via Cashfree's JS checkout
+  (`PSP_CHECKOUT.params.paymentSessionId`). Run `SMOKE_CHANNELS=1 SMOKE_PHONE=… npm run smoke:cashfree` and
+  record the real response shapes for intent and QR (the API reference shows no example).
+- **Settlements**: `POST /settlement/recon` (cursor-paged) each morning; lines match by `cf_payment_id`,
+  else by `order_id` (our reference). `SMOKE_RECON_DAY=YYYY-MM-DD npm run smoke:cashfree` reads one day.
 - **UPI collect** (`POST /v1/payments`) needs `customerPhone` (Cashfree requirement). The collect is
   `PENDING` until the customer approves in their UPI app; the poller (and webhooks) resolve it.
 - **Debited but failed**: Cashfree auto-refunds; those refunds drive the Phase 3 reversal facts

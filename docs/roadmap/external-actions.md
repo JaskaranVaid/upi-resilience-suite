@@ -14,6 +14,8 @@ in Phase 0. Update the status column as they move.
 | 7 | GitHub settings: protect `main` (PRs + `CI` check required), enable secret scanning and Dependabot | Repo owner | Now | To do |
 | 8 | Watch for NPCI's confirmed **MDR start date**, then set `MDR_EFFECTIVE_FROM` | Founder 2 | Ongoing | Watching |
 | 9 | Obtain the NPCI circular texts for the AutoPay peak windows (exact evening start) and OC-163/163A portability | Founder 2 | Phase 1 | To do |
+| 10 | Run the sandbox smoke tests with real test keys and record response shapes: `npm run smoke:cashfree` (with `SMOKE_CHANNELS=1`, `SMOKE_RECON_DAY`) and `npm run smoke:razorpay` | Founder 3 | Phase 3 exit | To do |
+| 11 | Ask Razorpay to enable S2S UPI on test and live accounts; set automatic capture | Founder 3 | Phase 3 exit | To do |
 
 ## Message templates
 
