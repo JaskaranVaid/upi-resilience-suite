@@ -34,8 +34,13 @@ These are enforced in code and covered by tests:
   executing.
 - **Pre-debit notice integrity.** Execution only on the date stated in a notice sent ≥ 24h earlier;
   a reschedule that changes the date triggers a fresh notice.
-- **No double debits.** Timeouts are status-checked before retrying; a failed collect is
-  status-checked before failing over to another PSP; idempotency keys everywhere.
+- **No double debits.** Timeouts are status-checked before retrying; any technical decline
+  (collect or mandate execution) is status-checked before failing over to another PSP;
+  idempotency keys everywhere.
+- **No silent debits above the no-AFA limit.** AutoPay debits above ₹15,000 (or a mandate's
+  declared limit, at most ₹1 lakh) need customer authentication and are refused at intake (`AFA_REQUIRED`).
+- **Savings are counted when real.** MDR steering savings are booked only when the steered payment is
+  reported paid, never when the method is merely chosen.
 - **No invented deadlines.** No refund/reversal due date is computed until a rule is confirmed
   for a specific UPI failure category with a cited source (`REVERSAL_DEADLINE_RULES` is empty).
 - **"Captured" ≠ "settled".** Capture means PSP-confirmed; bank settlement isn't ingested and is
@@ -65,24 +70,28 @@ PSP, NPCI or money is involved, and simulated UDIR complaints are labelled as su
 
 Production: set `DATABASE_URL=postgres://…`, `ADMIN_TOKEN` and `CUSTOMER_TOKEN_SECRET`, run `ROLE=api` and `ROLE=worker`
 as separate processes (any number of workers — rows are claimed with `FOR UPDATE SKIP LOCKED`).
-See [`.env.example`](.env.example).
+Behind a load balancer set `TRUST_PROXY=true`. With `NODE_ENV=production`, merchant webhook URLs must
+be https on public hosts (`WEBHOOK_TARGETS=public-only`). See [`.env.example`](.env.example).
 
 ## API
 
 All `/v1` routes take `Authorization: Bearer <merchant API key>`, except merchant onboarding
 which takes the admin token. Money is always integer **paise**. Errors: `{ "error": { "code", "message" } }`.
+Rate limits (per minute): 1,200 per API key on `/v1`, 20 per IP on dashboard login, 300 per IP on
+`/public`, 600 per dashboard session; over the limit → `429 RATE_LIMITED` with `Retry-After`.
 
 | Method & path | Purpose |
 |---|---|
 | `POST /v1/merchants` *(admin)* | Onboard; returns `apiKey` and `webhookSecret` once |
 | `GET /v1/merchants/me` | Merchant profile |
 | `POST /v1/vendors`, `GET /v1/vendors` | Marketplace vendors (`externalId`, `category`, `smallMerchant`) |
-| `POST /v1/mandates` | Register a mandate (`eligiblePsps` omitted = MIC-portable across all PSPs) |
+| `POST /v1/mandates` | Register a mandate (`eligiblePsps` omitted = all portable PSPs; `noAfaLimitPaise` ≤ ₹1 lakh for eligible categories) |
 | `POST /v1/mandates/:id/revoke` | Stop future debits |
 | `POST /v1/mandates/:id/debits` | **Engine A intake** — `{ amountPaise, dueDate? }` + `Idempotency-Key` |
 | `GET /v1/debits/:id`, `GET /v1/debits?state=` | Debit status |
 | `POST /v1/checkout/quote` | **Engine B** — per-method cost + optional steering `offer` |
-| `POST /v1/checkout/quotes/:id/accept` | Record the method the customer paid with |
+| `POST /v1/checkout/quotes/:id/accept` | Record the method the customer chose (books nothing) |
+| `POST /v1/checkout/quotes/:id/paid` | `{ method, paymentReference }` — the payment succeeded; books the steering saving once |
 | `POST /v1/checkout/split` | Vendor-ownership split with per-leg MDR |
 | `POST /v1/payments`, `GET /v1/payments/:id` | One-off UPI collect via the smart router |
 | `GET /v1/savings?from&to` | Revenue protected and fees saved |
@@ -103,7 +112,19 @@ Idempotency-Key: inv-2026-10-0042
 
 ### Webhooks
 
-`debit.scheduled`, `debit.succeeded`, `debit.failed`, `payment.succeeded`, `payment.failed`.
+| Event | When |
+|---|---|
+| `debit.scheduled` | Debit accepted and slotted (notice sent, or `noticePending` when deferred) |
+| `debit.notice_sent` | A deferred or re-sent pre-debit notice went out |
+| `debit.rescheduled` | Moved to a later slot; `reason`: `RESTRICTED_WINDOW`, `NOTICE_DATE` or `TECHNICAL_DECLINE` |
+| `debit.succeeded`, `debit.failed` | Final debit outcome |
+| `payment.succeeded`, `payment.failed` | Final collect outcome |
+| `payment.reversal_initiated`, `payment.reversed` | The customer's bank is reversing / has reversed an uncaptured debit |
+| `payment.captured_after_failure` | The PSP captured a payment after it was reported failed — fulfil or refund |
+| `case.needs_action`, `case.resolved` | A payment issue needs the merchant / was resolved |
+
+Payment-issue events carry `paymentType`, `paymentId`, `orderId`, `amountPaise`, `upiRrn`,
+`customerDebit`, `capture`, `reversal` and, when relevant, `case` — never internal PSP codes.
 Headers: `x-resilience-event`, `x-resilience-delivery`, `x-resilience-timestamp`,
 `x-resilience-signature: sha256=HMAC_SHA256(webhookSecret, "<timestamp>.<raw body>")`.
 Written in the same transaction as the state change (outbox), retried with exponential backoff.

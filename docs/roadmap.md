@@ -16,22 +16,23 @@ Phases run in order. Each has an implementation plan in `docs/superpowers/plans/
 exit criteria hold. External actions that only a founder can take are tracked in
 [roadmap/external-actions.md](roadmap/external-actions.md).
 
-## Phase 0 — Ground truth and unblockers
+## Phase 0 — Ground truth and unblockers ✅ (2026-10-15; founder actions open)
 Regulatory fact sheet ([regulatory/fact-sheet.md](regulatory/fact-sheet.md)); decision records
 ([decisions/](decisions/)); MDR start date as configuration; CI; repo hygiene; Merchantflo naming;
 external requests filed (Cashfree AutoPay activation, Razorpay/PayU sandboxes, counsel, design partners).
 **Exit:** fact sheet and decisions committed, CI green, external requests listed with owners.
 
-## Phase 1 — Correctness hardening
+## Phase 1 — Correctness hardening ✅ (2026-10-15)
 Slot-picking divide-by-zero; status check before mandate failover; MDR savings booked only on a
 confirmed steered payment; AutoPay no-AFA limit enforced at intake; webhook events for reversals,
 late captures, needs-action cases, notices and reschedules; bounded-concurrency status poller;
-`sk_test_`/`sk_live_` keys; API and login rate limits; security review fixes.
+API and login rate limits; SSRF-safe webhook URLs; deferred-notice timing fix; Windows test-worker
+memory fix. (`sk_test_`/`sk_live_` keys moved to Phase 2, where test and live modes exist.)
 **Exit:** every fix covered by tests; no known correctness issue open.
 
 ## Phase 2 — Multi-tenant core
 Per-merchant PSP connections with encrypted credentials; per-connection adapters, routing, health and
-inbound webhooks; test vs live mode by API key; API key management (multiple keys, rotate, revoke);
+inbound webhooks; test vs live mode by API key (`sk_test_` / `sk_live_`); API key management (multiple keys, rotate, revoke);
 merchant settings API; bulk mandate import.
 **Exit:** two merchants on separate sandbox accounts run side by side, fully isolated.
 
