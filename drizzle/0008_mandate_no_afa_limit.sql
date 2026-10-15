@@ -1,0 +1,1 @@
+ALTER TABLE "mandates" ADD COLUMN "no_afa_limit_paise" bigint;

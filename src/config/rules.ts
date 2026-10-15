@@ -43,6 +43,18 @@ export const DEFAULT_WINDOWS: WindowConfig = {
   preferred: [{ start: '13:00', end: '17:00' }],
 };
 
+/**
+ * Largest recurring debit that may run without the customer authenticating it (RBI e-mandate
+ * framework, June 2022). Above it AutoPay needs the customer's PIN, so it can't run silently.
+ */
+export const AUTOPAY_NO_AFA_LIMIT_PAISE = 15_000_00;
+
+/**
+ * Higher limit reported for specific categories (mutual funds, insurance premiums, credit card
+ * bills). Unverified (see fact sheet): a merchant may opt a mandate in, never beyond this.
+ */
+export const AUTOPAY_NO_AFA_MAX_PAISE = 1_00_000_00;
+
 /** UPI P2M MDR slabs per NPCI's UPI MDR FAQs (15 Sep 2026). */
 export const MDR_2026: MdrRules = {
   freeUptoPaise: 2_000_00,

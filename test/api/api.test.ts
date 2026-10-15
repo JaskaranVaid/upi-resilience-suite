@@ -35,6 +35,16 @@ describe('HTTP API (end to end)', () => {
     apiKey = res.json().apiKey;
   });
 
+  it('caps a per-mandate no-authentication limit at ₹1 lakh and explains AFA refusals', async () => {
+    const tooHigh = await call('POST', '/v1/mandates', { mandateRef: 'U1', customerVpa: 'ab@okaxis', maxAmountPaise: rs(200000), noAfaLimitPaise: rs(100000) + 1 });
+    expect(tooHigh.statusCode).toBe(400);
+    const m = (await call('POST', '/v1/mandates', { mandateRef: 'U2', customerVpa: 'ab@okaxis', maxAmountPaise: rs(50000) })).json();
+    const refused = await call('POST', `/v1/mandates/${m.id}/debits`, { amountPaise: rs(20000) }, apiKey, { 'idempotency-key': 'big-1' });
+    expect(refused.statusCode).toBe(422);
+    expect(refused.json().error).toMatchObject({ code: 'AFA_REQUIRED' });
+    expect(refused.json().error.message).toMatch(/₹15,000/);
+  });
+
   it('rejects requests without a valid API key or admin token', async () => {
     expect((await call('GET', '/v1/merchants/me', undefined, 'nope')).statusCode).toBe(401);
     expect((await call('POST', '/v1/merchants', { name: 'x' }, 'nope')).statusCode).toBe(401);

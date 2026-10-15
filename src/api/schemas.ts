@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AUTOPAY_NO_AFA_MAX_PAISE } from '../config/rules.js';
 import { PAYMENT_METHODS } from '../rules/steering.js';
 
 export const paise = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -42,6 +43,11 @@ export const createMandate = z.object({
   maxAmountPaise: positivePaise,
   /** Omit to allow every configured PSP (MIC-portable mandate). */
   eligiblePsps: z.array(z.string().min(1)).min(1).optional(),
+  /**
+   * Raise the no-authentication debit limit for categories the merchant declares eligible
+   * (mutual funds, insurance premiums, credit card bills), up to ₹1 lakh.
+   */
+  noAfaLimitPaise: positivePaise.max(AUTOPAY_NO_AFA_MAX_PAISE, 'cannot exceed ₹1,00,000').optional(),
 });
 
 export const orderId = z.string().min(1).max(200);

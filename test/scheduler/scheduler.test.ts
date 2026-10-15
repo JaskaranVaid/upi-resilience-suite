@@ -93,6 +93,25 @@ describe('Engine A — peak-aware AutoPay scheduler', () => {
       await expect(create({ amountPaise: rs(20000) })).rejects.toMatchObject({ code: 'AMOUNT_EXCEEDS_MANDATE' });
     });
 
+    it('accepts a debit at exactly the ₹15,000 no-authentication limit', async () => {
+      await expect(create({ amountPaise: rs(15000) })).resolves.toMatchObject({ created: true });
+    });
+
+    it('refuses debits above ₹15,000 — they need customer authentication — before sending any notice', async () => {
+      const big = await seedMandate(h.db, merchantId, { maxAmountPaise: rs(50000) });
+      await expect(service.createDebit(merchantId, big.id, { amountPaise: rs(15000) + 1, idempotencyKey: 'big' })).rejects.toMatchObject({
+        code: 'AFA_REQUIRED',
+      });
+      expect(pspA.notices).toHaveLength(0);
+    });
+
+    it('honours a higher per-mandate limit for eligible categories', async () => {
+      const insurance = await seedMandate(h.db, merchantId, { maxAmountPaise: rs(100000), noAfaLimitPaise: rs(100000) });
+      await expect(service.createDebit(merchantId, insurance.id, { amountPaise: rs(50000), idempotencyKey: 'premium' })).resolves.toMatchObject({
+        created: true,
+      });
+    });
+
     it('rejects unknown mandates', async () => {
       await expect(service.createDebit(merchantId, 'mdt_nope', { amountPaise: 1, idempotencyKey: 'x' })).rejects.toBeInstanceOf(AppError);
     });

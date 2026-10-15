@@ -1,6 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import type { Clock } from '../clock.js';
-import { getRuleSet } from '../config/rules.js';
+import { AUTOPAY_NO_AFA_LIMIT_PAISE, getRuleSet } from '../config/rules.js';
 import type { Db } from '../db/client.js';
 import { debits, mandates } from '../db/schema.js';
 import { AppError } from '../errors.js';
@@ -80,6 +80,15 @@ export class SchedulerService {
     if (mandate.status !== 'ACTIVE') throw new AppError('MANDATE_INACTIVE', `Mandate is ${mandate.status}`);
     if (input.amountPaise > mandate.maxAmountPaise) {
       throw new AppError('AMOUNT_EXCEEDS_MANDATE', `Amount exceeds mandate limit of ${mandate.maxAmountPaise} paise`);
+    }
+    // Above the no-AFA limit the customer must authenticate each debit, so it can't be scheduled
+    // as a silent AutoPay execution — refuse now rather than fail at the PSP days later.
+    const noAfaLimit = mandate.noAfaLimitPaise ?? AUTOPAY_NO_AFA_LIMIT_PAISE;
+    if (input.amountPaise > noAfaLimit) {
+      throw new AppError(
+        'AFA_REQUIRED',
+        `Debits above ₹${(noAfaLimit / 100).toLocaleString('en-IN')} need the customer to authenticate them and cannot run as scheduled AutoPay`,
+      );
     }
 
     const now = this.clock.now();

@@ -46,6 +46,8 @@ export const mandates = pgTable('mandates', {
   maxAmountPaise: money('max_amount_paise').notNull(),
   /** PSPs that can execute this mandate (several when MIC-portable), in priority order. */
   eligiblePsps: jsonb('eligible_psps').$type<string[]>().notNull(),
+  /** Per-mandate no-AFA limit for eligible categories; null = the regulatory default. */
+  noAfaLimitPaise: money('no_afa_limit_paise'),
   status: text('status').$type<MandateStatus>().notNull().default('ACTIVE'),
   createdAt: createdAt(),
 });
