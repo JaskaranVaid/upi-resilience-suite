@@ -18,6 +18,9 @@ import { debitView, type Debit } from './service.js';
 
 type Mandate = typeof mandates.$inferSelect;
 
+/** Why a debit moved: it came due inside a restricted window, off its notified date, or after a technical decline. */
+export type RescheduleReason = 'RESTRICTED_WINDOW' | 'NOTICE_DATE' | 'TECHNICAL_DECLINE';
+
 export interface WorkerOptions extends PlanningOptions {
   batchSize: number;
   /** Minimum gap before retrying a technically-declined debit. */
@@ -124,9 +127,12 @@ export class DebitWorker {
 
     // Guardrails: never debit inside a restricted window or on a date the customer wasn't notified of.
     // (A debit whose notice was deferred has no notice date yet: this sends it and schedules.)
-    if (isRestricted(now, getRuleSet(now).windows) || istDateString(now) !== d.noticeDate) {
+    const restricted = isRestricted(now, getRuleSet(now).windows);
+    if (restricted || istDateString(now) !== d.noticeDate) {
       const due = d.dueDate ? istMidnight(d.dueDate).getTime() : 0;
-      return this.reschedule(d, mandate, new Date(Math.max(now.getTime(), due)), null);
+      // A deferred notice reaching its send time is the plan working, not a reschedule.
+      const reason = d.noticeDate === null ? null : restricted ? 'RESTRICTED_WINDOW' : 'NOTICE_DATE';
+      return this.reschedule(d, mandate, new Date(Math.max(now.getTime(), due)), null, reason);
     }
 
     const attempt = d.attempts + 1;
@@ -212,21 +218,29 @@ export class DebitWorker {
       case 'NOT_FOUND': {
         const code = result.kind === 'TECHNICAL_DECLINE' ? result.code : 'NOT_FOUND';
         if (d.attempts >= d.maxAttempts) return this.fail(d, code, { kind: 'FAILED_TECHNICAL' }, pspId, txnRef);
-        return this.reschedule(d, mandate, new Date(now.getTime() + this.opts.retryGapMs), code);
+        return this.reschedule(d, mandate, new Date(now.getTime() + this.opts.retryGapMs), code, 'TECHNICAL_DECLINE');
       }
     }
   }
 
-  private async reschedule(d: Debit, mandate: Mandate, earliest: Date, errorCode: string | null): Promise<void> {
+  /**
+   * Move a debit to its next compliant slot, re-sending the pre-debit notice if the date changes.
+   * `reason` (null for the planned send of a deferred notice) is reported in `debit.rescheduled`.
+   */
+  private async reschedule(d: Debit, mandate: Mandate, earliest: Date, errorCode: string | null, reason: RescheduleReason | null): Promise<void> {
     const now = this.clock.now();
     const win = noticeWindow(this.router, mandate);
     const p = plan({ earliest, now, seed: `${d.id}:${d.attempts}`, noticeDate: d.noticeDate, opts: this.opts, minNoticeMs: win.minNoticeMs });
     const noticeAt = p.needsNotice ? deferredNoticeAt(p.scheduledAt, now, win, d.id) : null;
     if (noticeAt) {
-      await this.db
-        .update(debits)
-        .set({ state: 'SCHEDULED', scheduledAt: noticeAt, noticeDate: null, noticeSentAt: null, executingSince: null, lastPspId: null, updatedAt: now })
-        .where(eq(debits.id, d.id));
+      await this.db.transaction(async (tx) => {
+        const [row] = await tx
+          .update(debits)
+          .set({ state: 'SCHEDULED', scheduledAt: noticeAt, noticeDate: null, noticeSentAt: null, executingSince: null, lastPspId: null, updatedAt: now })
+          .where(eq(debits.id, d.id))
+          .returning();
+        if (reason) await enqueueWebhook(tx, { merchantId: d.merchantId, event: 'debit.rescheduled', payload: { ...debitView(row!), reason }, now });
+      });
       return;
     }
     let noticeSentAt = d.noticeSentAt;
@@ -247,19 +261,25 @@ export class DebitWorker {
         return;
       }
     }
-    await this.db
-      .update(debits)
-      .set({
-        state: 'SCHEDULED',
-        scheduledAt: p.scheduledAt,
-        noticeDate: p.noticeDate,
-        noticeSentAt,
-        executingSince: null,
-        lastPspId: null,
-        updatedAt: now,
-        ...(errorCode ? { lastErrorCode: errorCode } : {}),
-      })
-      .where(eq(debits.id, d.id));
+    await this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(debits)
+        .set({
+          state: 'SCHEDULED',
+          scheduledAt: p.scheduledAt,
+          noticeDate: p.noticeDate,
+          noticeSentAt,
+          executingSince: null,
+          lastPspId: null,
+          updatedAt: now,
+          ...(errorCode ? { lastErrorCode: errorCode } : {}),
+        })
+        .where(eq(debits.id, d.id))
+        .returning();
+      const view = debitView(row!);
+      if (p.needsNotice) await enqueueWebhook(tx, { merchantId: d.merchantId, event: 'debit.notice_sent', payload: view, now });
+      if (reason) await enqueueWebhook(tx, { merchantId: d.merchantId, event: 'debit.rescheduled', payload: { ...view, reason }, now });
+    });
   }
 
   private async succeed(d: Debit, pspTxnId: string, pspId: string | null, txnRef: string | null, upiRrn?: string): Promise<void> {

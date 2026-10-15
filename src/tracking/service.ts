@@ -7,6 +7,8 @@ import { AppError } from '../errors.js';
 import { recordEvents, SYSTEM, type Actor } from '../events/record.js';
 import { newId } from '../ids.js';
 import { applyPaymentOutcome } from '../payments/outcome.js';
+import { enqueueWebhook, type WebhookEvent } from '../webhooks/outbox.js';
+import { paymentFactsPayload } from '../webhooks/payloads.js';
 import type { PspRegistry } from '../psp/registry.js';
 import type { ComplaintStatus, PspResult, TransactionInquiry, TxnContext } from '../psp/types.js';
 import { caseResolution, caseStatus } from './derive.js';
@@ -268,6 +270,17 @@ export class TrackingService {
       }
 
       const c = await this.reconcileCase(tx, tracking, domainAfter, out.mismatch, now, complaintStatus);
+
+      // Tell the merchant's systems about money movements they would otherwise only see in the dashboard.
+      const happened = new Set(out.events.map((e) => e.type));
+      const notify: WebhookEvent[] = [];
+      if (happened.has('REVERSAL_INITIATED')) notify.push('payment.reversal_initiated');
+      if (happened.has('REVERSAL_COMPLETED')) notify.push('payment.reversed');
+      if (out.mismatch && happened.has('CAPTURE_CONFIRMED')) notify.push('payment.captured_after_failure');
+      if (notify.length > 0) {
+        const payload = await paymentFactsPayload(tx, tracking, c);
+        for (const event of notify) await enqueueWebhook(tx, { merchantId: t.merchantId, event, payload, now });
+      }
       return { tracking, case: c };
     });
   }
@@ -316,6 +329,7 @@ export class TrackingService {
         .values({ id: newId('cas'), merchantId: t.merchantId, subjectType: t.subjectType, subjectId: t.subjectId, trackingId: t.id, reason, status, openedAt: now, updatedAt: now })
         .returning();
       await recordEvents(tx, { ...ctx, caseId: c!.id }, [{ type: 'CASE_OPENED', data: { reason, status } }]);
+      if (status === 'NEEDS_ACTION') await this.notifyCase(tx, t, c!, 'case.needs_action', now);
       return c!;
     }
 
@@ -328,7 +342,13 @@ export class TrackingService {
     const events: NewEvent[] =
       status === 'RESOLVED' ? [{ type: 'CASE_RESOLVED', data: { resolution } }] : [{ type: 'CASE_STATUS_CHANGED', data: { from: existing.status, to: status } }];
     await recordEvents(tx, { ...ctx, caseId: existing.id }, events);
+    if (status === 'RESOLVED') await this.notifyCase(tx, t, c!, 'case.resolved', now);
+    else if (status === 'NEEDS_ACTION' && existing.status !== 'NEEDS_ACTION') await this.notifyCase(tx, t, c!, 'case.needs_action', now);
     return c!;
+  }
+
+  private async notifyCase(tx: DbOrTx, t: Tracking, c: PaymentCase, event: 'case.needs_action' | 'case.resolved', now: Date) {
+    await enqueueWebhook(tx, { merchantId: t.merchantId, event, payload: await paymentFactsPayload(tx, t, c), now });
   }
 
   async openCase(db: DbOrTx, subjectType: SubjectType, subjectId: string): Promise<PaymentCase | undefined> {

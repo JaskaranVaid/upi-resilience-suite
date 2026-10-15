@@ -38,6 +38,7 @@ describe('StatusPoller + TrackingService', () => {
   const paymentRow = async (id: string) => (await ctx.db.select().from(payments).where(eq(payments.id, id)))[0]!;
   const eventTypes = async (subjectId: string) =>
     (await ctx.db.select().from(paymentEvents).where(eq(paymentEvents.subjectId, subjectId)).orderBy(asc(paymentEvents.seq))).map((e) => e.type);
+  const hooksFor = async (event: string) => (await ctx.db.select().from(webhookOutbox).where(eq(webhookOutbox.event, event))).map((w) => w.payload as Record<string, unknown>);
   /** Jump to the next scheduled check and run the poller. */
   const nextCheck = async (subjectId: string) => {
     const t = await tracking(subjectId);
@@ -99,6 +100,17 @@ describe('StatusPoller + TrackingService', () => {
     expect(c).toMatchObject({ status: 'RESOLVED', resolution: 'REVERSED_TO_CUSTOMER' });
     expect((await paymentRow(payment.id)).state).toBe('FAILED'); // payment outcome unchanged
     expect(await eventTypes(payment.id)).toEqual(expect.arrayContaining(['CUSTOMER_DEBIT_DETECTED', 'CASE_OPENED', 'REVERSAL_INITIATED', 'REVERSAL_COMPLETED', 'CASE_RESOLVED']));
+
+    // The merchant's systems hear about each step once, with the order and amount to act on.
+    const initiated = await hooksFor('payment.reversal_initiated');
+    expect(initiated).toHaveLength(1);
+    expect(initiated[0]).toMatchObject({ paymentType: 'COLLECT', paymentId: payment.id, orderId: 'ORD-k1', amountPaise: rs(2500), customerDebit: 'DEBITED' });
+    const reversed = await hooksFor('payment.reversed');
+    expect(reversed).toHaveLength(1);
+    expect(reversed[0]).toMatchObject({ reversal: { status: 'COMPLETED' } });
+    expect(await hooksFor('case.resolved')).toHaveLength(1);
+    expect(await hooksFor('case.needs_action')).toHaveLength(0);
+    expect(JSON.stringify(reversed[0])).not.toMatch(/checkCount|failureCode|leaseUntil/);
   });
 
   it('credits routing recovery when a collect that first hit a technical decline is confirmed by the poller', async () => {
@@ -163,6 +175,9 @@ describe('StatusPoller + TrackingService', () => {
     expect(clock.now().getTime() - t.verificationStartedAt!.getTime()).toBeLessThanOrEqual(48 * 3600_000);
     expect(checks).toBeGreaterThan(190);
     expect(await caseOf(payment.id)).toMatchObject({ reason: 'VERIFICATION_EXHAUSTED', status: 'NEEDS_ACTION' });
+    const needsAction = await hooksFor('case.needs_action');
+    expect(needsAction).toHaveLength(1);
+    expect(needsAction[0]).toMatchObject({ paymentId: payment.id, case: { reason: 'VERIFICATION_EXHAUSTED', status: 'NEEDS_ACTION' } });
     clock.advance(24 * 3600_000);
     expect(await ctx.poller.runOnce()).toBe(0); // polling has stopped for good
   });
@@ -177,6 +192,8 @@ describe('StatusPoller + TrackingService', () => {
     expect(await caseOf(payment.id)).toMatchObject({ reason: 'STATUS_MISMATCH', status: 'NEEDS_ACTION' });
     const hooks = (await ctx.db.select().from(webhookOutbox)).map((w) => w.event);
     expect(hooks).not.toContain('payment.succeeded');
+    expect(hooks.filter((h) => h === 'payment.captured_after_failure')).toHaveLength(1);
+    expect(hooks.filter((h) => h === 'case.needs_action')).toHaveLength(1);
   });
 
   it('keeps the schedule when the PSP enquiry API errors', async () => {

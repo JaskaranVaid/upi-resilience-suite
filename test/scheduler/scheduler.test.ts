@@ -167,6 +167,11 @@ describe('Engine A — peak-aware AutoPay scheduler', () => {
       expect(d.scheduledAt.getTime()).toBeGreaterThanOrEqual(clock.now().getTime() + 30 * 60_000);
       expect(isRestricted(d.scheduledAt, DEFAULT_WINDOWS)).toBe(false);
       expect(d.noticeDate).toBe('2026-10-16'); // same-day retry keeps the original notice
+      const moved = await h.db.select().from(webhookOutbox).where(eq(webhookOutbox.event, 'debit.rescheduled'));
+      expect(moved.map((w) => (w.payload as { reason: string; lastErrorCode: string }))).toEqual([
+        expect.objectContaining({ reason: 'TECHNICAL_DECLINE', lastErrorCode: 'BANK_UNAVAILABLE', noticeDate: '2026-10-16' }),
+      ]);
+      expect((await h.db.select().from(webhookOutbox).where(eq(webhookOutbox.event, 'debit.notice_sent')))).toHaveLength(0);
 
       await runAt(d.scheduledAt);
       d = await load(debit.id);
@@ -201,6 +206,8 @@ describe('Engine A — peak-aware AutoPay scheduler', () => {
       expect(pspA.calls.filter((c) => c.op === 'execute')).toHaveLength(0);
       expect(isRestricted(d.scheduledAt, DEFAULT_WINDOWS)).toBe(false);
       expect(toIst(d.scheduledAt).date).toBe('2026-10-16');
+      const moved = await h.db.select().from(webhookOutbox).where(eq(webhookOutbox.event, 'debit.rescheduled'));
+      expect(moved.map((w) => (w.payload as { reason: string }).reason)).toEqual(['RESTRICTED_WINDOW']);
     });
 
     it('re-sends the pre-debit notice when a retry would fall on a different date', async () => {
@@ -215,6 +222,8 @@ describe('Engine A — peak-aware AutoPay scheduler', () => {
       expect(pspA.notices).toHaveLength(2);
       expect(pspA.notices[1]!.executionDate).toBe(d.noticeDate);
       expect(d.scheduledAt.getTime() - late.getTime()).toBeGreaterThanOrEqual(24 * 3600_000);
+      const events = (await h.db.select().from(webhookOutbox)).map((w) => w.event);
+      expect(events).toEqual(['debit.scheduled', 'debit.notice_sent', 'debit.rescheduled']);
     });
 
     it('never executes on a date other than the notified one', async () => {

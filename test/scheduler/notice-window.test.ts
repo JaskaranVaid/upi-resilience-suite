@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from '../../src/clock.js';
 import { buildContext, type AppContext } from '../../src/context.js';
-import { debits } from '../../src/db/schema.js';
+import { debits, webhookOutbox } from '../../src/db/schema.js';
 import { MockPsp } from '../../src/psp/mock.js';
 import { toIst } from '../../src/rules/time.js';
 import { isRestricted } from '../../src/rules/windows.js';
@@ -70,6 +70,9 @@ describe('Scheduler honours the provider notice window', () => {
     expect(notified).toMatchObject({ state: 'SCHEDULED', noticeDate: '2026-11-04', attempts: 0 });
     expect(toIst(notified.scheduledAt).date).toBe('2026-11-04');
     expect(strict.calls.filter((c) => c.op === 'execute')).toHaveLength(0);
+    // Sending a deferred notice is the plan working: the merchant hears notice_sent, not "rescheduled".
+    const events = (await ctx.db.select().from(webhookOutbox)).map((w) => w.event);
+    expect(events).toEqual(['debit.scheduled', 'debit.notice_sent']);
 
     clock.set(notified.scheduledAt);
     await ctx.worker.runOnce();

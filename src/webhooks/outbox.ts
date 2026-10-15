@@ -5,7 +5,21 @@ import { merchants, webhookOutbox } from '../db/schema.js';
 import { newId } from '../ids.js';
 import { sign } from './sign.js';
 
-export type WebhookEvent = 'debit.scheduled' | 'debit.succeeded' | 'debit.failed' | 'payment.succeeded' | 'payment.failed';
+export type WebhookEvent =
+  | 'debit.scheduled'
+  | 'debit.notice_sent'
+  | 'debit.rescheduled'
+  | 'debit.succeeded'
+  | 'debit.failed'
+  | 'payment.succeeded'
+  | 'payment.failed'
+  /** The customer's bank started reversing a debit for a payment that wasn't captured. */
+  | 'payment.reversal_initiated'
+  | 'payment.reversed'
+  /** The PSP captured a payment after it had been reported failed: fulfil or refund. */
+  | 'payment.captured_after_failure'
+  | 'case.needs_action'
+  | 'case.resolved';
 
 /** Write a webhook in the caller's transaction so it is emitted iff the state change commits. */
 export async function enqueueWebhook(
