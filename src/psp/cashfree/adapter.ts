@@ -4,6 +4,7 @@ import type {
   CollectRequest,
   ComplaintResult,
   CredentialCheck,
+  MandateLookup,
   ComplaintStatusResult,
   ExecuteMandateRequest,
   NoticeResult,
@@ -180,6 +181,14 @@ export class CashfreeAdapter implements PspAdapter {
 
   async complaintStatus(): Promise<ComplaintStatusResult> {
     return { ok: false, reason: 'Cashfree does not offer merchant-raised UDIR complaints' };
+  }
+
+  /** A subscription (our mandate) is debitable only while ACTIVE. Lookup failures throw. */
+  async mandateStatus(mandateRef: string): Promise<MandateLookup> {
+    const res = await this.get(`/subscriptions/${encodeURIComponent(mandateRef)}`);
+    if (res.status === 404) return 'NOT_FOUND';
+    this.assertOk(res);
+    return (res.json as { subscription_status?: string } | null)?.subscription_status === 'ACTIVE' ? 'ACTIVE' : 'INACTIVE';
   }
 
   /** An authenticated lookup of an order that can't exist: 404 means the keys work. */

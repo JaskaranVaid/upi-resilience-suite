@@ -134,7 +134,11 @@ export interface PspAdapter {
   verifyWebhook?(rawBody: string, headers: Record<string, string | string[] | undefined>, now: Date): WebhookVerification;
   /** Confirm the credentials work (a harmless authenticated lookup), before they are saved. */
   checkCredentials?(): Promise<CredentialCheck>;
+  /** Whether a mandate exists and can be debited at this PSP. Throws when the lookup fails. */
+  mandateStatus?(mandateRef: string): Promise<MandateLookup>;
 }
+
+export type MandateLookup = 'ACTIVE' | 'INACTIVE' | 'NOT_FOUND';
 
 export type CredentialCheck = { ok: true } | { ok: false; reason: string; rejected: boolean };
 

@@ -6,6 +6,7 @@ import { ValueService } from './analytics/value.js';
 import { SessionService, type AuthConfig } from './auth/sessions.js';
 import { UserService } from './auth/users.js';
 import { ApiKeyService } from './auth/api-keys.js';
+import { MandateImporter } from './mandates/import.js';
 import { CheckoutService } from './checkout/service.js';
 import { DEFAULT_POLLING, type PollingConfig } from './config/polling.js';
 import type { Db } from './db/client.js';
@@ -47,6 +48,7 @@ export interface AppContext {
   disputes: DisputeService;
   users: UserService;
   apiKeys: ApiKeyService;
+  mandateImporter: MandateImporter;
   sessions: SessionService;
   queries: PaymentQueryService;
   /** Set the Secure flag on session cookies (true in production / behind HTTPS). */
@@ -129,6 +131,7 @@ export function buildContext(args: {
     disputes: new DisputeService({ db: args.db, clock, psps, tracking }),
     users: new UserService({ db: args.db, clock }),
     apiKeys: new ApiKeyService({ db: args.db, clock }),
+    mandateImporter: new MandateImporter({ db: args.db, clock, psps }),
     sessions: new SessionService({ db: args.db, clock, ...(args.auth ? { cfg: args.auth } : {}) }),
     queries: new PaymentQueryService({ db: args.db, clock, cfg: polling, psps }),
     secureCookies: args.secureCookies ?? false,

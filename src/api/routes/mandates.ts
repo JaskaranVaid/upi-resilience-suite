@@ -8,6 +8,9 @@ import { newId } from '../../ids.js';
 import { debitView } from '../../scheduler/service.js';
 import { merchantOf } from '../app.js';
 import { createDebit, createMandate, idParam } from '../schemas.js';
+import { resolveEligiblePsps } from '../../mandates/eligibility.js';
+import { parseCsv } from '../../mandates/csv.js';
+import { fromCsvRow } from '../../mandates/import.js';
 
 /** Accept the idempotency key from the body or the conventional Idempotency-Key header. */
 export function withIdempotencyKey(req: FastifyRequest): unknown {
@@ -17,24 +20,39 @@ export function withIdempotencyKey(req: FastifyRequest): unknown {
 }
 
 export const mandateRoutes = (ctx: AppContext) => async (app: FastifyInstance) => {
+  // CSV bodies for bulk import (scoped to these routes).
+  app.addContentTypeParser('text/csv', { parseAs: 'string', bodyLimit: 5 * 1024 * 1024 }, (_req, body, done) => done(null, body));
+
+  /**
+   * Bulk import of mandates that already exist at the merchant's PSP. JSON
+   * `{ mandates: [...], verify? }` or `text/csv` (`?verify=true`) with header
+   * `mandateRef,customerVpa,maxAmountPaise,eligiblePsps,noAfaLimitPaise`. Idempotent per mandateRef.
+   */
+  app.post('/v1/mandates/import', { bodyLimit: 5 * 1024 * 1024 }, async (req) => {
+    const merchant = merchantOf(req);
+    let rows: unknown[];
+    let verify: boolean;
+    if (typeof req.body === 'string') {
+      try {
+        rows = parseCsv(req.body).map(fromCsvRow);
+      } catch (e) {
+        throw new AppError('VALIDATION', e instanceof Error ? e.message : 'Invalid CSV');
+      }
+      verify = z.object({ verify: z.enum(['true', 'false']).default('false') }).parse(req.query).verify === 'true';
+    } else {
+      const body = z.object({ mandates: z.array(z.unknown()).min(1), verify: z.boolean().default(false) }).parse(req.body);
+      rows = body.mandates;
+      verify = body.verify;
+    }
+    if (rows.length === 0) throw new AppError('VALIDATION', 'No mandates to import');
+    return ctx.mandateImporter.import(merchant.id, rows, { verify });
+  });
+
   app.post('/v1/mandates', async (req, reply) => {
     const merchant = merchantOf(req);
     const body = createMandate.parse(req.body);
-    // A mandate lives at the PSP it was registered with; only MIC-portable mandates may be
-    // executed elsewhere. Omitted eligiblePsps = every PSP that accepts portable mandates.
     const available = new Map((await ctx.psps.requireForMerchant(merchant.id)).map((a) => [a.id, a]));
-    const portable = [...available.values()].filter((a) => a.capabilities.portableMandates).map((a) => a.id);
-    const eligiblePsps = body.eligiblePsps ?? portable;
-    if (eligiblePsps.length === 0) {
-      throw new AppError('VALIDATION', 'Specify eligiblePsps: the payment provider this mandate was registered with');
-    }
-    // Only this merchant's own (active) PSPs: another merchant's connection id is just "unknown".
-    const unknown = eligiblePsps.filter((p) => !available.has(p));
-    if (unknown.length) throw new AppError('VALIDATION', `Unknown PSPs: ${unknown.join(', ')}`);
-    const nonPortable = eligiblePsps.filter((p) => !available.get(p)!.capabilities.portableMandates);
-    if (nonPortable.length > 0 && eligiblePsps.length > 1) {
-      throw new AppError('VALIDATION', `${nonPortable[0]} mandates can only be executed through ${nonPortable[0]}; set eligiblePsps to ["${nonPortable[0]}"]`);
-    }
+    const eligiblePsps = resolveEligiblePsps(available, body.eligiblePsps);
     const [m] = await ctx.db
       .insert(mandates)
       .values({ id: newId('mdt'), merchantId: merchant.id, ...body, eligiblePsps, createdAt: ctx.clock.now() })

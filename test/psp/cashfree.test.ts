@@ -369,3 +369,26 @@ describe('Cashfree webhook verification', () => {
     expect(verifyCashfreeWebhook(SECRET, exec, { 'x-webhook-signature': sign(ts, exec), 'x-webhook-timestamp': ts }, now)).toEqual({ ok: true, refs: ['dbt_1-a1-1', 'dbt_1'] });
   });
 });
+
+describe('CashfreeAdapter — account checks', () => {
+  it('reports a subscription as debitable only while ACTIVE, and throws when the lookup fails', async () => {
+    const { adapter, requests } = fakeCashfree({
+      'GET /subscriptions/sub_live': () => ({ status: 200, body: { subscription_id: 'sub_live', subscription_status: 'ACTIVE' } }),
+      'GET /subscriptions/sub_paused': () => ({ status: 200, body: { subscription_status: 'ON_HOLD' } }),
+      'GET /subscriptions/sub_broken': () => ({ status: 500, body: { message: 'internal' } }),
+    });
+    expect(await adapter.mandateStatus('sub_live')).toBe('ACTIVE');
+    expect(await adapter.mandateStatus('sub_paused')).toBe('INACTIVE');
+    expect(await adapter.mandateStatus('sub_unknown')).toBe('NOT_FOUND');
+    await expect(adapter.mandateStatus('sub_broken')).rejects.toThrow(/Cashfree lookup failed: HTTP 500/);
+    expect(requests[0]!.headers['x-client-id']).toBe('CF_APP_1');
+  });
+
+  it('checks credentials with a lookup that must 404, and tells rejection apart from an outage', async () => {
+    expect(await fakeCashfree({}).adapter.checkCredentials()).toEqual({ ok: true });
+    const rejected = await fakeCashfree({ 'GET /orders/.*': () => ({ status: 401, body: { message: 'authentication Failed' } }) }).adapter.checkCredentials();
+    expect(rejected).toMatchObject({ ok: false, rejected: true });
+    const down = await fakeCashfree({ 'GET /orders/.*': () => 'NETWORK' }).adapter.checkCredentials();
+    expect(down).toMatchObject({ ok: false, rejected: false, reason: expect.stringMatching(/Couldn't reach Cashfree/) });
+  });
+});

@@ -7,6 +7,7 @@ import type {
   ComplaintStatusResult,
   CollectRequest,
   ExecuteMandateRequest,
+  MandateLookup,
   NoticeResult,
   PspCapabilities,
   PreDebitNoticeRequest,
@@ -92,6 +93,17 @@ export class MockPsp implements PspAdapter {
     this.script = [...(opts.script ?? [])];
     this.capabilities = { ...MOCK_CAPABILITIES, ...opts.capabilities };
     this.rngState = opts.seed ?? 42;
+  }
+
+  private readonly mandateStatuses = new Map<string, MandateLookup>();
+
+  /** What mandateStatus() reports for a mandate (default ACTIVE). */
+  setMandateStatus(mandateRef: string, status: MandateLookup): void {
+    this.mandateStatuses.set(mandateRef, status);
+  }
+
+  async mandateStatus(mandateRef: string): Promise<MandateLookup> {
+    return this.mandateStatuses.get(mandateRef) ?? 'ACTIVE';
   }
 
   /** Change behaviour at runtime (demo: "take PSP A down"). */
