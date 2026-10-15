@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { bigint, boolean, index, integer, jsonb, pgTable, pgView, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 import type { Capture, ComplaintReason, ComplaintStatus, CustomerAction, CustomerDebit, PaymentChannel, PspMode, ReversalStatus } from '../psp/types.js';
 import type { CaseReason, CaseResolution, CaseStatus, EventType, SettlementStatus, SubjectType, VerificationStatus } from '../tracking/types.js';
@@ -196,6 +197,8 @@ export const debits = pgTable(
     uniqueIndex('debits_merchant_idem').on(t.merchantId, t.idempotencyKey),
     index('debits_due').on(t.state, t.scheduledAt),
     index('debits_merchant_order').on(t.merchantId, t.orderId),
+    // Ops metrics: notice failures in the last hour.
+    index('debits_error_time').on(t.lastErrorCode, t.updatedAt),
   ],
 );
 
@@ -254,6 +257,8 @@ export const paymentAttempts = pgTable(
     index('attempts_debit').on(t.debitId),
     index('attempts_payment').on(t.paymentId),
     index('attempts_merchant_time').on(t.merchantId, t.createdAt),
+    // Ops metrics: AutoPay executions in the last 15 minutes (restricted-window check).
+    index('attempts_execute_time').on(t.createdAt).where(sql`${t.op} = 'execute'`),
   ],
 );
 
@@ -339,7 +344,11 @@ export const webhookOutbox = pgTable(
     lastError: text('last_error'),
     createdAt: createdAt(),
   },
-  (t) => [index('outbox_due').on(t.deliveredAt, t.nextAttemptAt)],
+  (t) => [
+    index('outbox_due').on(t.deliveredAt, t.nextAttemptAt),
+    // Ops metrics: webhooks that died in the last 24 hours.
+    index('outbox_dead_at').on(t.deadAt).where(sql`${t.deadAt} is not null`),
+  ],
 );
 
 // ─── Phase 3: tracking, cases, UDIR, audit, dashboard auth ────────────────────────────────

@@ -120,6 +120,13 @@
       "when": 1792062132657,
       "tag": "0016_checkout_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1792083393266,
+      "tag": "0017_ops_metrics_indexes",
+      "breakpoints": true
     }
   ]
 }

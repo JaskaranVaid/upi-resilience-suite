@@ -182,3 +182,15 @@ describe('operational metrics', () => {
     expect(res.json()).toMatchObject({ workerHeartbeat: 1, restrictedWindowExecutions: 0 });
   });
 });
+
+describe('operational metrics queries', () => {
+  it('are backed by indexes, since every worker runs them every minute', async () => {
+    const { db } = await freshDb();
+    const { sql } = await import('drizzle-orm');
+    const rows = ((await db.execute(sql`select indexname, indexdef from pg_indexes where schemaname = 'public'`)) as unknown as { rows: Array<{ indexname: string; indexdef: string }> }).rows;
+    const defs = new Map(rows.map((r) => [r.indexname, r.indexdef]));
+    expect(defs.get('attempts_execute_time')).toMatch(/\(created_at\) WHERE \(op = 'execute'::text\)/);
+    expect(defs.get('outbox_dead_at')).toMatch(/\(dead_at\) WHERE \(dead_at IS NOT NULL\)/);
+    expect(defs.get('debits_error_time')).toMatch(/\(last_error_code, updated_at\)/);
+  });
+});
