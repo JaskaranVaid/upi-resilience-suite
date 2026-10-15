@@ -13,12 +13,13 @@ export const opsRoutes = (ctx: AppContext) => async (app: FastifyInstance) => {
   app.get('/healthz', { logLevel: 'silent' }, async () => ({ status: 'ok' }));
 
   /** Readiness: send traffic here. Fails while shutting down (draining) or when the database is unreachable. */
-  app.get('/readyz', { logLevel: 'silent' }, async (req, reply) => {
+  app.get('/readyz', { logLevel: 'silent' }, async (_req, reply) => {
     if (ctx.lifecycle.draining) return reply.status(503).send({ status: 'draining' });
     try {
       await ctx.db.execute(sql`select 1`);
     } catch (e) {
-      req.log.warn({ err: e }, 'readiness: database unreachable');
+      // The route's own logger is silenced (probe noise); this one isn't.
+      app.log.warn({ err: e }, 'readiness: database unreachable');
       return reply.status(503).send({ status: 'unavailable' });
     }
     return { status: 'ready' };

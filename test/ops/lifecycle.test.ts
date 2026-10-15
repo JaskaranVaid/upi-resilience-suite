@@ -47,6 +47,14 @@ describe('health probes and draining', () => {
     expect((await app.inject({ method: 'GET', url: '/healthz' })).statusCode).toBe(200);
   });
 
+  it('logs why it is not ready, although probe requests themselves are not logged', async () => {
+    const logged = buildApp(ctx, { logger: true });
+    const warn = vi.spyOn(logged.log, 'warn').mockImplementation(() => {});
+    vi.spyOn(ctx.db, 'execute').mockRejectedValue(new Error('connection refused'));
+    expect((await logged.inject({ method: 'GET', url: '/readyz' })).statusCode).toBe(503);
+    expect(warn).toHaveBeenCalledWith(expect.objectContaining({ err: expect.any(Error) }), 'readiness: database unreachable');
+  });
+
   it('is not ready when the database is unreachable', async () => {
     vi.spyOn(ctx.db, 'execute').mockRejectedValue(new Error('connection refused'));
     const res = await app.inject({ method: 'GET', url: '/readyz' });
