@@ -11,3 +11,4 @@ consequences. Supersede a record with a new one rather than editing history.
 | [0004](0004-mdr-start-is-configuration.md) | The MDR start date is configuration, defaulting to "not in force" | Accepted |
 | [0005](0005-product-name-merchantflo.md) | Product name Merchantflo; wire identifiers unchanged | Accepted |
 | [0006](0006-delivery-workflow.md) | Branch per change, CI on every PR, conventional commits | Accepted |
+| [0007](0007-expand-contract-migrations.md) | Migrations run once per deploy (advisory lock) and only expand the schema | Accepted |

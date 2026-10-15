@@ -4,6 +4,7 @@ import { loadEnv } from './config/env.js';
 import { configureMdrEffectiveFrom, mdrStatus } from './config/rules.js';
 import { buildContext } from './context.js';
 import { createDb } from './db/client.js';
+import { assertSchemaCurrent, schemaStatus } from './db/migrate.js';
 import { DEFAULT_HEARTBEAT_FILE, writeHeartbeat } from './ops/lifecycle.js';
 import { jsonLogger } from './ops/log.js';
 import { buildAdapters } from './psp/factory.js';
@@ -14,11 +15,20 @@ const log = jsonLogger();
 
 async function main() {
   loadDotEnv();
-  const env = loadEnv();
+  // `npm run db:migrate` passes --migrate (same as ROLE=migrate, without setting a variable on Windows).
+  const env = loadEnv(process.argv.includes('--migrate') ? { ...process.env, ROLE: 'migrate' } : process.env);
   configureMdrEffectiveFrom(env.MDR_EFFECTIVE_FROM ?? null);
   const mdr = mdrStatus(new Date());
   log.info(`UPI MDR: ${mdr.status}${mdr.effectiveFrom ? ` (from ${env.MDR_EFFECTIVE_FROM} IST)` : ' — set MDR_EFFECTIVE_FROM once NPCI confirms the start date'}`);
-  const { db, close } = await createDb(env.DATABASE_URL);
+  if (env.ROLE === 'migrate') {
+    // One-off deploy step: apply pending migrations (under an advisory lock on Postgres) and exit.
+    const { db, close } = await createDb(env.DATABASE_URL, { migrate: true, poolMax: 1 });
+    log.info('migrations applied', { ...(await schemaStatus(db)) });
+    await close();
+    return;
+  }
+  const { db, close } = await createDb(env.DATABASE_URL, { migrate: env.MIGRATE_ON_START, poolMax: env.DATABASE_POOL_MAX });
+  if (!env.MIGRATE_ON_START) await assertSchemaCurrent(db);
 
   const adapters = buildAdapters(env);
   log.info(`shared payment providers (test-mode merchants): ${adapters.map((a) => `${a.id} (${a.mode})`).join(', ') || 'none'}`);
@@ -100,7 +110,7 @@ process.on('unhandledRejection', (e) => {
 
 main().catch((e) => {
   // Configuration problems get their message, not a stack trace.
-  const configError = e instanceof Error && (e.name === 'PspConfigError' || e.name === 'ZodError' || /already in use|required in production/.test(e.message));
+  const configError = e instanceof Error && (e.name === 'PspConfigError' || e.name === 'ZodError' || /already in use|required in production|schema is behind/.test(e.message));
   if (configError) log.error(`Cannot start: ${e.message}`);
   else log.error('startup failed', e);
   process.exit(1);

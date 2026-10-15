@@ -6,8 +6,18 @@ const schema = z.object({
   DATABASE_URL: z.string().default('pglite://.data/pg'),
   HOST: z.string().default('0.0.0.0'),
   PORT: z.coerce.number().int().default(3000),
-  /** api = HTTP only, worker = debit executor + webhook dispatcher only, all = both. */
-  ROLE: z.enum(['api', 'worker', 'all']).default('all'),
+  /**
+   * api = HTTP only, worker = debit executor + webhook dispatcher only, all = both,
+   * migrate = apply database migrations and exit (the deploy runs this once per release).
+   */
+  ROLE: z.enum(['api', 'worker', 'all', 'migrate']).default('all'),
+  /**
+   * Apply migrations when the process starts. Defaults to true outside production; production
+   * processes only check the schema is current and refuse to start otherwise.
+   */
+  MIGRATE_ON_START: z.enum(['true', 'false']).optional(),
+  /** Maximum Postgres connections per process. */
+  DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(100).default(10),
   ADMIN_TOKEN: z.string().min(16).optional(),
   /** Signs payment-scoped customer status tokens. Required in production. */
   CUSTOMER_TOKEN_SECRET: z.string().min(32).optional(),
@@ -71,7 +81,7 @@ const schema = z.object({
   MOCK_PSP_RATES: z.string().optional(),
 });
 
-export type Env = z.infer<typeof schema> & { ADMIN_TOKEN: string; CUSTOMER_TOKEN_SECRET: string };
+export type Env = Omit<z.infer<typeof schema>, 'MIGRATE_ON_START'> & { ADMIN_TOKEN: string; CUSTOMER_TOKEN_SECRET: string; MIGRATE_ON_START: boolean };
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   const env = schema.parse(source);
@@ -87,5 +97,6 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     ...env,
     ADMIN_TOKEN: env.ADMIN_TOKEN ?? 'dev-admin-token-change-me',
     CUSTOMER_TOKEN_SECRET: env.CUSTOMER_TOKEN_SECRET ?? 'dev-customer-token-secret-not-for-production',
+    MIGRATE_ON_START: env.MIGRATE_ON_START ? env.MIGRATE_ON_START === 'true' : env.NODE_ENV !== 'production',
   };
 }
