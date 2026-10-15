@@ -46,3 +46,26 @@ jobs:
         run: docker compose logs --no-color
       - if: always()
         run: docker compose down -v
+
+  infra:
+    name: terraform fmt + validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.6
+          terraform_wrapper: false
+      - run: terraform fmt -check -recursive infra
+      - name: terraform validate (bootstrap and every environment)
+        env:
+          TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/tf-plugins
+        run: |
+          mkdir -p "$TF_PLUGIN_CACHE_DIR"
+          for dir in bootstrap envs/dev envs/staging envs/production; do
+            echo "::group::$dir"
+            terraform -chdir=infra/$dir init -backend=false -input=false
+            terraform -chdir=infra/$dir validate
+            echo "::endgroup::"
+          done
