@@ -89,7 +89,8 @@ describe('Router', () => {
     expect(out.pspId).toBe('pspB');
     expect(pspB.calls[0]!.txnRef).not.toBe(pspA.calls[0]!.txnRef);
     expect(out.hadTechnicalDecline).toBe(true);
-    expect(out.attempts).toHaveLength(2);
+    // execute at A, status at A (nothing live there), execute at B
+    expect(out.attempts.map((a) => [a.pspId, a.op])).toEqual([['pspA', 'execute'], ['pspA', 'status'], ['pspB', 'execute']]);
   });
 
   it('never retries or fails over a business decline', async () => {
@@ -200,11 +201,40 @@ describe('Router — collect failover (status check before failover)', () => {
     expect(pspB.calls).toHaveLength(0);
   });
 
-  it('leaves mandate failover unchanged: no status check on a non-timeout decline', async () => {
+});
+
+describe('Router — mandate failover (status check before failover)', () => {
+  it('does not debit again via another PSP when the errored execution actually went through', async () => {
+    const { run, pspA, pspB } = setup({ script: [{ ...BANK_DOWN, settleAs: OK('a-late') }] }, { script: [OK('b1')] });
+    const out = await run();
+    expect(out.result).toEqual(OK('a-late'));
+    expect(pspA.calls.map((c) => c.op)).toEqual(['execute', 'status']);
+    expect(pspB.calls).toHaveLength(0);
+  });
+
+  it('stops at PENDING when the first PSP still has the execution in flight', async () => {
+    const { run, pspB } = setup({ script: [{ ...BANK_DOWN, settleAs: { kind: 'PENDING' } }] }, { script: [OK('b1')] });
+    const out = await run();
+    expect(out.result).toEqual({ kind: 'PENDING' });
+    expect(pspB.calls).toHaveLength(0);
+  });
+
+  it('fails over once the first PSP confirms it never debited', async () => {
     const { run, pspA } = setup({ script: [BANK_DOWN] }, { script: [OK('b1')] });
     const out = await run();
     expect(out.result).toEqual(OK('b1'));
-    expect(pspA.calls.map((c) => c.op)).toEqual(['execute']);
+    expect(out.pspId).toBe('pspB');
+    expect(pspA.calls.map((c) => c.op)).toEqual(['execute', 'status']);
+  });
+
+  it('does not fail over when there is no time left to confirm', async () => {
+    const clock = new FakeClock('2026-10-15T08:00:00Z');
+    const slow = new MockPsp('pspA', { script: [BANK_DOWN], latencyMs: 31_000, sleep: clock.sleep });
+    const pspB = new MockPsp('pspB', { script: [OK('b1')] });
+    const router = new Router([slow, pspB], new HealthTracker({}, clock), clock, clock.sleep, { maxTotalMs: 30_000 });
+    const out = await router.execute({ op: 'mandate', candidates: ['pspA', 'pspB'], amountPaise: 49900, mandateRef: 'UMN1', baseRef: 'dbt_1' });
+    expect(out.result).toEqual(BANK_DOWN);
+    expect(pspB.calls).toHaveLength(0);
   });
 });
 
@@ -340,7 +370,7 @@ describe('Router — probing in practice', () => {
     await router.execute({ op: 'mandate', candidates: ['pspA', 'pspB'], amountPaise: 1, mandateRef: 'U', baseRef: 'm0' });
     clock.advance(60_000);
     const out = await router.execute({ op: 'mandate', candidates: ['pspA', 'pspB'], amountPaise: 1, mandateRef: 'U', baseRef: 'm1' });
-    expect(pspA.calls.map((c) => c.op)).toEqual(['execute']);
+    expect(pspA.calls.map((c) => c.op)).toEqual(['execute', 'status']);
     expect(out).toMatchObject({ pspId: 'pspB', hadTechnicalDecline: false }); // a failed probe earns no recovery credit
   });
 
@@ -356,7 +386,11 @@ describe('Router — probing in practice', () => {
 
     clock.advance(60_000);
     const probeOnly = await run('m1'); // probe A fails, B succeeds
-    expect(probeOnly.attempts.map((a) => [a.pspId, a.probe ?? false])).toEqual([['pspA', true], ['pspB', false]]);
+    expect(probeOnly.attempts.map((a) => [a.pspId, a.op, a.probe ?? false])).toEqual([
+      ['pspA', 'execute', true],
+      ['pspA', 'status', true],
+      ['pspB', 'execute', false],
+    ]);
     expect(probeOnly.hadTechnicalDecline).toBe(false); // nothing was recovered: the router chose to risk A
 
     clock.advance(60_000);

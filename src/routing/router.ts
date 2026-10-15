@@ -50,7 +50,8 @@ const TIMEOUT: PspResult = { kind: 'TECHNICAL_DECLINE', code: 'TIMEOUT' };
  *  - Business declines are final: never retried, never failed over.
  *  - A timeout is ambiguous (the bank may have debited), so we wait, check status, and
  *    only retry — on the same PSP with the same txnRef — if the PSP has no record of it.
- *  - Other technical declines fail over to the next-healthiest PSP with a fresh txnRef.
+ *  - Other technical declines are status-checked too, then fail over to the next-healthiest PSP
+ *    with a fresh txnRef only if this PSP has nothing live for the request.
  */
 export class Router {
   private readonly adapters: Map<string, PspAdapter>;
@@ -100,10 +101,11 @@ export class Router {
       let r = await this.attempt(psp, req, txnRef, attempts);
       if (r.kind === 'TECHNICAL_DECLINE' && r.code === 'TIMEOUT') {
         if (!outOfTime()) r = await this.resolveTimeout(psp, req, txnRef, attempts);
-      } else if (r.kind === 'TECHNICAL_DECLINE' && req.op === 'collect') {
-        // A collect request may exist at this PSP despite the error. Sending a second one via
-        // another PSP could let the customer pay twice, so only fail over once we've confirmed
-        // there's nothing live here — and if there's no time left to confirm, don't fail over.
+      } else if (r.kind === 'TECHNICAL_DECLINE') {
+        // The request may have gone through at this PSP despite the error (e.g. a connection reset
+        // after the PSP accepted it). Sending it again via another PSP could debit the customer
+        // twice, so only fail over once we've confirmed there's nothing live here — and if there's
+        // no time left to confirm, don't fail over.
         if (outOfTime()) return this.outcome(r, pspId, txnRef, attempts, probe);
         r = await this.confirmBeforeFailover(psp, txnRef, r, attempts, this.ctxOf(req));
       }

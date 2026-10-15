@@ -127,8 +127,9 @@ describe('Engine A — peak-aware AutoPay scheduler', () => {
       await runAt(debit.scheduledAt);
       const d = await load(debit.id);
       expect(d.state).toBe('SUCCEEDED');
-      expect(d.attempts).toBe(1); // one mandate attempt, two PSP calls
-      expect(await h.db.select().from(paymentAttempts).where(eq(paymentAttempts.debitId, debit.id))).toHaveLength(2);
+      expect(d.attempts).toBe(1); // one mandate attempt: execute at A, status at A, execute at B
+      const calls = await h.db.select().from(paymentAttempts).where(eq(paymentAttempts.debitId, debit.id));
+      expect(calls.map((c) => c.op).sort()).toEqual(['execute', 'execute', 'status']);
       const savings = await h.db.select().from(savingsEvents);
       expect(savings.map((s) => [s.type, s.amountPaise])).toEqual([['TD_RECOVERED', rs(499)]]);
     });
