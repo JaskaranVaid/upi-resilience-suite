@@ -21,6 +21,7 @@ import { pspWebhookRoutes } from './routes/psp-webhooks.js';
 import { connectionRoutes } from './routes/connections.js';
 import { settlementRoutes } from './routes/settlements.js';
 import { publicCheckoutRoutes } from './routes/public-checkout.js';
+import { webhookDeliveryRoutes } from './routes/webhook-deliveries.js';
 
 export type Merchant = typeof merchants.$inferSelect;
 
@@ -135,6 +136,7 @@ export function buildApp(ctx: AppContext, opts: { logger?: boolean; trustProxy?:
   app.register(connectionRoutes(ctx));
   app.register(settlementRoutes(ctx));
   app.register(publicCheckoutRoutes(ctx));
+  app.register(webhookDeliveryRoutes(ctx));
   app.register(docsRoutes());
   return app;
 }

@@ -57,4 +57,9 @@ export const api = {
   users: () => request('GET', '/users'),
   createUser: (u) => request('POST', '/users', u),
   updateUser: (id, patch) => request('PATCH', `/users/${encodeURIComponent(id)}`, patch),
+  developers: () => request('GET', '/developers'),
+  apiKeys: () => request('GET', '/developers/api-keys'),
+  pspConnections: () => request('GET', '/developers/psp-connections'),
+  webhookDeliveries: (params) => request('GET', `/developers/webhook-deliveries${qs(params)}`),
+  redeliverWebhook: (id) => request('POST', `/developers/webhook-deliveries/${encodeURIComponent(id)}/redeliver`),
 };

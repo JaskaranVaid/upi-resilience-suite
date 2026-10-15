@@ -109,6 +109,20 @@ export interface Debit {
   completedAt: string | null;
 }
 
+export interface WebhookDelivery {
+  /** Also the webhook body's `id`: the same across retries and redeliveries. */
+  id: string;
+  event: string;
+  status: 'pending' | 'delivered' | 'failed';
+  attempts: number;
+  lastError: string | null;
+  createdAt: string;
+  deliveredAt: string | null;
+  failedAt: string | null;
+  nextAttemptAt: string | null;
+  data: Record<string, unknown>;
+}
+
 export interface List<T> {
   data: T[];
 }
@@ -226,6 +240,14 @@ export class Merchantflo {
     create: (mandateId: string, params: CreateDebitParams, o?: RequestOptions) => this.request<Debit>('POST', `/v1/mandates/${enc(mandateId)}/debits`, params, o),
     retrieve: (id: string) => this.request<Debit>('GET', `/v1/debits/${enc(id)}`),
     list: (q: { state?: Debit['state']; limit?: number } = {}) => this.request<List<Debit>>('GET', '/v1/debits', undefined, undefined, q),
+  };
+
+  readonly webhookDeliveries = {
+    /** Newest first; pass the previous page's `nextBefore` as `before` for older ones. */
+    list: (q: { status?: WebhookDelivery['status']; event?: string; before?: string; limit?: number } = {}) =>
+      this.request<List<WebhookDelivery> & { nextBefore: string | null }>('GET', '/v1/webhook-deliveries', undefined, undefined, q),
+    /** Send a delivered or failed webhook again (same id, signed with your current secret). */
+    redeliver: (id: string) => this.request<WebhookDelivery>('POST', `/v1/webhook-deliveries/${enc(id)}/redeliver`),
   };
 
   /** Any API call not wrapped above. */

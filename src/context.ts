@@ -25,6 +25,7 @@ import { DebitWorker, type WorkerOptions } from './scheduler/worker.js';
 import { StatusPoller } from './tracking/poller.js';
 import { SettlementReconciler, type ReconOptions } from './settlements/reconciler.js';
 import { TrackingService } from './tracking/service.js';
+import { WebhookDeliveryService } from './webhooks/deliveries.js';
 import { WebhookDispatcher, type FetchLike } from './webhooks/outbox.js';
 import { publicTargetGuard, type ResolveHost, type WebhookTargetPolicy } from './webhooks/url.js';
 import { publicOnlyFetch } from './webhooks/http.js';
@@ -46,6 +47,7 @@ export interface AppContext {
   payments: PaymentService;
   worker: DebitWorker;
   dispatcher: WebhookDispatcher;
+  webhookDeliveries: WebhookDeliveryService;
   psps: PspRegistry;
   tracking: TrackingService;
   poller: StatusPoller;
@@ -131,6 +133,7 @@ export function buildContext(args: {
     router,
     scheduler: new SchedulerService({ db: args.db, clock, router, opts: args.scheduler }),
     checkout,
+    webhookDeliveries: new WebhookDeliveryService({ db: args.db, clock }),
     checkoutSessions: new CheckoutSessionService({ db: args.db, clock, checkout, payments, psps, queries, tokenSecret: customerTokenSecret }),
     payments,
     worker: new DebitWorker({ db: args.db, clock, router, tracking, opts: args.worker }),

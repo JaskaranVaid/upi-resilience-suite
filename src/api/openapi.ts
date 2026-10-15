@@ -1,12 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { createUserBody } from './dashboard/plugin.js';
-import { checkoutPayment, checkoutSessionResponse, debitResponse, mandateResponse, paymentResponse, publicPaymentStatus } from './responses.js';
+import { checkoutPayment, checkoutSessionResponse, debitResponse, mandateResponse, paymentResponse, publicPaymentStatus, webhookDeliveryResponse } from './responses.js';
 import { createConnectionBody, updateConnectionBody } from './routes/connections.js';
 import { importMandatesBody, listDebitsQuery, movePspBody, updateMandateBody } from './routes/mandates.js';
 import { changeModeBody, createApiKeyBody } from './routes/merchants.js';
 import { payBody } from './routes/public-checkout.js';
 import { settlementsQuery } from './routes/settlements.js';
+import { listDeliveriesQuery } from './routes/webhook-deliveries.js';
 import {
   acceptQuote, createCheckoutSession, createDebit, createMandate, createMerchant, createPayment, createVendor, quotePaid, quoteRequest, savingsQuery, splitRequest, updateMerchant,
 } from './schemas.js';
@@ -26,7 +27,7 @@ export interface RouteDoc {
   /** Accepts an Idempotency-Key header (same as `idempotencyKey` in the body). */
   idempotent?: boolean;
   /** Success status and its body (omitted: a JSON object not specified further). */
-  status?: 200 | 201 | 204;
+  status?: 200 | 201 | 202 | 204;
   response?: z.ZodType;
   /** A non-JSON success body, e.g. image/svg+xml. */
   produces?: string;
@@ -100,6 +101,16 @@ export const ROUTE_DOCS: RouteDoc[] = [
   { method: 'patch', path: '/v1/psp-connections/:id', tag: 'PSP connections', auth: 'apiKey', body: updateConnectionBody, summary: 'Update a PSP connection' },
   { method: 'get', path: '/v1/psps/health', tag: 'PSP connections', auth: 'apiKey', summary: 'Health of your PSPs as the router sees it' },
 
+  // Webhooks
+  {
+    method: 'get', path: '/v1/webhook-deliveries', tag: 'Webhooks', auth: 'apiKey', query: listDeliveriesQuery,
+    response: z.object({ data: z.array(webhookDeliveryResponse), nextBefore: z.string().nullable() }), summary: 'List webhook deliveries', description: 'Newest first; page with `before` = the previous `nextBefore`.',
+  },
+  {
+    method: 'post', path: '/v1/webhook-deliveries/:id/redeliver', tag: 'Webhooks', auth: 'apiKey', status: 202, response: webhookDeliveryResponse,
+    summary: 'Redeliver a webhook', description: 'For a delivered or failed webhook: sends it again with the same id and payload, signed afresh with your current secret. 409 while it is still pending.',
+  },
+
   // Reporting
   { method: 'get', path: '/v1/savings', tag: 'Reporting', auth: 'apiKey', query: savingsQuery, summary: 'Value delivered (recovered payments, MDR savings)' },
   { method: 'get', path: '/v1/settlements', tag: 'Reporting', auth: 'apiKey', query: settlementsQuery, summary: 'Settlement report lines, as reconciled' },
@@ -121,6 +132,7 @@ const TAGS: Record<string, string> = {
   AutoPay: 'UPI AutoPay mandates and recurring debits, executed in compliant off-peak slots.',
   Account: 'Your merchant settings, API keys, webhook secret and dashboard users.',
   'PSP connections': 'Your own PSP accounts (Cashfree, Razorpay; `mock` in test mode).',
+  Webhooks: 'Signed event notifications to your webhook URL: the delivery log and redelivery.',
   Reporting: 'Value delivered, settlements and the rules in force.',
   Operations: 'Service health.',
 };

@@ -134,6 +134,23 @@ export const debitResponse = z
   .strict()
   .meta({ id: 'Debit' });
 
+export const webhookDeliveryResponse = z
+  .object({
+    /** Also the `id` in the webhook body: the same across retries and redeliveries. */
+    id: z.string(),
+    event: z.string(),
+    status: z.enum(['pending', 'delivered', 'failed']),
+    attempts: z.number().int(),
+    lastError: z.string().nullable(),
+    createdAt: timestamp,
+    deliveredAt: timestamp.nullable(),
+    failedAt: timestamp.nullable(),
+    nextAttemptAt: timestamp.nullable(),
+    data: z.record(z.string(), z.unknown()),
+  })
+  .strict()
+  .meta({ id: 'WebhookDelivery' });
+
 export const publicPaymentStatus = z
   .object({ paymentId: z.string(), status: customerStatus, message: z.string(), amountPaise: z.number().int(), updatedAt: timestamp })
   .strict()

@@ -2,12 +2,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { z } from 'zod';
 import { buildApp } from '../../src/api/app.js';
-import type { checkoutSessionResponse, debitResponse, mandateResponse, paymentResponse } from '../../src/api/responses.js';
+import type { checkoutSessionResponse, debitResponse, mandateResponse, paymentResponse, webhookDeliveryResponse } from '../../src/api/responses.js';
 import { FakeClock } from '../../src/clock.js';
 import { buildContext, type AppContext } from '../../src/context.js';
 import { MockPsp } from '../../src/psp/mock.js';
 import { sign } from '../../src/webhooks/sign.js';
-import { Merchantflo, MerchantfloError, type CheckoutSession, type Debit, type Mandate, type Payment } from '../../sdk/node/src/index.js';
+import { Merchantflo, MerchantfloError, type CheckoutSession, type Debit, type Mandate, type Payment, type WebhookDelivery } from '../../sdk/node/src/index.js';
 import { verifyWebhook, WebhookVerificationError } from '../../sdk/node/src/webhooks.js';
 import { freshDb, ist, rs } from '../helpers/fixtures.js';
 
@@ -18,6 +18,7 @@ export type SdkContract = [
   Assignable<CheckoutSession, z.output<typeof checkoutSessionResponse>>,
   Assignable<Mandate, z.output<typeof mandateResponse>>,
   Assignable<Debit, z.output<typeof debitResponse>>,
+  Assignable<WebhookDelivery, z.output<typeof webhookDeliveryResponse>>,
 ];
 
 const ADMIN = 'test-admin-token';
@@ -161,6 +162,13 @@ describe('Node SDK', () => {
       const d = delivered[0]!;
       const event = verifyWebhook({ payload: d.body, headers: d.headers, secret: webhookSecret, now: clock.now().getTime() / 1000 });
       expect(event.event).toBe('payment.succeeded');
+
+      // The delivery log shows it, and a redelivery re-sends the same id.
+      const { data } = await sdk.webhookDeliveries.list({ status: 'delivered' });
+      expect(data.map((x) => x.id)).toEqual([event.id]);
+      expect((await sdk.webhookDeliveries.redeliver(event.id)).status).toBe('pending');
+      await ctx.dispatcher.runOnce();
+      expect(JSON.parse(delivered.at(-1)!.body).id).toBe(event.id);
     });
   });
 });
