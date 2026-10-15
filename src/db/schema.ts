@@ -8,10 +8,13 @@ const money = (name: string) => bigint(name, { mode: 'number' });
 const ts = (name: string) => timestamp(name, { withTimezone: true, mode: 'date' });
 const createdAt = () => ts('created_at').notNull().defaultNow();
 
+/** TEST merchants use sandbox/mock PSPs only; LIVE merchants only their own production PSP accounts. */
+export type MerchantMode = 'TEST' | 'LIVE';
+
 export const merchants = pgTable('merchants', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
-  apiKeyHash: text('api_key_hash').notNull().unique(),
+  mode: text('mode').$type<MerchantMode>().notNull().default('TEST'),
   webhookUrl: text('webhook_url'),
   webhookSecret: text('webhook_secret').notNull(),
   category: text('category').$type<MerchantCategory>().notNull(),
@@ -20,6 +23,51 @@ export const merchants = pgTable('merchants', {
   steering: jsonb('steering').$type<SteeringConfig>().notNull(),
   createdAt: createdAt(),
 });
+
+/** Merchant API keys, stored as SHA-256 hashes. A merchant may hold several (rotation). */
+export const apiKeys = pgTable(
+  'api_keys',
+  {
+    id: text('id').primaryKey(),
+    merchantId: text('merchant_id').notNull().references(() => merchants.id),
+    /** First characters of the key (e.g. "sk_live_Ab3d"), safe to display. */
+    prefix: text('prefix').notNull(),
+    keyHash: text('key_hash').notNull().unique(),
+    label: text('label'),
+    createdAt: createdAt(),
+    lastUsedAt: ts('last_used_at'),
+    revokedAt: ts('revoked_at'),
+  },
+  (t) => [index('api_keys_merchant').on(t.merchantId)],
+);
+
+export type PspProvider = 'cashfree' | 'mock';
+export type PspEnvironment = 'sandbox' | 'production';
+export type ConnectionStatus = 'ACTIVE' | 'DISABLED';
+
+/**
+ * A merchant's own account at a payment provider (ADR 0002). Its id is the PSP id used in
+ * routing, mandates, payments and tracking. Credentials are sealed with SecretBox.
+ */
+export const pspConnections = pgTable(
+  'psp_connections',
+  {
+    id: text('id').primaryKey(),
+    merchantId: text('merchant_id').notNull().references(() => merchants.id),
+    provider: text('provider').$type<PspProvider>().notNull(),
+    label: text('label').notNull(),
+    environment: text('environment').$type<PspEnvironment>().notNull(),
+    status: text('status').$type<ConnectionStatus>().notNull().default('ACTIVE'),
+    /** Routing preference among the merchant's connections; lower goes first. */
+    priority: integer('priority').notNull().default(100),
+    credentialsSealed: text('credentials_sealed'),
+    /** Non-secret hint for the UI, e.g. the client id's last characters. */
+    publicHint: text('public_hint'),
+    createdAt: createdAt(),
+    updatedAt: ts('updated_at').notNull().defaultNow(),
+  },
+  (t) => [index('connections_merchant').on(t.merchantId, t.status)],
+);
 
 export const vendors = pgTable(
   'vendors',

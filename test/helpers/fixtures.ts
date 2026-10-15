@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { createDb, type Db, type DbHandle } from '../../src/db/client.js';
 import { mandates, merchants } from '../../src/db/schema.js';
@@ -35,7 +34,6 @@ export async function seedMerchant(db: Db, overrides: Partial<typeof merchants.$
     .values({
       id: newId('mer'),
       name: 'Acme OTT',
-      apiKeyHash: createHash('sha256').update(newId('mer')).digest('hex'),
       webhookUrl: 'https://merchant.example/hooks',
       webhookSecret: 'whsec_test',
       category: 'GENERAL',

@@ -13,6 +13,8 @@ const feeSpec = z.object({ percentBps: z.number().int().min(0).max(10_000), flat
 
 export const createMerchant = z.object({
   name: z.string().min(1).max(200),
+  /** TEST (default) uses sandbox/mock PSPs only; LIVE only the merchant's own production PSP accounts. */
+  mode: z.enum(['TEST', 'LIVE']).default('TEST'),
   webhookUrl: z.url().optional(),
   category: category.default('GENERAL'),
   smallMerchant: z.boolean().default(false),

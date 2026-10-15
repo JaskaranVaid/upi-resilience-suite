@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 import { eq } from 'drizzle-orm';
 import type { AppContext } from '../../context.js';
 import { merchants, vendors } from '../../db/schema.js';
@@ -8,14 +9,16 @@ import { newId } from '../../ids.js';
 import { DEFAULT_STEERING } from '../../rules/steering.js';
 import { checkWebhookUrl } from '../../webhooks/url.js';
 import { userView } from '../../auth/users.js';
-import { hashApiKey, merchantOf, requireAdmin, type Merchant } from '../app.js';
+import { merchantOf, requireAdmin, type Merchant } from '../app.js';
+import { apiKeyView } from '../../auth/api-keys.js';
 import { createUserBody } from '../dashboard/plugin.js';
-import { createMerchant, createVendor } from '../schemas.js';
+import { createMerchant, createVendor, idParam } from '../schemas.js';
 
 export function merchantView(m: Merchant) {
   return {
     id: m.id,
     name: m.name,
+    mode: m.mode,
     webhookUrl: m.webhookUrl,
     category: m.category,
     smallMerchant: m.smallMerchant,
@@ -32,24 +35,42 @@ export const merchantRoutes = (ctx: AppContext) => async (app: FastifyInstance) 
     const body = createMerchant.parse(req.body);
     const urlProblem = body.webhookUrl ? checkWebhookUrl(body.webhookUrl, ctx.webhookTargets) : null;
     if (urlProblem) throw new AppError('VALIDATION', `webhookUrl ${urlProblem}`);
-    const apiKey = `sk_live_${randomBytes(24).toString('base64url')}`;
     const webhookSecret = `whsec_${randomBytes(24).toString('base64url')}`;
-    const [m] = await ctx.db
-      .insert(merchants)
-      .values({
-        id: newId('mer'),
-        name: body.name,
-        apiKeyHash: hashApiKey(apiKey),
-        webhookUrl: body.webhookUrl ?? null,
-        webhookSecret,
-        category: body.category,
-        smallMerchant: body.smallMerchant,
-        methodCosts: body.methodCosts,
-        steering: { ...DEFAULT_STEERING, ...body.steering },
-        createdAt: ctx.clock.now(),
-      })
-      .returning();
-    return reply.status(201).send({ merchant: merchantView(m!), apiKey, webhookSecret });
+    const { m, apiKey } = await ctx.db.transaction(async (tx) => {
+      const [m] = await tx
+        .insert(merchants)
+        .values({
+          id: newId('mer'),
+          name: body.name,
+          mode: body.mode,
+          webhookUrl: body.webhookUrl ?? null,
+          webhookSecret,
+          category: body.category,
+          smallMerchant: body.smallMerchant,
+          methodCosts: body.methodCosts,
+          steering: { ...DEFAULT_STEERING, ...body.steering },
+          createdAt: ctx.clock.now(),
+        })
+        .returning();
+      const { key } = await ctx.apiKeys.issue(tx, m!.id, m!.mode, 'Initial key');
+      return { m: m!, apiKey: key };
+    });
+    return reply.status(201).send({ merchant: merchantView(m), apiKey, webhookSecret });
+  });
+
+  /** A new API key for the calling merchant (rotation: create, deploy, then revoke the old one). */
+  app.post('/v1/api-keys', async (req, reply) => {
+    const merchant = merchantOf(req);
+    const { label } = z.object({ label: z.string().min(1).max(100).optional() }).parse(req.body ?? {});
+    const { key, row } = await ctx.apiKeys.issue(ctx.db, merchant.id, merchant.mode, label ?? null);
+    return reply.status(201).send({ ...apiKeyView(row), key });
+  });
+
+  app.get('/v1/api-keys', async (req) => ({ data: (await ctx.apiKeys.list(merchantOf(req).id)).map(apiKeyView) }));
+
+  app.post('/v1/api-keys/:id/revoke', async (req) => {
+    const { id } = idParam.parse(req.params);
+    return apiKeyView(await ctx.apiKeys.revoke(merchantOf(req).id, id));
   });
 
   app.get('/v1/merchants/me', async (req) => merchantView(merchantOf(req)));

@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import fastifyCookie from '@fastify/cookie';
 import fastifyStatic from '@fastify/static';
@@ -24,10 +24,6 @@ declare module 'fastify' {
   interface FastifyRequest {
     merchant: Merchant | null;
   }
-}
-
-export function hashApiKey(key: string): string {
-  return createHash('sha256').update(key).digest('hex');
 }
 
 function bearer(req: FastifyRequest): string | null {
@@ -68,12 +64,12 @@ export function buildApp(ctx: AppContext, opts: { logger?: boolean; trustProxy?:
     const key = bearer(req);
     if (!key) throw new AppError('UNAUTHORIZED', 'Missing API key');
     ctx.authFailures?.assertAllowed(req.ip);
-    const [m] = await ctx.db.select().from(merchants).where(eq(merchants.apiKeyHash, hashApiKey(key)));
-    if (!m) {
+    const auth = await ctx.apiKeys.authenticate(key);
+    if (!auth) {
       ctx.authFailures?.recordFailure(req.ip);
       throw new AppError('UNAUTHORIZED', 'Invalid API key');
     }
-    req.merchant = m;
+    req.merchant = auth.merchant;
   });
 
   app.setErrorHandler((err, req, reply) => {
