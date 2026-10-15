@@ -7,6 +7,10 @@ into a managed problem.
 **Where we are:** [roadmap](docs/roadmap.md) · [regulatory fact sheet](docs/regulatory/fact-sheet.md) ·
 [decision records](docs/decisions/) · [founder actions](docs/roadmap/external-actions.md)
 
+**Integrating?** Start with the [integration guide](docs/integration-guide.md). The API reference is
+served at `/docs` (OpenAPI at `/openapi.json`), the drop-in checkout at `/checkout/v1/checkout.js`, and
+there is a typed [Node SDK](sdk/node/README.md) with a webhook verifier.
+
 | Module | Problem | What it does |
 |---|---|---|
 | **Engine A — Peak-aware AutoPay scheduler** | NPCI blocks AutoPay execution 10:00–13:00 and 17:00–21:30 IST; RBI requires a pre-debit notice ≥ 24h ahead | Accepts debits whenever the merchant's cron fires, sends the notice, executes in an off-peak slot (spread, not a 13:01 spike), never on an un-notified date, never burning the retry budget on doomed attempts |
@@ -131,6 +135,9 @@ or session cookies — checked before any lookup); over a limit → `429 RATE_LI
 | `POST /v1/mandates/:id/revoke` | Stop future debits |
 | `POST /v1/mandates/:id/debits` | **Engine A intake** — `{ amountPaise, dueDate? }` + `Idempotency-Key` |
 | `GET /v1/debits/:id`, `GET /v1/debits?state=` | Debit status |
+| `POST /v1/checkout/sessions`, `GET /v1/checkout/sessions/:id` | Checkout session for checkout.js: methods with payable amounts and steering discount, `clientToken`; savings booked when the steered payment succeeds |
+| `GET /v1/webhook-deliveries?status&event&before`, `POST /v1/webhook-deliveries/:id/redeliver` | Webhook delivery log; redeliver a delivered or failed webhook (same id, signed afresh) |
+| `GET /openapi.json`, `GET /docs` *(no auth)* | OpenAPI 3.1 document and the API reference page |
 | `POST /v1/checkout/quote` | **Engine B** — per-method cost + optional steering `offer` |
 | `POST /v1/checkout/quotes/:id/accept` | Record the method the customer chose (books nothing) |
 | `POST /v1/checkout/quotes/:id/paid` | `{ method, paymentReference }` — the payment succeeded; books the steering saving once |
