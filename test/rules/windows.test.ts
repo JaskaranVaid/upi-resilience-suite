@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { fromIst, istDateString, istMidnight, toIst } from '../../src/rules/time.js';
 import { isPeak, isRestricted, parseHm } from '../../src/rules/windows.js';
-import { DEFAULT_WINDOWS, getRuleSet } from '../../src/config/rules.js';
+import { configureMdrEffectiveFrom, DEFAULT_WINDOWS, getRuleSet, MDR_2026, mdrStatus } from '../../src/config/rules.js';
 
 /** Build a Date from an IST wall-clock string, independent of host timezone. */
 const ist = (s: string) => new Date(`${s}+05:30`);
@@ -54,8 +54,30 @@ describe('restricted windows (NPCI peak + bank blackout)', () => {
 });
 
 describe('rule set versioning', () => {
-  it('uses zero-MDR rules before 15 Oct 2026 and reform rules after', () => {
+  // test/setup.ts models the originally announced 15 Oct 2026 start; restore it after each test.
+  afterEach(() => configureMdrEffectiveFrom('2026-10-15'));
+
+  it('uses zero-MDR rules before the configured start date and reform rules from it', () => {
+    configureMdrEffectiveFrom('2026-10-15');
     expect(getRuleSet(ist('2026-10-14T23:59:59')).mdr).toBeNull();
     expect(getRuleSet(ist('2026-10-15T00:00:00')).mdr?.generalBps).toBe(40);
+  });
+
+  it('charges no MDR while no start date is confirmed (NPCI postponed it), and says so', () => {
+    configureMdrEffectiveFrom(null);
+    expect(getRuleSet(ist('2027-06-01T12:00:00')).mdr).toBeNull();
+    expect(mdrStatus(ist('2027-06-01T12:00:00'))).toEqual({ status: 'NOT_SCHEDULED', effectiveFrom: null });
+  });
+
+  it('follows a postponed start date and reports it as scheduled until then', () => {
+    configureMdrEffectiveFrom('2026-11-16');
+    expect(getRuleSet(ist('2026-11-15T23:59:59')).mdr).toBeNull();
+    expect(mdrStatus(ist('2026-11-15T23:59:59')).status).toBe('SCHEDULED');
+    expect(getRuleSet(ist('2026-11-16T00:00:00')).mdr).toEqual(MDR_2026);
+    expect(mdrStatus(ist('2026-11-16T00:00:00')).status).toBe('IN_FORCE');
+  });
+
+  it('rejects an invalid start date', () => {
+    expect(() => configureMdrEffectiveFrom('2026-13-45')).toThrow(/Invalid MDR effective date/);
   });
 });

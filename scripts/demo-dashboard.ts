@@ -13,6 +13,7 @@ import { eq } from 'drizzle-orm';
 import { buildApp } from '../src/api/app.js';
 import type { Clock } from '../src/clock.js';
 import { choosePort, loadDotEnv } from '../src/config/dotenv.js';
+import { configureMdrEffectiveFrom } from '../src/config/rules.js';
 import { buildContext } from '../src/context.js';
 import { createDb } from '../src/db/client.js';
 import { merchants, paymentTracking } from '../src/db/schema.js';
@@ -68,6 +69,9 @@ async function main() {
   const HISTORY_DAYS = 30;
   // History (30 days) + settling (3 days) + scenarios (~4.5 days, two 48h budgets) must end before now.
   const clock = new DemoClock(new Date(realNow.getTime() - (HISTORY_DAYS + 10) * 24 * 3600_000));
+  // Demo assumption: the MDR regime applies across the whole seeded history, so steering shows up.
+  configureMdrEffectiveFrom(clock.now());
+  console.log('Assumption: UPI MDR in force throughout the demo history (NPCI has postponed the real start date).');
   const COMPLAINT_SCRIPT = ['IN_PROGRESS', 'IN_PROGRESS', 'RESOLVED_REVERSED'] as const;
   // Constant simulated latencies (on the demo clock) so PSP performance shows realistic numbers.
   const pspA = new MockPsp('pspA', { seed: 3, latencyMs: 180, sleep: (ms) => clock.sleep(ms), complaintScript: [...COMPLAINT_SCRIPT] });

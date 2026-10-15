@@ -16,7 +16,7 @@ import { buildContext } from '../src/context.js';
 import { createDb } from '../src/db/client.js';
 import { debits, paymentAttempts } from '../src/db/schema.js';
 import { MockPsp } from '../src/psp/mock.js';
-import { DEFAULT_WINDOWS } from '../src/config/rules.js';
+import { configureMdrEffectiveFrom, DEFAULT_WINDOWS } from '../src/config/rules.js';
 import { toIst } from '../src/rules/time.js';
 import { isRestricted } from '../src/rules/windows.js';
 
@@ -24,6 +24,9 @@ const ADMIN = 'demo-admin-token-0000';
 const inr = (paise: number) => `₹${(paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 async function main() {
+  // NPCI postponed the MDR start (no new date yet); the simulation assumes the announced date.
+  configureMdrEffectiveFrom('2026-10-15');
+  console.log('Assumption: UPI MDR in force from 15 Oct 2026 (as announced; NPCI has since postponed it).');
   const { db, close } = await createDb('pglite://memory');
   const clock = new FakeClock('2026-10-15T10:00:00+05:30');
   const pspA = new MockPsp('pspA', { seed: 7, rates: { bankUnavailable: 0.2, timeout: 0.08, timeoutActuallySucceeded: 0.5, businessDecline: 0.03 } });

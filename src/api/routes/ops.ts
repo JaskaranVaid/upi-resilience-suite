@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { sql } from 'drizzle-orm';
 import type { AppContext } from '../../context.js';
-import { getRuleSet } from '../../config/rules.js';
+import { getRuleSet, MDR_2026, mdrStatus } from '../../config/rules.js';
 import { savingsSummary } from '../../ledger/savings.js';
 import { merchantOf } from '../app.js';
 import { savingsQuery } from '../schemas.js';
@@ -28,7 +28,17 @@ export const opsRoutes = (ctx: AppContext) => async (app: FastifyInstance) => {
 
   /** The regulatory parameters currently applied, so merchants can audit our maths. */
   app.get('/v1/rules', async () => {
-    const r = getRuleSet(ctx.clock.now());
-    return { id: r.id, effectiveFrom: r.effectiveFrom, windows: r.windows, mdr: r.mdr, preDebitNoticeHours: r.preDebitNoticeHours };
+    const now = ctx.clock.now();
+    const r = getRuleSet(now);
+    const m = mdrStatus(now);
+    return {
+      id: r.id,
+      effectiveFrom: r.effectiveFrom,
+      windows: r.windows,
+      mdr: r.mdr,
+      // Whether the UPI MDR regime applies now, is scheduled, or has no confirmed start date yet.
+      mdrRegime: { status: m.status, effectiveFrom: m.effectiveFrom, slabs: MDR_2026 },
+      preDebitNoticeHours: r.preDebitNoticeHours,
+    };
   });
 };

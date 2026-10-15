@@ -3,10 +3,9 @@ import type { WindowConfig } from '../rules/windows.js';
 /**
  * Regulatory parameters, versioned by effective date.
  *
- * Every number here comes from the "UPI Taxation Business Gap Analysis" brief
- * (Taxation and Other Laws (Amendment) Bill 2026, NPCI MDR circular effective
- * 15 Oct 2026, NPCI AutoPay execution windows). Verify against the latest
- * NPCI/RBI circulars before go-live — change values here, not in code.
+ * Sources and verification status: docs/regulatory/fact-sheet.md. The MDR slabs match NPCI's
+ * UPI MDR FAQs (15 Sep 2026); their start date was postponed past 15 Oct 2026 with no new date,
+ * so it is configuration (MDR_EFFECTIVE_FROM), not code. Change values here, not in services.
  */
 
 export interface MdrRules {
@@ -30,6 +29,11 @@ export interface RuleSet {
   preDebitNoticeHours: number;
 }
 
+/**
+ * NPCI AutoPay non-peak execution rule (in force since 1 Aug 2025). Reports put the evening peak
+ * start at 17:00 or 17:30; 17:00 is used because it is the stricter of the two and the preferred
+ * window ends at 17:00 anyway, so it costs no capacity.
+ */
 export const DEFAULT_WINDOWS: WindowConfig = {
   peak: [
     { start: '10:00', end: '13:00' },
@@ -39,31 +43,63 @@ export const DEFAULT_WINDOWS: WindowConfig = {
   preferred: [{ start: '13:00', end: '17:00' }],
 };
 
-export const RULE_SETS: readonly RuleSet[] = [
-  {
-    id: 'zero-mdr-legacy',
-    effectiveFrom: new Date('2020-01-01T00:00:00+05:30'),
-    windows: DEFAULT_WINDOWS,
-    mdr: null,
-    preDebitNoticeHours: 24,
-  },
-  {
-    id: 'npci-mdr-2026-10',
-    effectiveFrom: new Date('2026-10-15T00:00:00+05:30'),
-    windows: DEFAULT_WINDOWS,
-    mdr: {
-      freeUptoPaise: 2_000_00,
-      generalBps: 40,
-      generalCapPaise: 300_00,
-      exemptSectorFlatPaise: 5_00,
-      capitalMarketsBps: 2,
-      capitalMarketsCapPaise: 300_00,
-    },
-    preDebitNoticeHours: 24,
-  },
-];
+/** UPI P2M MDR slabs per NPCI's UPI MDR FAQs (15 Sep 2026). */
+export const MDR_2026: MdrRules = {
+  freeUptoPaise: 2_000_00,
+  generalBps: 40,
+  generalCapPaise: 300_00,
+  exemptSectorFlatPaise: 5_00,
+  capitalMarketsBps: 2,
+  capitalMarketsCapPaise: 300_00,
+};
 
-export function getRuleSet(at: Date, sets: readonly RuleSet[] = RULE_SETS): RuleSet {
+export const LEGACY_RULE_SET: RuleSet = {
+  id: 'zero-mdr-legacy',
+  effectiveFrom: new Date('2020-01-01T00:00:00+05:30'),
+  windows: DEFAULT_WINDOWS,
+  mdr: null,
+  preDebitNoticeHours: 24,
+};
+
+export const MDR_RULE_SET_ID = 'npci-mdr-2026';
+
+/**
+ * When the MDR regime starts. null = announced but not in force with a known date (NPCI postponed
+ * the original 15 Oct 2026 start to "after Diwali 2026"). Set from MDR_EFFECTIVE_FROM at startup.
+ */
+let mdrEffectiveFrom: Date | null = null;
+
+/** Set (or clear) the MDR start date. `date` is an IST calendar date, YYYY-MM-DD, or a Date. */
+export function configureMdrEffectiveFrom(date: string | Date | null): void {
+  if (date === null) {
+    mdrEffectiveFrom = null;
+    return;
+  }
+  const d = typeof date === 'string' ? new Date(`${date}T00:00:00+05:30`) : date;
+  if (Number.isNaN(d.getTime())) throw new Error(`Invalid MDR effective date: ${String(date)}`);
+  mdrEffectiveFrom = d;
+}
+
+export function getMdrEffectiveFrom(): Date | null {
+  return mdrEffectiveFrom;
+}
+
+/** The rule sets currently configured, oldest first. */
+export function ruleSets(): RuleSet[] {
+  return mdrEffectiveFrom
+    ? [LEGACY_RULE_SET, { id: MDR_RULE_SET_ID, effectiveFrom: mdrEffectiveFrom, windows: DEFAULT_WINDOWS, mdr: MDR_2026, preDebitNoticeHours: 24 }]
+    : [LEGACY_RULE_SET];
+}
+
+export type MdrStatus = 'NOT_SCHEDULED' | 'SCHEDULED' | 'IN_FORCE';
+
+/** Whether the MDR applies at `at`, is scheduled for later, or has no confirmed start date. */
+export function mdrStatus(at: Date): { status: MdrStatus; effectiveFrom: Date | null } {
+  if (!mdrEffectiveFrom) return { status: 'NOT_SCHEDULED', effectiveFrom: null };
+  return { status: at >= mdrEffectiveFrom ? 'IN_FORCE' : 'SCHEDULED', effectiveFrom: mdrEffectiveFrom };
+}
+
+export function getRuleSet(at: Date, sets: readonly RuleSet[] = ruleSets()): RuleSet {
   let chosen: RuleSet | undefined;
   for (const s of sets) {
     if (s.effectiveFrom.getTime() <= at.getTime() && (!chosen || s.effectiveFrom > chosen.effectiveFrom)) {

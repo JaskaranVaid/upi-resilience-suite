@@ -1,6 +1,7 @@
 import { buildApp } from './api/app.js';
 import { choosePort, loadDotEnv } from './config/dotenv.js';
 import { loadEnv } from './config/env.js';
+import { configureMdrEffectiveFrom, mdrStatus } from './config/rules.js';
 import { buildContext } from './context.js';
 import { createDb } from './db/client.js';
 import { buildAdapters } from './psp/factory.js';
@@ -8,6 +9,9 @@ import { buildAdapters } from './psp/factory.js';
 async function main() {
   loadDotEnv();
   const env = loadEnv();
+  configureMdrEffectiveFrom(env.MDR_EFFECTIVE_FROM ?? null);
+  const mdr = mdrStatus(new Date());
+  console.log(`UPI MDR: ${mdr.status}${mdr.effectiveFrom ? ` (from ${env.MDR_EFFECTIVE_FROM} IST)` : ' — set MDR_EFFECTIVE_FROM once NPCI confirms the start date'}`);
   const { db, close } = await createDb(env.DATABASE_URL);
 
   const adapters = buildAdapters(env);

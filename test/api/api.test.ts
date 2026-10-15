@@ -76,7 +76,7 @@ describe('HTTP API (end to end)', () => {
   it('Engine B: quote offers a discount-only NetBanking incentive and books the saving on accept', async () => {
     clock.set(ist('2026-10-15T14:00:00'));
     const quote = (await call('POST', '/v1/checkout/quote', { amountPaise: rs(5000) })).json();
-    expect(quote.ruleSetId).toBe('npci-mdr-2026-10');
+    expect(quote.ruleSetId).toBe('npci-mdr-2026');
     expect(quote.offer).toEqual({ method: 'NETBANKING', discountPaise: rs(3), merchantNetSavingsPaise: rs(9) });
     const upi = quote.methods.find((m: { method: string }) => m.method === 'UPI');
     expect(upi.customerPayablePaise).toBe(rs(5000));
@@ -150,5 +150,14 @@ describe('HTTP API (end to end)', () => {
     const rules = (await call('GET', '/v1/rules')).json();
     expect(rules.mdr.generalBps).toBe(40);
     expect(rules.windows.peak).toHaveLength(2);
+    expect(rules.mdrRegime.status).toBe('IN_FORCE');
+    expect(rules.mdrRegime.slabs.generalCapPaise).toBe(300_00);
+  });
+
+  it('reports a scheduled MDR regime before its start date, and quotes UPI as free until then', async () => {
+    clock.set(ist('2026-10-10T12:00:00'));
+    const rules = (await call('GET', '/v1/rules')).json();
+    expect(rules.mdr).toBeNull();
+    expect(rules.mdrRegime.status).toBe('SCHEDULED');
   });
 });

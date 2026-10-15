@@ -21,6 +21,11 @@ const schema = z.object({
   CASHFREE_CLIENT_SECRET: z.string().min(1).optional(),
   CASHFREE_ENV: z.enum(['sandbox', 'production']).default('sandbox'),
   CASHFREE_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60_000).default(10_000),
+  /**
+   * IST date (YYYY-MM-DD) the UPI MDR regime starts. Unset = not in force: NPCI postponed the
+   * announced 15 Oct 2026 start with no new date, so no fee is quoted until this is set.
+   */
+  MDR_EFFECTIVE_FROM: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD').optional(),
   /** Optional JSON map of pspId -> MockRates, e.g. {"pspA":{"bankUnavailable":0.3}} */
   MOCK_PSP_RATES: z.string().optional(),
 });

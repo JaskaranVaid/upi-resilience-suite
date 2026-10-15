@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { computeMdr, feeFor, type MerchantProfile } from '../../src/rules/mdr.js';
-import { RULE_SETS } from '../../src/config/rules.js';
+import { MDR_2026 } from '../../src/config/rules.js';
 
-const reform = RULE_SETS.find((r) => r.id === 'npci-mdr-2026-10')!.mdr;
+const reform = MDR_2026;
 const general: MerchantProfile = { category: 'GENERAL', smallMerchant: false };
 const rs = (n: number) => Math.round(n * 100); // rupees -> paise
 
