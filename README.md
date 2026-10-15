@@ -70,7 +70,7 @@ PSP, NPCI or money is involved, and simulated UDIR complaints are labelled as su
 
 Production: set `DATABASE_URL=postgres://…`, `ADMIN_TOKEN` and `CUSTOMER_TOKEN_SECRET`, run `ROLE=api` and `ROLE=worker`
 as separate processes (any number of workers — rows are claimed with `FOR UPDATE SKIP LOCKED`).
-Behind a load balancer set `TRUST_PROXY=true`. With `NODE_ENV=production`, merchant webhook URLs must
+Behind a load balancer set `TRUST_PROXY` to the number of proxy hops (e.g. `1`) or the proxies' CIDRs (`true` is refused: it lets clients spoof their IP). With `NODE_ENV=production`, merchant webhook URLs must
 be https on public hosts (`WEBHOOK_TARGETS=public-only`). See [`.env.example`](.env.example).
 
 ## API
@@ -78,7 +78,8 @@ be https on public hosts (`WEBHOOK_TARGETS=public-only`). See [`.env.example`](.
 All `/v1` routes take `Authorization: Bearer <merchant API key>`, except merchant onboarding
 which takes the admin token. Money is always integer **paise**. Errors: `{ "error": { "code", "message" } }`.
 Rate limits (per minute): 1,200 per API key on `/v1`, 20 per IP on dashboard login, 300 per IP on
-`/public`, 600 per dashboard session; over the limit → `429 RATE_LIMITED` with `Retry-After`.
+`/public`, 600 per dashboard session, and 30 failed authentications per IP (invalid API keys, admin tokens
+or session cookies — checked before any lookup); over a limit → `429 RATE_LIMITED`.
 
 | Method & path | Purpose |
 |---|---|
