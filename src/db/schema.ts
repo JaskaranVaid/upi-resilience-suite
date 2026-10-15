@@ -41,7 +41,7 @@ export const apiKeys = pgTable(
   (t) => [index('api_keys_merchant').on(t.merchantId)],
 );
 
-export type PspProvider = 'cashfree' | 'mock';
+export type PspProvider = 'cashfree' | 'razorpay' | 'mock';
 export type PspEnvironment = 'sandbox' | 'production';
 export type ConnectionStatus = 'ACTIVE' | 'DISABLED';
 

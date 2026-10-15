@@ -19,6 +19,8 @@ export interface CreatePaymentInput {
   /** Required for UPI_COLLECT. */
   payerVpa?: string;
   netbankingBankCode?: string;
+  /** The customer's device (IP, user agent), forwarded to PSPs that require it. */
+  client?: { ip?: string; userAgent?: string };
   idempotencyKey: string;
   orderId?: string;
   quoteId?: string;
@@ -92,6 +94,7 @@ export class PaymentService {
       channel,
       ...(input.payerVpa ? { payerVpa: input.payerVpa } : {}),
       ...(input.netbankingBankCode ? { netbankingBankCode: input.netbankingBankCode } : {}),
+      ...(input.client ? { client: input.client } : {}),
       ...(input.customerPhone ? { customerPhone: input.customerPhone } : {}),
       baseRef: id,
     });

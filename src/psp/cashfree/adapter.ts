@@ -79,6 +79,7 @@ export class CashfreeAdapter implements PspAdapter {
     portableMandates: false, // a Cashfree subscription is executed through Cashfree only
     collectRequires: ['customerPhone'],
     channels: ['UPI_COLLECT', 'UPI_INTENT', 'UPI_QR', 'NETBANKING', 'CARD'],
+    autopay: true, // controlled notify → execute keeps timing with Engine A
   };
   private readonly baseUrl: string;
   private readonly timeoutMs: number;

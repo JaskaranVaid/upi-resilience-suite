@@ -25,6 +25,7 @@ export const MOCK_CAPABILITIES: PspCapabilities = {
   portableMandates: true,
   collectRequires: [],
   channels: ['UPI_COLLECT', 'UPI_INTENT', 'UPI_QR', 'NETBANKING', 'CARD'],
+  autopay: true,
 };
 
 /** A plausible customer action for a simulated payment (never a real PSP or bank URL). */

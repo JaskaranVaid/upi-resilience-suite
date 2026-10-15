@@ -10,14 +10,18 @@ import { ENVIRONMENT_FOR_MODE, type ConnectionRow } from '../../psp/registry.js'
 import { merchantOf } from '../app.js';
 import { idParam } from '../schemas.js';
 
-const cashfreeCredentials = z.object({ clientId: z.string().min(1).max(200), clientSecret: z.string().min(1).max(500) });
+const cashfreeCredentials = z.object({ clientId: z.string().min(1).max(200), clientSecret: z.string().min(1).max(500) }).strict();
+const razorpayCredentials = z
+  .object({ keyId: z.string().regex(/^rzp_(test|live)_\w+$/, 'expected a Razorpay key id (rzp_test_… or rzp_live_…)'), keySecret: z.string().min(1).max(500), webhookSecret: z.string().min(1).max(500).optional() })
+  .strict();
+const anyCredentials = z.record(z.string(), z.string());
 
 const createBody = z.object({
-  provider: z.enum(['cashfree', 'mock']),
+  provider: z.enum(['cashfree', 'razorpay', 'mock']),
   label: z.string().min(1).max(100).optional(),
   /** Defaults to the merchant's mode: sandbox for TEST merchants, production for LIVE ones. */
   environment: z.enum(['sandbox', 'production']).optional(),
-  credentials: cashfreeCredentials.optional(),
+  credentials: anyCredentials.optional(),
   /** Lower goes first among the merchant's connections. */
   priority: z.number().int().min(0).max(1000).optional(),
 });
@@ -27,7 +31,7 @@ const updateBody = z
     label: z.string().min(1).max(100).optional(),
     priority: z.number().int().min(0).max(1000).optional(),
     status: z.enum(['ACTIVE', 'DISABLED']).optional(),
-    credentials: cashfreeCredentials.optional(),
+    credentials: anyCredentials.optional(),
   })
   .refine((b) => Object.keys(b).length > 0, 'Nothing to update');
 
@@ -60,17 +64,28 @@ export const connectionRoutes = (ctx: AppContext) => async (app: FastifyInstance
     if (!check.ok) throw new AppError(check.rejected ? 'PSP_CREDENTIALS_REJECTED' : 'PSP_UNREACHABLE', check.reason);
   }
 
-  function credentialsFor(provider: ConnectionRow['provider'], credentials: z.infer<typeof cashfreeCredentials> | undefined) {
+  /** Validated credentials for the provider (never echoed back in errors). */
+  function credentialsFor(provider: ConnectionRow['provider'], environment: ConnectionRow['environment'], credentials: Record<string, string> | undefined) {
     if (provider === 'mock') {
       if (credentials) throw new AppError('VALIDATION', 'Mock connections take no credentials');
       return null;
     }
-    if (!credentials) throw new AppError('VALIDATION', 'credentials { clientId, clientSecret } are required for Cashfree');
-    for (const [name, value] of Object.entries(credentials)) {
+    if (!credentials) {
+      throw new AppError('VALIDATION', provider === 'cashfree' ? 'credentials { clientId, clientSecret } are required for Cashfree' : 'credentials { keyId, keySecret, webhookSecret? } are required for Razorpay');
+    }
+    const parsed = (provider === 'cashfree' ? cashfreeCredentials : razorpayCredentials).safeParse(credentials);
+    if (!parsed.success) throw new AppError('VALIDATION', `credentials: ${parsed.error.issues.map((i) => `${i.path.join('.') || 'object'} ${i.message}`).join('; ')}`);
+    const valid = parsed.data as Record<string, string>;
+    for (const [name, value] of Object.entries(valid)) {
       if (looksLikePlaceholder(value)) throw new AppError('VALIDATION', `credentials.${name} looks like a placeholder, not a real key`);
     }
-    return credentials;
+    if (provider === 'razorpay' && valid.keyId!.startsWith('rzp_live_') !== (environment === 'production')) {
+      throw new AppError('VALIDATION', environment === 'production' ? 'A live merchant needs rzp_live_ keys' : 'A test-mode merchant needs rzp_test_ keys');
+    }
+    return valid;
   }
+
+  const hintFor = (c: Record<string, string>) => hint(c.clientId ?? c.keyId ?? '');
 
   function checkEnvironment(mode: MerchantMode, provider: ConnectionRow['provider'], environment: ConnectionRow['environment']) {
     if (environment !== ENVIRONMENT_FOR_MODE[mode]) {
@@ -87,18 +102,18 @@ export const connectionRoutes = (ctx: AppContext) => async (app: FastifyInstance
     const body = createBody.parse(req.body);
     const environment = body.environment ?? ENVIRONMENT_FOR_MODE[merchant.mode];
     checkEnvironment(merchant.mode, body.provider, environment);
-    const credentials = credentialsFor(body.provider, body.credentials);
+    const credentials = credentialsFor(body.provider, environment, body.credentials);
     const now = ctx.clock.now();
     const row: ConnectionRow = {
       id: newId('con'),
       merchantId: merchant.id,
       provider: body.provider,
-      label: body.label ?? (body.provider === 'cashfree' ? `Cashfree (${environment})` : 'Mock PSP (test mode)'),
+      label: body.label ?? (body.provider === 'mock' ? 'Mock PSP (test mode)' : `${body.provider === 'cashfree' ? 'Cashfree' : 'Razorpay'} (${environment})`),
       environment,
       status: 'ACTIVE',
       priority: body.priority ?? 100,
       credentialsSealed: credentials ? ctx.secrets.seal(credentials) : null,
-      publicHint: credentials ? hint(credentials.clientId) : null,
+      publicHint: credentials ? hintFor(credentials) : null,
       createdAt: now,
       updatedAt: now,
     };
@@ -127,10 +142,10 @@ export const connectionRoutes = (ctx: AppContext) => async (app: FastifyInstance
     if (body.priority !== undefined) patch.priority = body.priority;
     if (body.status !== undefined) patch.status = body.status;
     if (body.credentials) {
-      const credentials = credentialsFor(current.provider, body.credentials);
+      const credentials = credentialsFor(current.provider, current.environment, body.credentials);
       await verify({ ...current, ...patch }, credentials);
       patch.credentialsSealed = ctx.secrets.seal(credentials);
-      patch.publicHint = hint(body.credentials.clientId);
+      patch.publicHint = credentials ? hintFor(credentials) : null;
     }
     const [updated] = await ctx.db.update(pspConnections).set(patch).where(eq(pspConnections.id, id)).returning();
     ctx.psps.invalidate(id);

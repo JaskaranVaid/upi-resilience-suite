@@ -100,6 +100,8 @@ export const createPayment = z.object({
   payerVpa: vpa.optional(),
   /** NETBANKING directly to this bank (the PSP's bank code). */
   netbankingBankCode: z.string().min(1).max(20).optional(),
+  /** The customer's device, which some PSPs (e.g. Razorpay server-to-server UPI) require. */
+  client: z.object({ ip: z.union([z.ipv4(), z.ipv6()]).optional(), userAgent: z.string().max(500).optional() }).optional(),
   idempotencyKey,
   orderId: orderId.optional(),
   quoteId: z.string().optional(),

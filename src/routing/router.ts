@@ -24,6 +24,7 @@ export interface RouteRequest {
   payerVpa?: string;
   customerPhone?: string;
   netbankingBankCode?: string;
+  client?: { ip?: string; userAgent?: string };
   /** Stable prefix for txnRefs (e.g. the debit id) so attempts are traceable. */
   baseRef: string;
 }
@@ -177,7 +178,7 @@ export class Router {
     }
     const channel = req.channel ?? 'UPI_COLLECT';
     if (channel === 'UPI_COLLECT' && !req.payerVpa) throw new Error('payerVpa required for a UPI collect');
-    const { payerVpa, customerPhone, netbankingBankCode } = req;
+    const { payerVpa, customerPhone, netbankingBankCode, client } = req;
     return this.track(psp.id, txnRef, 'collect', attempts, () =>
       psp.collect({
         txnRef,
@@ -186,6 +187,7 @@ export class Router {
         ...(payerVpa ? { payerVpa } : {}),
         ...(customerPhone ? { customerPhone } : {}),
         ...(netbankingBankCode ? { netbankingBankCode } : {}),
+        ...(client ? { client } : {}),
       }),
     );
   }

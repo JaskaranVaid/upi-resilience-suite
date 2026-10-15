@@ -110,6 +110,8 @@ export interface PspCapabilities {
   collectRequires: Array<'customerPhone'>;
   /** Payment channels this provider can take one-off payments through. */
   channels: PaymentChannel[];
+  /** Can execute UPI AutoPay mandates when Merchantflo chooses (notice, then execute). */
+  autopay: boolean;
 }
 
 /** Identifies what a txnRef belongs to, for providers that need more than the reference. */
@@ -135,6 +137,8 @@ export interface CollectRequest {
   customerPhone?: string;
   /** NETBANKING straight to this bank (PSP bank code); otherwise the PSP's checkout lets the customer choose. */
   netbankingBankCode?: string;
+  /** The customer's device, which some PSPs require for server-to-server payments. */
+  client?: { ip?: string; userAgent?: string };
 }
 
 export type WebhookVerification = { ok: true; refs: string[] } | { ok: false; reason: string };
