@@ -27,6 +27,14 @@ describe('chooseSlot', () => {
     expect(slot.getTime()).toBeLessThan(ist('2026-10-15T17:00:00').getTime());
   });
 
+  it('moves to the next window when less than a second of the current one is usable', () => {
+    // The usable window ends at 16:59:00 (60 s safety margin); half a second remains.
+    const slot = chooseSlot({ earliest: ist('2026-10-15T16:58:59.500'), seed: 'debit-edge', cfg: DEFAULT_WINDOWS });
+    expect(Number.isNaN(slot.getTime())).toBe(false);
+    expect(toIst(slot).date).toBe('2026-10-16');
+    expect(inPreferred(slot)).toBe(true);
+  });
+
   it('is deterministic per seed', () => {
     const a = chooseSlot({ earliest: ist('2026-10-15T10:30:00'), seed: 'debit-42', cfg: DEFAULT_WINDOWS });
     const b = chooseSlot({ earliest: ist('2026-10-15T10:30:00'), seed: 'debit-42', cfg: DEFAULT_WINDOWS });

@@ -42,9 +42,10 @@ function fromPreferred(earliest: Date, seed: string, cfg: WindowConfig): Date {
       const winStart = fromIst(date, s).getTime();
       const winEnd = fromIst(date, e).getTime() - END_SAFETY_MS;
       const lo = Math.max(winStart, earliest.getTime());
-      const range = winEnd - lo;
-      if (range <= 0) continue;
-      const offsetSec = hashToInt(seed) % Math.floor(range / 1000);
+      // Slots land on whole seconds; a window with under a second left can't hold one.
+      const rangeSec = Math.floor((winEnd - lo) / 1000);
+      if (rangeSec <= 0) continue;
+      const offsetSec = hashToInt(seed) % rangeSec;
       return new Date(Math.ceil(lo / 1000) * 1000 + offsetSec * 1000);
     }
   }
