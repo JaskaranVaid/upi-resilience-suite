@@ -1,6 +1,8 @@
 import { and, eq } from 'drizzle-orm';
 import type { DbOrTx } from '../db/client.js';
-import { payments } from '../db/schema.js';
+import { checkoutQuotes, checkoutSessions, payments } from '../db/schema.js';
+import type { MethodsQuote } from '../rules/steering.js';
+import { methodOfChannel } from '../checkout/sessions.js';
 import { recordEvents, SYSTEM } from '../events/record.js';
 import { recordSavings } from '../ledger/savings.js';
 import type { PspResult } from '../psp/types.js';
@@ -24,6 +26,22 @@ export function paymentView(p: Payment) {
     quoteId: p.quoteId,
     createdAt: p.createdAt,
   };
+}
+
+/**
+ * A paid checkout: mark its session paid and, when the customer paid with the method we steered
+ * them to, book the MDR saving (net of their discount) — once, since savings are keyed by quote.
+ */
+async function settleQuote(tx: DbOrTx, p: Payment, now: Date): Promise<void> {
+  await tx.update(checkoutSessions).set({ status: 'PAID', updatedAt: now }).where(and(eq(checkoutSessions.paymentId, p.id), eq(checkoutSessions.status, 'OPEN')));
+  const [q] = await tx.select().from(checkoutQuotes).where(and(eq(checkoutQuotes.id, p.quoteId!), eq(checkoutQuotes.merchantId, p.merchantId)));
+  if (!q || q.paidAt) return;
+  const quote = q.quote as MethodsQuote;
+  const method = methodOfChannel(p.channel);
+  await tx.update(checkoutQuotes).set({ acceptedMethod: method, acceptedAt: q.acceptedAt ?? now, paidAt: now, paymentReference: p.id }).where(eq(checkoutQuotes.id, q.id));
+  if (quote.offer?.method === method) {
+    await recordSavings(tx, { merchantId: p.merchantId, type: 'MDR_STEERING_ACCEPTED', amountPaise: quote.offer.merchantNetSavingsPaise, refId: q.id, now });
+  }
 }
 
 /**
@@ -70,6 +88,7 @@ export async function applyPaymentOutcome(
     if (hadTechnicalDecline) {
       await recordSavings(tx, { merchantId: row.merchantId, type: 'TD_RECOVERED', amountPaise: row.amountPaise, refId: row.id, now });
     }
+    if (row.quoteId) await settleQuote(tx, row, now);
   } else if (state === 'FAILED') {
     await enqueueWebhook(tx, { merchantId: row.merchantId, event: 'payment.failed', payload: paymentView(row), now });
     await recordEvents(tx, ctx, [{ type: 'PAYMENT_STATE_CHANGED', data: { to: 'FAILED', code: row.lastErrorCode } }]);
