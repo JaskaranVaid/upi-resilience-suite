@@ -72,10 +72,38 @@ variable with `$env:NAME = "value"`, not `NAME=value command`.
 the next free port and says so. Everything is mock: no real
 PSP, NPCI or money is involved, and simulated UDIR complaints are labelled as such in the UI.
 
-Production: set `DATABASE_URL=postgres://…`, `ADMIN_TOKEN` and `CUSTOMER_TOKEN_SECRET`, run `ROLE=api` and `ROLE=worker`
-as separate processes (any number of workers — rows are claimed with `FOR UPDATE SKIP LOCKED`).
-Behind a load balancer set `TRUST_PROXY` to the number of proxy hops (e.g. `1`) or the proxies' CIDRs (`true` is refused: it lets clients spoof their IP). With `NODE_ENV=production`, merchant webhook URLs must
-be https on public hosts (`WEBHOOK_TARGETS=public-only`). See [`.env.example`](.env.example).
+## Production
+
+One Docker image runs every role: `ROLE=api` (HTTP), `ROLE=worker` (debit executor, status poller,
+settlement reconciliation, webhook dispatcher; any number of replicas — rows are claimed with
+`FOR UPDATE SKIP LOCKED`), and `ROLE=migrate` (apply migrations and exit, once per deploy). In
+production (`NODE_ENV=production`) processes never migrate on start; they refuse to run against a
+database missing a migration ([decision 0007](docs/decisions/0007-expand-contract-migrations.md)).
+
+```bash
+docker compose up -d --build --wait   # postgres + migrate + api (:3000) + worker, production settings
+bash scripts/compose-smoke.sh         # readiness, onboarding, an AutoPay debit, ops metrics
+npm run build && npm run start:prod   # or without Docker: compiled dist/
+```
+
+- **AWS Mumbai** (dev, staging, production): Terraform in [`infra/`](infra/README.md) — VPC, RDS
+  PostgreSQL, ECS Fargate, ALB + WAF, KMS/Secrets Manager, CloudWatch alarms.
+- **Deploys**: GitHub Actions builds once on `main`, migrates, rolls staging; production promotes
+  the same image ([deploy runbook](docs/runbooks/deploy.md)).
+- **Health**: `GET /healthz` (liveness, no database), `GET /readyz` (503 while draining or without a
+  database). On SIGTERM an api reports not-ready, waits `SHUTDOWN_DRAIN_MS`, finishes in-flight
+  requests and exits.
+- **Observability**: JSON log lines; the worker logs an `ops.metrics` line every minute
+  (restricted-window executions, notice failures, backlogs, dead webhooks, open PSP circuits),
+  also at `GET /v1/admin/ops/metrics` (admin token). [Alerts runbook](docs/runbooks/alerts.md).
+- **Drills**: [load tests](docs/runbooks/load-testing.md), [backup restore](docs/runbooks/backup-restore.md),
+  alarm fire drills (`scripts/drills/`).
+
+Required in production: `DATABASE_URL=postgres://…` (TLS via `?sslmode=verify-full&sslrootcert=…`),
+`ADMIN_TOKEN`, `CUSTOMER_TOKEN_SECRET`, `CREDENTIALS_KEYS`. Behind a load balancer set `TRUST_PROXY`
+to the number of proxy hops (e.g. `1`) or the proxies' CIDRs (`true` is refused: it lets clients
+spoof their IP). Merchant webhook URLs must be https on public hosts (`WEBHOOK_TARGETS=public-only`).
+See [`.env.example`](.env.example).
 
 ## Merchants, modes and PSP connections
 
@@ -209,7 +237,11 @@ src/disputes/    Phase 3: cases, notes, UDIR complaints, recheck
 src/auth/        Phase 3: dashboard users, passwords, sessions
 src/query/       Phase 3: unified Collect + AutoPay read model
 src/events/      Phase 3: audit log + merchant-safe timeline
+src/ops/         Phase 5: JSON logs, health probes, heartbeat, ops metrics, database verifier
 dashboard/       Phase 3: static vanilla-JS console (no build step)
+infra/           Phase 5: Terraform (AWS Mumbai)
+scripts/deploy/  Phase 5: ECS deploy (migrate, roll, verify)
+scripts/drills/  Phase 5: restore and alarm drills; scripts/load-test.ts
 ```
 
 ## Phase 3 — status polling & Payment Resolution Console (dashboard)

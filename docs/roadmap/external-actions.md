@@ -17,6 +17,13 @@ in Phase 0. Update the status column as they move.
 | 10 | Run the sandbox smoke tests with real test keys and record response shapes: `npm run smoke:cashfree` (with `SMOKE_CHANNELS=1`, `SMOKE_RECON_DAY`) and `npm run smoke:razorpay` | Founder 3 | Phase 3 exit | To do |
 | 11 | Ask Razorpay to enable S2S UPI on test and live accounts; set automatic capture | Founder 3 | Phase 3 exit | To do |
 | 12 | **Phase 4 exit test:** a developer who did not build Merchantflo follows [the integration guide](../integration-guide.md) in test mode (checkout.js, AutoPay, webhooks, every test scenario); time it and log every place they got stuck | Founder 2 | Phase 4 exit | To do |
+| 13 | **AWS bootstrap**: apply `infra/bootstrap` with admin credentials; set GitHub variables (`AWS_REGION`, `ECR_REPOSITORY`, `AWS_BUILD_ROLE_ARN`) and environments `dev`/`staging`/`production` (`AWS_DEPLOY_ROLE_ARN`, `PUBLIC_BASE_URL`; reviewers on production) — [infra/README.md](../../infra/README.md) | Founder 1 | Phase 5 | To do |
+| 14 | **Domain and certificates**: API hostnames (placeholders `api.staging.merchantflo.in`, `api.merchantflo.in` in `infra/envs/*`), ACM certificates in ap-south-1, DNS to the ALB | Founder 1 | Phase 5 | To do |
+| 15 | **Apply staging** (then dev/production) with the first image, confirm the alarm e-mail subscription, set `DEPLOY_ENABLED=true`; commit multi-platform provider lock files | Founder 1 | Phase 5 | To do |
+| 16 | **Load test staging**: 100 rps × 10 min, p95 < 500 ms, error rate < 0.1% — record in the [load-testing runbook](../runbooks/load-testing.md) | Founder 1 | Phase 5 exit | To do |
+| 17 | **Restore drill** on staging (`scripts/drills/restore-drill.sh staging`); record timings in the [backup-restore runbook](../runbooks/backup-restore.md) | Founder 1 | Phase 5 exit | To do |
+| 18 | **Alarm fire drill** on staging: notification path for every alarm, plus the real-condition drills — [alerts runbook](../runbooks/alerts.md#fire-drill) | Founder 1 | Phase 5 exit | To do |
+| 19 | **7-day staging soak** with test-mode traffic (scheduled debits across peak windows): zero restricted-window executions, no unexplained alarms → **M1** | All | Phase 5 exit | To do |
 
 ## Message templates
 
