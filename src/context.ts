@@ -9,6 +9,7 @@ import { UserService } from './auth/users.js';
 import { ApiKeyService } from './auth/api-keys.js';
 import { MandateImporter } from './mandates/import.js';
 import { CheckoutService } from './checkout/service.js';
+import { CheckoutSessionService } from './checkout/sessions.js';
 import { DEFAULT_POLLING, type PollingConfig } from './config/polling.js';
 import type { Db } from './db/client.js';
 import { DisputeService } from './disputes/service.js';
@@ -24,6 +25,7 @@ import { DebitWorker, type WorkerOptions } from './scheduler/worker.js';
 import { StatusPoller } from './tracking/poller.js';
 import { SettlementReconciler, type ReconOptions } from './settlements/reconciler.js';
 import { TrackingService } from './tracking/service.js';
+import { WebhookDeliveryService } from './webhooks/deliveries.js';
 import { WebhookDispatcher, type FetchLike } from './webhooks/outbox.js';
 import { publicTargetGuard, type ResolveHost, type WebhookTargetPolicy } from './webhooks/url.js';
 import { publicOnlyFetch } from './webhooks/http.js';
@@ -41,9 +43,11 @@ export interface AppContext {
   router: Router;
   scheduler: SchedulerService;
   checkout: CheckoutService;
+  checkoutSessions: CheckoutSessionService;
   payments: PaymentService;
   worker: DebitWorker;
   dispatcher: WebhookDispatcher;
+  webhookDeliveries: WebhookDeliveryService;
   psps: PspRegistry;
   tracking: TrackingService;
   poller: StatusPoller;
@@ -117,6 +121,10 @@ export function buildContext(args: {
   const rateLimits = args.rateLimits === null ? null : { ...DEFAULT_RATE_LIMITS, ...args.rateLimits };
   // Production policy: connect only to public addresses, checked at connect time (no DNS rebinding).
   const fetchImpl: FetchLike = args.fetchImpl ?? (webhookTargets === 'public-only' ? publicOnlyFetch : (url, init) => fetch(url, init));
+  const checkout = new CheckoutService({ db: args.db, clock });
+  const payments = new PaymentService({ db: args.db, clock, router, tracking });
+  const queries = new PaymentQueryService({ db: args.db, clock, cfg: polling, psps });
+  const customerTokenSecret = args.customerTokenSecret ?? 'dev-customer-token-secret-not-for-production';
   return {
     db: args.db,
     clock,
@@ -124,8 +132,10 @@ export function buildContext(args: {
     health,
     router,
     scheduler: new SchedulerService({ db: args.db, clock, router, opts: args.scheduler }),
-    checkout: new CheckoutService({ db: args.db, clock }),
-    payments: new PaymentService({ db: args.db, clock, router, tracking }),
+    checkout,
+    webhookDeliveries: new WebhookDeliveryService({ db: args.db, clock }),
+    checkoutSessions: new CheckoutSessionService({ db: args.db, clock, checkout, payments, psps, queries, tokenSecret: customerTokenSecret }),
+    payments,
     worker: new DebitWorker({ db: args.db, clock, router, tracking, opts: args.worker }),
     dispatcher: new WebhookDispatcher(args.db, clock, fetchImpl, {
       ...(webhookTargets === 'public-only' ? { targetGuard: publicTargetGuard(args.resolveHost) } : {}),
@@ -139,9 +149,9 @@ export function buildContext(args: {
     apiKeys: new ApiKeyService({ db: args.db, clock }),
     mandateImporter: new MandateImporter({ db: args.db, clock, psps }),
     sessions: new SessionService({ db: args.db, clock, ...(args.auth ? { cfg: args.auth } : {}) }),
-    queries: new PaymentQueryService({ db: args.db, clock, cfg: polling, psps }),
+    queries,
     secureCookies: args.secureCookies ?? false,
-    customerTokenSecret: args.customerTokenSecret ?? 'dev-customer-token-secret-not-for-production',
+    customerTokenSecret,
     analytics: {
       value,
       psps: new PspAnalytics({ db: args.db }),

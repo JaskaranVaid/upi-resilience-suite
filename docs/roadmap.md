@@ -41,10 +41,11 @@ Cashfree completion (AutoPay end to end once activated, UPI intent + QR, netbank
 order); Razorpay adapter; settlement reconciliation (captured vs settled, mismatches open cases).
 **Exit:** all flows complete in sandboxes; failover between two real sandboxes; recon matches 100%.
 
-## Phase 4 — Checkout and integration kit
+## Phase 4 — Checkout and integration kit ✅ code (2026-10-15; exit test with an outside developer open)
 Checkout session API (quote + payment, savings booked on success); drop-in `checkout.js`;
-OpenAPI spec and docs; typed Node SDK and webhook verification helpers; test-mode scenario
-VPAs; webhook delivery log and redelivery.
+OpenAPI spec and docs; typed Node SDK and webhook verification helpers; test-mode scenarios
+(magic amounts ₹x.51–x.57 instead of magic VPAs, so AutoPay debits get them too); webhook delivery
+log and redelivery; [integration guide](integration-guide.md).
 **Exit:** a developer who did not build it integrates in test mode in under a day from the docs.
 
 ## Phase 5 — Production infrastructure

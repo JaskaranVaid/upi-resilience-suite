@@ -9,6 +9,7 @@ import type { AppContext } from '../context.js';
 import { merchants } from '../db/schema.js';
 import { AppError } from '../errors.js';
 import { dashboardApi } from './dashboard/plugin.js';
+import { docsRoutes } from './openapi.js';
 import { registerRateLimits } from './rate-limit.js';
 import { checkoutRoutes } from './routes/checkout.js';
 import { mandateRoutes } from './routes/mandates.js';
@@ -19,6 +20,8 @@ import { publicRoutes } from './routes/public.js';
 import { pspWebhookRoutes } from './routes/psp-webhooks.js';
 import { connectionRoutes } from './routes/connections.js';
 import { settlementRoutes } from './routes/settlements.js';
+import { publicCheckoutRoutes } from './routes/public-checkout.js';
+import { webhookDeliveryRoutes } from './routes/webhook-deliveries.js';
 
 export type Merchant = typeof merchants.$inferSelect;
 
@@ -104,6 +107,24 @@ export function buildApp(ctx: AppContext, opts: { logger?: boolean; trustProxy?:
     },
   });
   app.get('/dashboard', async (_req, reply) => reply.redirect('/dashboard/'));
+  // checkout.js and its stylesheet load from merchants' pages (any origin); demo.html is ours.
+  app.register(fastifyStatic, {
+    root: fileURLToPath(new URL('../../checkout', import.meta.url)),
+    prefix: '/checkout/',
+    decorateReply: false,
+    cacheControl: false,
+    setHeaders: (res, path) => {
+      res.setHeader('cross-origin-resource-policy', 'cross-origin');
+      res.setHeader('x-content-type-options', 'nosniff');
+      res.setHeader('cache-control', 'public, max-age=300');
+      if (path.endsWith('.html')) {
+        res.setHeader(
+          'content-security-policy',
+          "default-src 'self'; img-src 'self' data:; script-src 'self' https://sdk.cashfree.com https://checkout.razorpay.com; connect-src 'self' https:; frame-src https:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+        );
+      }
+    },
+  });
   app.register(dashboardApi(ctx));
   app.register(opsRoutes(ctx));
   app.register(merchantRoutes(ctx));
@@ -114,5 +135,8 @@ export function buildApp(ctx: AppContext, opts: { logger?: boolean; trustProxy?:
   app.register(pspWebhookRoutes(ctx));
   app.register(connectionRoutes(ctx));
   app.register(settlementRoutes(ctx));
+  app.register(publicCheckoutRoutes(ctx));
+  app.register(webhookDeliveryRoutes(ctx));
+  app.register(docsRoutes());
   return app;
 }

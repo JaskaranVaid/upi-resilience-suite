@@ -4,6 +4,7 @@ import { toast } from './components/ui.js';
 import { html, mount } from './lib/html.js';
 import { renderAnalytics } from './views/analytics.js';
 import { renderCaseDetail, renderCases } from './views/cases.js';
+import { renderDevelopers } from './views/developers.js';
 import { renderLogin } from './views/login.js';
 import { renderOverview } from './views/overview.js';
 import { renderPaymentDetail } from './views/payment-detail.js';
@@ -20,6 +21,7 @@ const ROUTES = [
   { pattern: /^\/cases\/(?<id>[^/]+)$/, view: renderCaseDetail, nav: 'cases' },
   { pattern: /^\/value$/, view: renderAnalytics, nav: 'value' },
   { pattern: /^\/users$/, view: renderUsers, nav: 'users' },
+  { pattern: /^\/developers$/, view: renderDevelopers, nav: 'developers' },
 ];
 
 const root = document.getElementById('app');
@@ -51,6 +53,7 @@ function shell(active) {
         ${link('cases', '#/cases', 'Dispute Desk')}
         ${link('value', '#/value', 'Value')}
         ${me.user.role === 'ADMIN' ? link('users', '#/users', 'Team') : ''}
+        ${me.user.role === 'ADMIN' ? link('developers', '#/developers', 'Developers') : ''}
       </nav>
       <div class="me">
         <div>${me.user.name}</div>

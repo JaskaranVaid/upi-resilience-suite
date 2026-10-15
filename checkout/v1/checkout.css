@@ -1,0 +1,44 @@
+/* Merchantflo checkout.js v1 — loaded into the widget's shadow root, so it never touches the host page. */
+:host { all: initial; display: block; font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #16191f; }
+.mf {
+  --bg: #fff; --fg: #16191f; --mut: #5b6472; --line: #e2e5ea; --acc: #2f5bd3; --acc-fg: #fff;
+  --good: #1f7a4d; --good-bg: #e6f4ec; --warn-bg: #fdf3dc; --bad: #b3261e;
+  background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 12px;
+  padding: 18px; max-width: 440px; box-sizing: border-box;
+}
+@media (prefers-color-scheme: dark) {
+  .mf { --bg: #171b21; --fg: #e8ebf0; --mut: #9aa3b2; --line: #2b313b; --acc: #7b9cff; --acc-fg: #0d1220; --good: #6fd3a0; --good-bg: #133324; --warn-bg: #3a2c0d; --bad: #ff8a80; }
+}
+[hidden] { display: none !important; }
+.amt { font-size: 24px; font-weight: 650; margin: 0 0 2px; }
+.sub { color: var(--mut); font-size: 13px; margin: 0 0 14px; }
+.m {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 1px solid var(--line);
+  background: transparent; color: inherit; font: inherit; border-radius: 10px; padding: 12px; margin: 0 0 8px; cursor: pointer;
+}
+.m[aria-pressed="true"] { border-color: var(--acc); box-shadow: 0 0 0 1px var(--acc); }
+.m:focus-visible, .btn:focus-visible, a:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+.m .n { flex: 1; font-weight: 600; }
+.m .p { font-variant-numeric: tabular-nums; }
+.tag { font-size: 12px; font-weight: 600; color: var(--good); background: var(--good-bg); border-radius: 999px; padding: 2px 8px; }
+.btn {
+  display: block; width: 100%; box-sizing: border-box; border: 0; border-radius: 10px; padding: 12px; font: inherit; font-weight: 650;
+  cursor: pointer; text-align: center; text-decoration: none; background: var(--acc); color: var(--acc-fg); margin-top: 10px;
+}
+.btn.sec { background: transparent; color: var(--acc); border: 1px solid var(--line); }
+.btn.sec[aria-pressed="true"] { border-color: var(--acc); box-shadow: 0 0 0 1px var(--acc); }
+.btn[disabled] { opacity: .6; cursor: default; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.row .btn { flex: 1; min-width: 120px; margin-top: 0; }
+label { display: block; margin-top: 4px; }
+input {
+  width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 8px; padding: 10px; font: inherit;
+  background: transparent; color: inherit; margin-top: 6px;
+}
+.note { background: var(--warn-bg); border-radius: 8px; padding: 10px; margin-top: 12px; font-size: 14px; }
+.ok { background: var(--good-bg); color: var(--good); border-radius: 8px; padding: 12px; font-weight: 600; }
+.err { color: var(--bad); font-size: 14px; margin-top: 8px; }
+.qr { display: block; width: 220px; height: 220px; margin: 12px auto; background: #fff; border-radius: 8px; padding: 6px; }
+.mut { color: var(--mut); font-size: 13px; }
+.flows { display: flex; gap: 6px; margin: 4px 0 8px; }
+.flows .btn { flex: 1; margin-top: 0; }

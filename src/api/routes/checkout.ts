@@ -1,9 +1,28 @@
 import type { FastifyInstance } from 'fastify';
 import type { AppContext } from '../../context.js';
 import { merchantOf } from '../app.js';
-import { acceptQuote, idParam, quotePaid, quoteRequest, splitRequest } from '../schemas.js';
+import { acceptQuote, createCheckoutSession, idParam, quotePaid, quoteRequest, splitRequest } from '../schemas.js';
+import { sessionToken } from '../../checkout/sessions.js';
+import { withIdempotencyKey } from './mandates.js';
 
 export const checkoutRoutes = (ctx: AppContext) => async (app: FastifyInstance) => {
+  /**
+   * Start a checkout the customer completes in the browser with checkout.js. Returns the session and
+   * the token checkout.js needs (scoped to this session only).
+   */
+  app.post('/v1/checkout/sessions', async (req, reply) => {
+    const merchant = merchantOf(req);
+    const body = createCheckoutSession.parse(withIdempotencyKey(req));
+    const { session, created } = await ctx.checkoutSessions.create(merchant, body);
+    return reply.status(created ? 201 : 200).send({ ...(await ctx.checkoutSessions.view(session)), clientToken: sessionToken(ctx.customerTokenSecret, session.id) });
+  });
+
+  app.get('/v1/checkout/sessions/:id', async (req) => {
+    const merchant = merchantOf(req);
+    const { id } = idParam.parse(req.params);
+    return ctx.checkoutSessions.view(await ctx.checkoutSessions.get(id, merchant.id));
+  });
+
   /** Engine B: cost every accepted method and, where worthwhile, a discount-only steering offer. */
   app.post('/v1/checkout/quote', async (req, reply) => {
     const merchant = merchantOf(req);

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Checkout demo</title>
+  <link rel="stylesheet" href="./demo.css" />
+</head>
+<body>
+  <main>
+    <h1>Merchantflo checkout demo</h1>
+    <p id="help">
+      Create a test-mode session on your server, then open this page with its id and client token:
+      <code>/checkout/demo.html?session=cks_…&amp;token=…</code>
+    </p>
+    <pre id="curl" hidden></pre>
+    <div id="pay"></div>
+    <p id="result" role="status"></p>
+  </main>
+  <script src="./v1/checkout.js"></script>
+  <script src="./demo.js"></script>
+</body>
+</html>

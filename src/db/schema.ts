@@ -272,6 +272,37 @@ export const checkoutQuotes = pgTable('checkout_quotes', {
   createdAt: createdAt(),
 });
 
+export type CheckoutSessionStatus = 'OPEN' | 'PAID' | 'EXPIRED';
+
+/**
+ * A checkout the customer completes in their browser (checkout.js): the quote with its steering
+ * offer, and the payment(s) made for it — at most one live at a time.
+ */
+export const checkoutSessions = pgTable(
+  'checkout_sessions',
+  {
+    id: text('id').primaryKey(),
+    merchantId: text('merchant_id').notNull().references(() => merchants.id),
+    quoteId: text('quote_id').notNull().references(() => checkoutQuotes.id),
+    idempotencyKey: text('idempotency_key'),
+    amountPaise: money('amount_paise').notNull(),
+    orderId: text('order_id'),
+    customerPhone: text('customer_phone'),
+    customerVpa: text('customer_vpa'),
+    returnUrl: text('return_url'),
+    status: text('status').$type<CheckoutSessionStatus>().notNull().default('OPEN'),
+    /** The latest payment started for this session. */
+    paymentId: text('payment_id'),
+    paymentCount: integer('payment_count').notNull().default(0),
+    /** Held while a payment is being started, so two "pay" clicks can't start two payments. */
+    payLockUntil: ts('pay_lock_until'),
+    expiresAt: ts('expires_at').notNull(),
+    createdAt: createdAt(),
+    updatedAt: ts('updated_at').notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('checkout_sessions_merchant_idem').on(t.merchantId, t.idempotencyKey), index('checkout_sessions_payment').on(t.paymentId)],
+);
+
 export type SavingsType =
   | 'PEAK_DEFERRAL_RESCUED'
   | 'TD_RECOVERED'

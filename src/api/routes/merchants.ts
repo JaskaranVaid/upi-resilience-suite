@@ -28,6 +28,9 @@ export function merchantView(m: Merchant) {
   };
 }
 
+export const createApiKeyBody = z.object({ label: z.string().min(1).max(100).optional() });
+export const changeModeBody = z.object({ mode: z.enum(['TEST', 'LIVE']) }).strict();
+
 export const merchantRoutes = (ctx: AppContext) => async (app: FastifyInstance) => {
   /** Onboard a merchant (admin). The API key and webhook secret are returned exactly once. */
   app.post('/v1/merchants', async (req, reply) => {
@@ -61,7 +64,7 @@ export const merchantRoutes = (ctx: AppContext) => async (app: FastifyInstance) 
   /** A new API key for the calling merchant (rotation: create, deploy, then revoke the old one). */
   app.post('/v1/api-keys', async (req, reply) => {
     const merchant = merchantOf(req);
-    const { label } = z.object({ label: z.string().min(1).max(100).optional() }).parse(req.body ?? {});
+    const { label } = createApiKeyBody.parse(req.body ?? {});
     const { key, row } = await ctx.apiKeys.issue(ctx.db, merchant.id, merchant.mode, label ?? null);
     return reply.status(201).send({ ...apiKeyView(row), key });
   });
@@ -83,7 +86,7 @@ export const merchantRoutes = (ctx: AppContext) => async (app: FastifyInstance) 
   app.patch('/v1/admin/merchants/:id', async (req) => {
     requireAdmin(ctx, req);
     const { id } = idParam.parse(req.params);
-    const { mode } = z.object({ mode: z.enum(['TEST', 'LIVE']) }).strict().parse(req.body);
+    const { mode } = changeModeBody.parse(req.body);
     return ctx.db.transaction(async (tx) => {
       const [current] = await tx.select().from(merchants).where(eq(merchants.id, id)).for('update');
       if (!current) throw new AppError('NOT_FOUND', `Merchant ${id} not found`);

@@ -83,6 +83,19 @@ export const quoteRequest = z.object({ amountPaise: positivePaise });
 
 export const acceptQuote = z.object({ method: z.enum(PAYMENT_METHODS) });
 
+export const createCheckoutSession = z
+  .object({
+    amountPaise: positivePaise,
+    orderId: z.string().min(1).max(200).optional(),
+    /** Prefills what the customer would otherwise type; phone is required by some PSPs. */
+    customer: z.object({ phone: z.string().regex(/^(\d{10}|\+\d{8,15})$/).optional(), vpa: vpa.optional() }).optional(),
+    /** Where checkout.js sends the customer after the payment completes. */
+    returnUrl: z.url({ protocol: /^https?$/, error: 'must be an http(s) URL' }).optional(),
+    expiresInMinutes: z.number().int().min(5).max(24 * 60).optional(),
+    idempotencyKey: idempotencyKey.optional(),
+  })
+  .strict();
+
 export const quotePaid = z.object({ method: z.enum(PAYMENT_METHODS), paymentReference: z.string().min(1).max(200) });
 
 export const splitRequest = z.object({
