@@ -1,12 +1,16 @@
-# UPI Payment Resilience Suite
+# Merchantflo
 
-B2B middleware that sits behind a merchant's billing system and checkout and turns the
-October 2026 UPI changes from a cost into a managed problem:
+B2B UPI payment-resilience middleware. It sits behind a merchant's billing system and checkout and
+turns the 2025–26 UPI changes (AutoPay peak-hour execution rules, the coming P2M MDR) from a cost
+into a managed problem.
+
+**Where we are:** [roadmap](docs/roadmap.md) · [regulatory fact sheet](docs/regulatory/fact-sheet.md) ·
+[decision records](docs/decisions/) · [founder actions](docs/roadmap/external-actions.md)
 
 | Module | Problem | What it does |
 |---|---|---|
 | **Engine A — Peak-aware AutoPay scheduler** | NPCI blocks AutoPay execution 10:00–13:00 and 17:00–21:30 IST; RBI requires a pre-debit notice ≥ 24h ahead | Accepts debits whenever the merchant's cron fires, sends the notice, executes in an off-peak slot (spread, not a 13:01 spike), never on an un-notified date, never burning the retry budget on doomed attempts |
-| **Engine B — MDR-aware checkout** | 0.4% MDR (cap ₹300) on P2M UPI > ₹2,000 from 15 Oct 2026 | Costs every accepted method, offers a **discount-only** incentive toward cheaper methods, splits marketplace carts by vendor ownership |
+| **Engine B — MDR-aware checkout** | 0.4% MDR (cap ₹300) on P2M UPI > ₹2,000 — announced for 15 Oct 2026, **postponed by NPCI**; starts when `MDR_EFFECTIVE_FROM` is set | Costs every accepted method, offers a **discount-only** incentive toward cheaper methods, splits marketplace carts by vendor ownership |
 | **Smart Router (Phase 2)** | Bank/PSP technical declines | Health-scored PSP selection (time-weighted, with low-rate probing so no provider is starved after a bad patch) with circuit breakers, failover, and timeout handling that checks status before any retry |
 | **Savings ledger** | Proving ROI | Every rescued payment and saved fee is recorded once, exposed at `/v1/savings` |
 | **Status poller (Phase 3)** | Payments stuck "pending", or failed after the customer was debited | Backend poller checks unresolved payments on a configurable schedule (5s/15s/30s/45s → every minute to 15 min → every 15 min to 48h), tracks debit / capture / bank auto-reversal, then hands over to manual investigation |
@@ -38,13 +42,14 @@ These are enforced in code and covered by tests:
   never claimed.
 
 All regulatory numbers live in [`src/config/rules.ts`](src/config/rules.ts), versioned by
-effective date. **Verify them against the current NPCI/RBI circulars before go-live.**
+effective date; their sources and confidence are in the [fact sheet](docs/regulatory/fact-sheet.md).
+The MDR start date is configuration (`MDR_EFFECTIVE_FROM`): unset means not in force.
 
 ## Quick start
 
 ```bash
 npm install
-npm test                 # 377 tests, in-process PGlite Postgres — no Docker needed
+npm test                 # full suite on in-process PGlite Postgres — no Docker needed
 npm run demo             # Phase 1–2 time-compressed simulation with mock PSPs
 npm run demo:dashboard   # Phase 3: seeds investigation scenarios, serves http://localhost:3100/dashboard/
 npm run dev              # API + worker + poller on :3000, data in .data/pg
@@ -136,7 +141,7 @@ src/events/      Phase 3: audit log + merchant-safe timeline
 dashboard/       Phase 3: static vanilla-JS console (no build step)
 ```
 
-## Phase 3 — status polling & Payment Resolution Console
+## Phase 3 — status polling & Payment Resolution Console (dashboard)
 
 **Statuses.** Internal state (PSP codes, check counts, backoff) never leaves the backend. Two
 derived views, both computed server-side in [`src/tracking/derive.ts`](src/tracking/derive.ts):

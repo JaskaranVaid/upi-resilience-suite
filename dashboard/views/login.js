@@ -7,8 +7,8 @@ export function renderLogin(el, onSignedIn) {
     html`<main class="login">
       <form class="card" id="login-form">
         <div>
-          <h1>Payment Resolution Console</h1>
-          <p class="muted mt4">Sign in to investigate payments and disputes.</p>
+          <h1>Merchantflo</h1>
+          <p class="muted mt4">Payment Resolution Console — sign in to investigate payments and disputes.</p>
         </div>
         <label class="field">Email<input name="email" type="email" autocomplete="username" required /></label>
         <label class="field">Password<input name="password" type="password" autocomplete="current-password" required /></label>

@@ -44,7 +44,7 @@ function shell(active) {
   const link = (key, href, label) => html`<a href="${href}" ${active === key ? html`aria-current="page"` : ''}>${label}</a>`;
   return html`<div class="shell">
     <aside class="sidebar">
-      <div class="brand">${me.merchant.name}<small>Payment Resolution Console</small></div>
+      <div class="brand">${me.merchant.name}<small>Merchantflo · Payment Resolution Console</small></div>
       <nav class="nav" aria-label="Main">
         ${link('overview', '#/overview', 'Overview')}
         ${link('payments', '#/payments', 'Payments')}
