@@ -2,7 +2,7 @@
  * Pure mapping from Razorpay API responses to our normalized PSP results. Conservative like the
  * Cashfree mapping: anything not positively final is PENDING (re-checked, never retried blindly).
  */
-import type { BusinessDeclineCode, CustomerAction, PspResult, ReversalStatus, TransactionInquiry } from '../types.js';
+import type { BusinessDeclineCode, CustomerAction, PspResult, ReversalStatus, SettlementItem, TransactionInquiry } from '../types.js';
 
 export interface RzpError {
   error?: { code?: string; description?: string; source?: string; reason?: string; step?: string } | null;
@@ -112,6 +112,40 @@ export function inquiryFromPayment(p: RzpPayment | undefined, refunds: RzpRefund
     default:
       return { found: true, outcome: 'PENDING', customerDebit: 'UNKNOWN', capture: 'UNKNOWN', reversal: { status: 'NONE' } };
   }
+}
+
+export interface RzpReconItem {
+  entity_id: string;
+  type?: 'payment' | 'refund' | 'transfer' | 'adjustment' | string;
+  debit?: number;
+  credit?: number;
+  amount?: number;
+  fee?: number;
+  tax?: number;
+  settled?: boolean;
+  settled_at?: number | null;
+  settlement_id?: string | null;
+  settlement_utr?: string | null;
+  payment_id?: string | null;
+  order_id?: string | null;
+}
+
+/** A settlement recon line (amounts already in paise). */
+export function mapReconItem(r: RzpReconItem): SettlementItem {
+  const kind: SettlementItem['kind'] = r.type === 'payment' ? 'PAYMENT' : r.type === 'refund' ? 'REFUND' : 'ADJUSTMENT';
+  return {
+    pspEventId: `${r.type ?? 'item'}:${r.entity_id}:${r.settlement_id ?? 'pending'}`,
+    kind,
+    pspPaymentId: kind === 'PAYMENT' ? r.entity_id : (r.payment_id ?? null),
+    orderRef: null, // Razorpay's order id is not our reference; lines match by payment id
+    amountPaise: r.amount ?? 0,
+    feePaise: r.fee ?? 0,
+    taxPaise: r.tax ?? 0,
+    settledAmountPaise: (r.credit ?? 0) - (r.debit ?? 0),
+    settlementId: r.settlement_id ?? null,
+    utr: r.settlement_utr ?? null,
+    settledAt: r.settled_at ? new Date(r.settled_at * 1000) : null,
+  };
 }
 
 /** A non-2xx answer to a payment request. */

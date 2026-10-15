@@ -5,6 +5,7 @@ import type {
   ComplaintResult,
   CredentialCheck,
   MandateLookup,
+  SettlementItem,
   ComplaintStatusResult,
   ExecuteMandateRequest,
   NoticeResult,
@@ -20,6 +21,8 @@ import type {
 import {
   customerActionFor,
   customerIdFor,
+  mapReconItem,
+  type CfReconItem,
   orderPayMethod,
   type CfOrderPay,
   idempotencyKey,
@@ -195,6 +198,28 @@ export class CashfreeAdapter implements PspAdapter {
 
   async complaintStatus(): Promise<ComplaintStatusResult> {
     return { ok: false, reason: 'Cashfree does not offer merchant-raised UDIR complaints' };
+  }
+
+  /** Settlement reconciliation lines processed in [from, to), all pages. */
+  async settlements(range: { from: Date; to: Date }): Promise<SettlementItem[]> {
+    const items: SettlementItem[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < 1000; page++) {
+      const res = await this.post(
+        '/settlement/recon',
+        {
+          pagination: { limit: 1000, cursor },
+          filters: { start_date_processed_on: range.from.toISOString(), end_date_processed_on: range.to.toISOString() },
+        },
+        idempotencyKey('recon', `${range.from.toISOString()}:${cursor ?? 'first'}`),
+      );
+      this.assertOk(res);
+      const body = res.json as { cursor?: string | null; data?: CfReconItem[] } | null;
+      for (const raw of body?.data ?? []) items.push(mapReconItem(raw));
+      cursor = body?.cursor ?? null;
+      if (!cursor || (body?.data ?? []).length === 0) break;
+    }
+    return items.filter((i) => !i.settledAt || (i.settledAt >= range.from && i.settledAt < range.to));
   }
 
   /** A subscription (our mandate) is debitable only while ACTIVE. Lookup failures throw. */

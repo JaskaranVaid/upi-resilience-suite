@@ -10,6 +10,7 @@ import type {
   ExecuteMandateRequest,
   MandateLookup,
   NoticeResult,
+  SettlementItem,
   PspCapabilities,
   PreDebitNoticeRequest,
   PspAdapter,
@@ -116,6 +117,16 @@ export class MockPsp implements PspAdapter {
   }
 
   private readonly mandateStatuses = new Map<string, MandateLookup>();
+  private readonly settlementItems: SettlementItem[] = [];
+
+  /** Lines this mock's settlement report returns (filtered by settledAt). */
+  addSettlements(...items: SettlementItem[]): void {
+    this.settlementItems.push(...items);
+  }
+
+  async settlements(range: { from: Date; to: Date }): Promise<SettlementItem[]> {
+    return this.settlementItems.filter((s) => s.settledAt && s.settledAt >= range.from && s.settledAt < range.to);
+  }
 
   /** What mandateStatus() reports for a mandate (default ACTIVE). */
   setMandateStatus(mandateRef: string, status: MandateLookup): void {

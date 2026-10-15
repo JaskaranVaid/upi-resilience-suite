@@ -27,6 +27,8 @@ export const CASE_REASON_LABELS: Record<CaseReason, string> = {
   VERIFICATION_EXHAUSTED: 'Payment could not be verified automatically',
   STATUS_MISMATCH: MERCHANT_STATUS_LABELS.CAPTURED_AFTER_FAILURE,
   MERCHANT_RAISED: 'Raised by merchant',
+  SETTLEMENT_MISMATCH: 'Settled amount differs from the captured amount',
+  NOT_SETTLED: 'Captured but not yet settled to your account',
 };
 
 export const CASE_STATUS_LABELS: Record<CaseStatus, string> = {
@@ -43,6 +45,7 @@ export const CASE_RESOLUTION_LABELS: Record<CaseResolution, string> = {
   NOT_DEBITED: 'Customer was not debited',
   COMPLAINT_RESOLVED: 'UDIR complaint resolved',
   CLOSED_BY_MERCHANT: 'Closed by merchant',
+  SETTLED: 'Settled to your account',
 };
 
 export const COMPLAINT_STATUS_LABELS: Record<ComplaintStatus, string> = {
@@ -88,6 +91,10 @@ function describe(type: EventType, data: Record<string, unknown>): { label: stri
       return { label: 'Auto-reversal to customer initiated' };
     case 'REVERSAL_COMPLETED':
       return { label: 'Auto-reversal to customer completed' };
+    case 'SETTLEMENT_RECORDED': {
+      const utr = str(data.utr);
+      return { label: 'Settled to your account', ...(utr ? { detail: `Settlement UTR: ${utr}` } : {}) };
+    }
     case 'VERIFICATION_RESOLVED':
       return { label: 'Verification complete' };
     case 'VERIFICATION_EXHAUSTED':

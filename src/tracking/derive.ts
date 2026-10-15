@@ -1,6 +1,6 @@
 import type { PollingConfig } from '../config/polling.js';
 import type { Capture, ComplaintStatus, CustomerDebit, ReversalStatus } from '../psp/types.js';
-import type { CaseReason, CaseResolution, CaseStatus, DomainState, SubjectType, VerificationStatus } from './types.js';
+import type { CaseReason, CaseResolution, CaseStatus, DomainState, SettlementStatus, SubjectType, VerificationStatus } from './types.js';
 
 /*
  * The single place that turns internal state into what merchants and customers see.
@@ -108,10 +108,17 @@ export interface CaseInput {
   /** Latest status of the case's UDIR complaint, if one was raised. */
   complaintStatus: ComplaintStatus | null;
   closedByMerchant: boolean;
+  /** From the PSP's settlement report. */
+  settlementStatus?: SettlementStatus;
 }
+
+const SETTLEMENT_REASONS: ReadonlySet<CaseReason> = new Set(['SETTLEMENT_MISMATCH', 'NOT_SETTLED']);
 
 export function caseResolution(c: CaseInput): CaseResolution | null {
   if (c.closedByMerchant) return 'CLOSED_BY_MERCHANT';
+  // Settlement issues are about money reaching the merchant: only settlement evidence (or the
+  // merchant) resolves them — the payment being captured is the premise, not the answer.
+  if (SETTLEMENT_REASONS.has(c.reason)) return c.reason === 'NOT_SETTLED' && c.settlementStatus === 'SETTLED' ? 'SETTLED' : null;
   if (c.reversalStatus === 'COMPLETED') return 'REVERSED_TO_CUSTOMER';
   if (c.complaintStatus === 'RESOLVED_REVERSED' || c.complaintStatus === 'RESOLVED_NO_REVERSAL') return 'COMPLAINT_RESOLVED';
   if (c.domainState !== 'PENDING' && c.customerDebit === 'NOT_DEBITED') return 'NOT_DEBITED';
@@ -125,6 +132,7 @@ export function caseResolution(c: CaseInput): CaseResolution | null {
  */
 export function caseStatus(c: CaseInput): CaseStatus {
   if (caseResolution(c)) return 'RESOLVED';
+  if (SETTLEMENT_REASONS.has(c.reason)) return 'NEEDS_ACTION';
   const debitedNotCaptured = c.customerDebit === 'DEBITED' && c.capture !== 'CAPTURED';
   const complaintActive = c.complaintStatus === 'SUBMITTED' || c.complaintStatus === 'IN_PROGRESS';
   if (

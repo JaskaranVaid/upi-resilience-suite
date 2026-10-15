@@ -449,3 +449,32 @@ describe('CashfreeAdapter — payment channels (Order Pay)', () => {
     expect(await adapter.collect({ ...base, channel: 'UPI_INTENT' })).toEqual({ kind: 'TECHNICAL_DECLINE', code: 'PSP_ERROR' });
   });
 });
+
+describe('CashfreeAdapter — settlement reconciliation', () => {
+  const item = (id: number, over: Record<string, unknown> = {}) => ({
+    event_details: { event_id: `evt_${id}`, event_type: 'PAYMENT', event_amount: 2500, event_settlement_amount: 2488.2, event_service_charge: 10, event_service_tax: 1.8, sale_type: 'CREDIT' },
+    order_details: { order_id: `pay_${id}-1` },
+    payment_details: { cf_payment_id: 5114910000000 + id },
+    settlement_details: { cf_settlement_id: 77, settlement_utr: 'UTR77', settlement_date: '2026-10-16T10:00:00+05:30' },
+    ...over,
+  });
+
+  it('reads every page by cursor and normalizes lines to paise', async () => {
+    let call = 0;
+    const { adapter, requests } = fakeCashfree({
+      'POST /settlement/recon': () => (++call === 1 ? { status: 200, body: { cursor: 'c2', data: [item(1)] } } : { status: 200, body: { cursor: null, data: [item(2, { event_details: { event_id: 'evt_2', event_type: 'REFUND', event_amount: 500, event_settlement_amount: 500, sale_type: 'DEBIT' } })] } }),
+    });
+    const lines = await adapter.settlements({ from: new Date('2026-10-15T18:30:00Z'), to: new Date('2026-10-16T18:30:00Z') });
+    expect(lines).toEqual([
+      { pspEventId: 'evt_1', kind: 'PAYMENT', pspPaymentId: '5114910000001', orderRef: 'pay_1-1', amountPaise: 250000, feePaise: 1000, taxPaise: 180, settledAmountPaise: 248820, settlementId: '77', utr: 'UTR77', settledAt: new Date('2026-10-16T04:30:00Z') },
+      expect.objectContaining({ pspEventId: 'evt_2', kind: 'REFUND', settledAmountPaise: -50000 }),
+    ]);
+    expect(requests[0]!.body).toMatchObject({ pagination: { limit: 1000, cursor: null }, filters: { start_date_processed_on: '2026-10-15T18:30:00.000Z' } });
+    expect(requests[1]!.body).toMatchObject({ pagination: { cursor: 'c2' } });
+  });
+
+  it('throws when the report cannot be read', async () => {
+    const { adapter } = fakeCashfree({ 'POST /settlement/recon': () => ({ status: 500, body: { message: 'internal' } }) });
+    await expect(adapter.settlements({ from: new Date(), to: new Date() })).rejects.toThrow(/Cashfree lookup failed/);
+  });
+});

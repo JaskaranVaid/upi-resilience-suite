@@ -10,6 +10,7 @@ import type {
   PspCapabilities,
   PspMode,
   PspResult,
+  SettlementItem,
   TransactionInquiry,
   TxnContext,
   WebhookVerification,
@@ -19,11 +20,13 @@ import {
   inquiryFromPayment,
   latestPayment,
   mapPayment,
+  mapReconItem,
   mapRequestError,
   NO_EMAIL,
   type RzpError,
   type RzpOrder,
   type RzpPayment,
+  type RzpReconItem,
   type RzpRefund,
 } from './mapping.js';
 import { verifyRazorpayWebhook } from './webhook.js';
@@ -151,6 +154,24 @@ export class RazorpayAdapter implements PspAdapter {
   verifyWebhook(rawBody: string, headers: Record<string, string | string[] | undefined>): WebhookVerification {
     if (!this.cfg.webhookSecret) return { ok: false, reason: 'no webhook secret configured for this connection' };
     return verifyRazorpayWebhook(this.cfg.webhookSecret, rawBody, headers);
+  }
+
+  /** Settlement recon lines settled in [from, to): the combined report, fetched per IST day. */
+  async settlements(range: { from: Date; to: Date }): Promise<SettlementItem[]> {
+    const items: SettlementItem[] = [];
+    const istDay = (d: Date) => new Date(d.getTime() + 5.5 * 3600_000).toISOString().slice(0, 10);
+    for (let day = istDay(range.from); day <= istDay(new Date(range.to.getTime() - 1)); ) {
+      const [y, m, d] = day.split('-').map(Number);
+      for (let skip = 0; ; skip += 1000) {
+        const res = await this.get(`/settlements/recon/combined?year=${y}&month=${m}&day=${d}&count=1000&skip=${skip}`);
+        this.assertOk(res);
+        const page = (res.json as { items?: RzpReconItem[] } | null)?.items ?? [];
+        for (const raw of page) if (raw.settled !== false) items.push(mapReconItem(raw));
+        if (page.length < 1000) break;
+      }
+      day = new Date(Date.UTC(y!, m! - 1, d! + 1)).toISOString().slice(0, 10);
+    }
+    return items.filter((i) => !i.settledAt || (i.settledAt >= range.from && i.settledAt < range.to));
   }
 
   async checkCredentials(): Promise<CredentialCheck> {

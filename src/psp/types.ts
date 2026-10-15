@@ -166,9 +166,30 @@ export interface PspAdapter {
   checkCredentials?(): Promise<CredentialCheck>;
   /** Whether a mandate exists and can be debited at this PSP. Throws when the lookup fails. */
   mandateStatus?(mandateRef: string): Promise<MandateLookup>;
+  /** Settlement report lines processed in [from, to). Throws when the report can't be read. */
+  settlements?(range: { from: Date; to: Date }): Promise<SettlementItem[]>;
 }
 
 export type MandateLookup = 'ACTIVE' | 'INACTIVE' | 'NOT_FOUND';
+
+/** One line of a PSP settlement report, normalized. Amounts in paise. */
+export interface SettlementItem {
+  /** Unique per PSP account: re-reading a report never duplicates a line. */
+  pspEventId: string;
+  kind: 'PAYMENT' | 'REFUND' | 'ADJUSTMENT';
+  /** The PSP's payment id (matches pspTxnId on our payment/debit). */
+  pspPaymentId: string | null;
+  /** Our reference, when the PSP carries it (e.g. Cashfree order_id = our txnRef). */
+  orderRef: string | null;
+  amountPaise: number;
+  feePaise: number;
+  taxPaise: number;
+  /** Net amount credited (positive) or debited (negative) to the merchant for this event. */
+  settledAmountPaise: number;
+  settlementId: string | null;
+  utr: string | null;
+  settledAt: Date | null;
+}
 
 export type CredentialCheck = { ok: true } | { ok: false; reason: string; rejected: boolean };
 

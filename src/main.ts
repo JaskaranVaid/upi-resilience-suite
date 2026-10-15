@@ -47,6 +47,7 @@ async function main() {
         try {
           await ctx.worker.runOnce();
           await ctx.poller.runOnce();
+          await ctx.reconciler.runDue(); // throttled internally (daily settlement reports)
           await ctx.dispatcher.runOnce();
         } catch (e) {
           console.error('worker tick failed', e);

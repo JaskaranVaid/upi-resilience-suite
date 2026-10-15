@@ -155,3 +155,33 @@ describe('RazorpayAdapter — account and webhooks', () => {
     expect(extractRefs('not json')).toEqual([]);
   });
 });
+
+describe('RazorpayAdapter — settlement reconciliation', () => {
+  const SETTLED_AT = Math.floor(Date.parse('2026-10-16T04:30:00Z') / 1000);
+  it('reads the combined recon report day by day (IST), paging with skip', async () => {
+    const days: string[] = [];
+    const { adapter } = fakeRazorpay({
+      'GET /settlements/recon/combined': (r) => {
+        const q = new URLSearchParams(r.search);
+        days.push(`${q.get('year')}-${q.get('month')}-${q.get('day')}:${q.get('skip')}`);
+        if (q.get('day') !== '16') return { status: 200, body: { items: [] } };
+        return {
+          status: 200,
+          body: {
+            items: [
+              { entity_id: 'pay_RZ', type: 'payment', amount: 250000, fee: 1000, tax: 180, credit: 248820, debit: 0, settled: true, settled_at: SETTLED_AT, settlement_id: 'setl_1', settlement_utr: 'UTRR1' },
+              { entity_id: 'rfnd_1', type: 'refund', amount: 50000, credit: 0, debit: 50000, payment_id: 'pay_OLD', settled: true, settled_at: SETTLED_AT, settlement_id: 'setl_1' },
+              { entity_id: 'pay_LATER', type: 'payment', amount: 100, settled: false },
+            ],
+          },
+        };
+      },
+    });
+    const lines = await adapter.settlements({ from: new Date('2026-10-15T18:30:00Z'), to: new Date('2026-10-16T18:30:00Z') });
+    expect(days).toEqual(['2026-10-16:0']);
+    expect(lines).toEqual([
+      { pspEventId: 'payment:pay_RZ:setl_1', kind: 'PAYMENT', pspPaymentId: 'pay_RZ', orderRef: null, amountPaise: 250000, feePaise: 1000, taxPaise: 180, settledAmountPaise: 248820, settlementId: 'setl_1', utr: 'UTRR1', settledAt: new Date(SETTLED_AT * 1000) },
+      expect.objectContaining({ kind: 'REFUND', pspPaymentId: 'pay_OLD', settledAmountPaise: -50000 }),
+    ]);
+  });
+});

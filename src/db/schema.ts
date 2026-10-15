@@ -1,6 +1,6 @@
 import { bigint, boolean, index, integer, jsonb, pgTable, pgView, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 import type { Capture, ComplaintReason, ComplaintStatus, CustomerAction, CustomerDebit, PaymentChannel, PspMode, ReversalStatus } from '../psp/types.js';
-import type { CaseReason, CaseResolution, CaseStatus, EventType, SubjectType, VerificationStatus } from '../tracking/types.js';
+import type { CaseReason, CaseResolution, CaseStatus, EventType, SettlementStatus, SubjectType, VerificationStatus } from '../tracking/types.js';
 import type { MerchantCategory } from '../rules/mdr.js';
 import type { MethodCosts, SteeringConfig } from '../rules/steering.js';
 
@@ -67,6 +67,58 @@ export const pspConnections = pgTable(
     updatedAt: ts('updated_at').notNull().defaultNow(),
   },
   (t) => [index('connections_merchant').on(t.merchantId, t.status)],
+);
+
+export type SettlementKind = 'PAYMENT' | 'REFUND' | 'ADJUSTMENT';
+
+/** One line of a PSP settlement report, stored once per PSP event; matched to a payment when possible. */
+export const settlements = pgTable(
+  'settlements',
+  {
+    id: text('id').primaryKey(),
+    merchantId: text('merchant_id').notNull().references(() => merchants.id),
+    pspId: text('psp_id').notNull(),
+    pspEventId: text('psp_event_id').notNull(),
+    kind: text('kind').$type<SettlementKind>().notNull(),
+    pspPaymentId: text('psp_payment_id'),
+    orderRef: text('order_ref'),
+    /** Gross amount of the event (e.g. the payment amount). */
+    amountPaise: money('amount_paise').notNull(),
+    feePaise: money('fee_paise').notNull(),
+    taxPaise: money('tax_paise').notNull(),
+    /** What reached (or left) the merchant's account for this event. */
+    settledAmountPaise: money('settled_amount_paise').notNull(),
+    settlementId: text('settlement_id'),
+    utr: text('utr'),
+    settledAt: ts('settled_at'),
+    /** The payment this line belongs to; null while unmatched. */
+    subjectType: text('subject_type').$type<SubjectType>(),
+    subjectId: text('subject_id'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('settlements_psp_event').on(t.pspId, t.pspEventId),
+    index('settlements_merchant_time').on(t.merchantId, t.settledAt),
+    index('settlements_subject').on(t.subjectType, t.subjectId),
+  ],
+);
+
+/** One reconciliation of one PSP connection for one IST day. The row doubles as a lock. */
+export const reconRuns = pgTable(
+  'recon_runs',
+  {
+    id: text('id').primaryKey(),
+    merchantId: text('merchant_id').notNull().references(() => merchants.id),
+    pspId: text('psp_id').notNull(),
+    day: text('day').notNull(),
+    status: text('status').$type<'RUNNING' | 'DONE' | 'FAILED'>().notNull(),
+    items: integer('items').notNull().default(0),
+    matched: integer('matched').notNull().default(0),
+    error: text('error'),
+    startedAt: ts('started_at').notNull(),
+    finishedAt: ts('finished_at'),
+  },
+  (t) => [uniqueIndex('recon_runs_psp_day').on(t.pspId, t.day)],
 );
 
 export const vendors = pgTable(
@@ -288,6 +340,12 @@ export const paymentTracking = pgTable(
     lastCheckedAt: ts('last_checked_at'),
     lastManualCheckAt: ts('last_manual_check_at'),
     leaseUntil: ts('lease_until'),
+    /** From the PSP's settlement report (Phase 3): captured money reaching the merchant's bank. */
+    settlementStatus: text('settlement_status').$type<SettlementStatus>().notNull().default('UNSETTLED'),
+    settledAt: ts('settled_at'),
+    settlementUtr: text('settlement_utr'),
+    settledAmountPaise: money('settled_amount_paise'),
+    settlementFeePaise: money('settlement_fee_paise'),
     createdAt: createdAt(),
     updatedAt: ts('updated_at').notNull().defaultNow(),
   },

@@ -99,6 +99,13 @@
       "when": 1792059484495,
       "tag": "0013_payment_channels",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1792060263552,
+      "tag": "0014_settlements",
+      "breakpoints": true
     }
   ]
 }

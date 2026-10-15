@@ -317,6 +317,7 @@ export class TrackingService {
       verificationStatus: t.verificationStatus,
       complaintStatus: complaintStatusOverride !== undefined ? complaintStatusOverride : (complaint?.status ?? null),
       closedByMerchant: existing?.closedByMerchant ?? false,
+      settlementStatus: t.settlementStatus,
     };
     const status = caseStatus(input);
     const resolution = caseResolution(input);

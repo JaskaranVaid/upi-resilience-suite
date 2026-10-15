@@ -4,7 +4,7 @@
  * re-checked and never retried blindly. See docs/superpowers/specs/2026-10-03-real-psp-cashfree-design.md.
  */
 import { createHash } from 'node:crypto';
-import type { BusinessDeclineCode, CollectRequest, CustomerAction, ReversalStatus, PspResult, TransactionInquiry } from '../types.js';
+import type { BusinessDeclineCode, CollectRequest, CustomerAction, ReversalStatus, PspResult, SettlementItem, TransactionInquiry } from '../types.js';
 
 export const toRupees = (paise: number) => Number((paise / 100).toFixed(2));
 export const toPaise = (rupees: unknown) => Math.round(Number(rupees) * 100);
@@ -194,6 +194,36 @@ export function customerActionFor(
       return { type: 'PSP_CHECKOUT', provider: 'cashfree', environment: session.environment, params: { paymentSessionId: session.sessionId, orderId: req.txnRef } };
     }
   }
+}
+
+// ── Settlement reconciliation (POST /settlement/recon) ─────────────────────────────────
+
+export interface CfReconItem {
+  event_details?: { event_id?: string | number; event_type?: string; event_amount?: number; event_settlement_amount?: number; event_service_charge?: number; event_service_tax?: number; sale_type?: string } | null;
+  order_details?: { order_id?: string | null } | null;
+  payment_details?: { cf_payment_id?: string | number | null; payment_amount?: number } | null;
+  settlement_details?: { cf_settlement_id?: string | number | null; settlement_utr?: string | null; settlement_date?: string | null } | null;
+}
+
+export function mapReconItem(r: CfReconItem): SettlementItem {
+  const e = r.event_details ?? {};
+  const s = r.settlement_details ?? {};
+  const type = (e.event_type ?? '').toUpperCase();
+  const kind: SettlementItem['kind'] = type === 'PAYMENT' ? 'PAYMENT' : type === 'REFUND' ? 'REFUND' : 'ADJUSTMENT';
+  const settled = toPaise(e.event_settlement_amount ?? 0);
+  return {
+    pspEventId: String(e.event_id ?? `${s.cf_settlement_id ?? 'x'}:${r.payment_details?.cf_payment_id ?? 'x'}:${type}`),
+    kind,
+    pspPaymentId: r.payment_details?.cf_payment_id != null ? String(r.payment_details.cf_payment_id) : null,
+    orderRef: r.order_details?.order_id ?? null,
+    amountPaise: toPaise(e.event_amount ?? r.payment_details?.payment_amount ?? 0),
+    feePaise: toPaise(e.event_service_charge ?? 0),
+    taxPaise: toPaise(e.event_service_tax ?? 0),
+    settledAmountPaise: e.sale_type === 'DEBIT' ? -Math.abs(settled) : settled,
+    settlementId: s.cf_settlement_id != null ? String(s.cf_settlement_id) : null,
+    utr: s.settlement_utr ?? null,
+    settledAt: s.settlement_date ? new Date(s.settlement_date) : null,
+  };
 }
 
 // ── UPI AutoPay controlled execution ───────────────────────────────────────────────────

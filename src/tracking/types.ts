@@ -27,9 +27,20 @@ export const UNKNOWN_FACTS: MoneyFacts = {
   npciTxnId: null,
 };
 
-export type CaseReason = 'DEBITED_NOT_CAPTURED' | 'VERIFICATION_EXHAUSTED' | 'STATUS_MISMATCH' | 'MERCHANT_RAISED';
+export type CaseReason =
+  | 'DEBITED_NOT_CAPTURED'
+  | 'VERIFICATION_EXHAUSTED'
+  | 'STATUS_MISMATCH'
+  | 'MERCHANT_RAISED'
+  /** The PSP settled a different amount than it captured for this payment. */
+  | 'SETTLEMENT_MISMATCH'
+  /** Captured, but not in the PSP's settlements days after the period was reconciled. */
+  | 'NOT_SETTLED';
+
+/** Whether a captured payment has reached the merchant's bank account, per the PSP's settlement report. */
+export type SettlementStatus = 'UNSETTLED' | 'SETTLED' | 'MISMATCH';
 export type CaseStatus = 'NEEDS_ACTION' | 'INVESTIGATING' | 'VERIFICATION_PENDING' | 'REVERSAL_PENDING' | 'RESOLVED';
-export type CaseResolution = 'REVERSED_TO_CUSTOMER' | 'CAPTURED' | 'NOT_DEBITED' | 'COMPLAINT_RESOLVED' | 'CLOSED_BY_MERCHANT';
+export type CaseResolution = 'REVERSED_TO_CUSTOMER' | 'CAPTURED' | 'NOT_DEBITED' | 'COMPLAINT_RESOLVED' | 'CLOSED_BY_MERCHANT' | 'SETTLED';
 
 export type { ComplaintStatus };
 
@@ -44,6 +55,7 @@ export type EventType =
   | 'CAPTURE_CONFIRMED'
   | 'REVERSAL_INITIATED'
   | 'REVERSAL_COMPLETED'
+  | 'SETTLEMENT_RECORDED'
   | 'VERIFICATION_RESOLVED'
   | 'VERIFICATION_EXHAUSTED'
   | 'CASE_OPENED'

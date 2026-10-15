@@ -21,6 +21,7 @@ import { Router, type RouterOptions } from './routing/router.js';
 import { SchedulerService, type SchedulerOptions } from './scheduler/service.js';
 import { DebitWorker, type WorkerOptions } from './scheduler/worker.js';
 import { StatusPoller } from './tracking/poller.js';
+import { SettlementReconciler, type ReconOptions } from './settlements/reconciler.js';
 import { TrackingService } from './tracking/service.js';
 import { WebhookDispatcher, type FetchLike } from './webhooks/outbox.js';
 import { publicTargetGuard, type ResolveHost, type WebhookTargetPolicy } from './webhooks/url.js';
@@ -45,6 +46,7 @@ export interface AppContext {
   psps: PspRegistry;
   tracking: TrackingService;
   poller: StatusPoller;
+  reconciler: SettlementReconciler;
   disputes: DisputeService;
   users: UserService;
   apiKeys: ApiKeyService;
@@ -96,6 +98,7 @@ export function buildContext(args: {
   webhookTargets?: WebhookTargetPolicy;
   /** Resolves a webhook hostname to IP addresses (DNS by default; stubbed in tests). */
   resolveHost?: ResolveHost;
+  recon?: Partial<ReconOptions>;
 }): AppContext {
   const clock = args.clock ?? systemClock;
   const sleep = args.sleep ?? realSleep;
@@ -128,6 +131,7 @@ export function buildContext(args: {
     psps,
     tracking,
     poller: new StatusPoller({ db: args.db, clock, tracking }),
+    reconciler: new SettlementReconciler({ db: args.db, clock, psps, tracking, ...(args.recon ? { opts: args.recon } : {}) }),
     disputes: new DisputeService({ db: args.db, clock, psps, tracking }),
     users: new UserService({ db: args.db, clock }),
     apiKeys: new ApiKeyService({ db: args.db, clock }),
