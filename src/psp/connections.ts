@@ -37,7 +37,7 @@ export function connectionAdapterFactory(opts: { fetch?: FetchFn; cashfreeTimeou
       case 'mock':
         // Test-mode connection: simulated results only (never a real PSP), settled T+1 so
         // reconciliation can be tried end to end.
-        return new MockPsp(row.id, { seed: hashToInt(row.id) % 1000, latencyMs: 50, autoSettle: { clock: opts.clock ?? systemClock } });
+        return new MockPsp(row.id, { seed: hashToInt(row.id) % 1000, latencyMs: 50, autoSettle: { clock: opts.clock ?? systemClock }, scenarios: true });
     }
   };
 }

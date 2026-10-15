@@ -85,7 +85,24 @@ export interface MockPspOptions {
    */
   autoSettle?: { clock: Clock; feeBps?: number };
   sleep?: Sleep;
+  /** Act out TEST_SCENARIOS for amounts ending in those paise (test mode; never on a real PSP). */
+  scenarios?: boolean;
 }
+
+/**
+ * Test-mode scenarios, chosen by the paise of the amount (₹2,500.51 → 51). They let a developer
+ * see every outcome Merchantflo handles without a real bank: declines, recoveries, pending
+ * payments, debits without capture and late captures.
+ */
+export const TEST_SCENARIOS = [
+  { paise: 51, outcome: 'Failed — not charged', description: "The customer's bank declines (insufficient funds). Never retried." },
+  { paise: 52, outcome: 'Succeeded via failover (needs 2 PSPs)', description: 'The bank is down at the first PSP tried; Merchantflo fails over to your next PSP and the payment succeeds. With one PSP it fails, not charged.' },
+  { paise: 53, outcome: 'Succeeded after a status check', description: "The PSP times out, but the payment went through; Merchantflo's status check finds the success instead of charging again." },
+  { paise: 54, outcome: 'Verifying, then failed — not charged', description: 'The PSP times out and the payment never reached the bank; status checks find nothing and the payment fails.' },
+  { paise: 55, outcome: 'Debited, then reversed', description: "Reported failed although the customer was debited; the bank's auto-reversal is tracked to completion." },
+  { paise: 56, outcome: 'Debited, not captured', description: 'Reported failed although the customer was debited, and no reversal appears; it stays under verification and then needs action in the Dispute Desk.' },
+  { paise: 57, outcome: 'Captured after failure', description: 'Reported failed, but the PSP captured it after all (late success); flagged for review.' },
+] as const;
 
 export interface MockCall {
   op: 'notice' | 'execute' | 'collect' | 'status' | 'inquire' | 'complaint' | 'complaintStatus';
@@ -102,6 +119,7 @@ export interface MockCall {
 export class MockPsp implements PspAdapter {
   readonly mode = 'MOCK' as const;
   readonly capabilities: PspCapabilities;
+  readonly scenarios: boolean;
   readonly calls: MockCall[] = [];
   readonly notices: PreDebitNoticeRequest[] = [];
   private readonly script: MockStep[];
@@ -120,6 +138,7 @@ export class MockPsp implements PspAdapter {
     this.script = [...(opts.script ?? [])];
     this.capabilities = { ...MOCK_CAPABILITIES, ...(opts.autoSettle ? { settlementReports: true } : {}), ...opts.capabilities };
     this.rngState = opts.seed ?? 42;
+    this.scenarios = opts.scenarios ?? false;
   }
 
   private readonly mandateStatuses = new Map<string, MandateLookup>();
@@ -265,7 +284,7 @@ export class MockPsp implements PspAdapter {
     if (existing?.kind === 'SUCCESS') return existing; // idempotent on txnRef, like real PSPs
 
     const scripted = this.script.length > 0;
-    const step = this.script.shift() ?? this.random();
+    const step = (scripted ? undefined : this.scenarioStep(txnRef, amountPaise)) ?? this.script.shift() ?? this.random();
     const { settleAs, ...result } = step as MockStep;
     // Unscripted successes carry the RRN inline like most real PSPs; scripted ones stay exact.
     if (!scripted && result.kind === 'SUCCESS') result.upiRrn = mockRrn(this.id, txnRef);
@@ -273,6 +292,36 @@ export class MockPsp implements PspAdapter {
     if (settled) this.ledger.set(txnRef, settled);
     if (settled?.kind === 'SUCCESS') this.autoSettleSuccess(txnRef, settled.pspTxnId, amountPaise);
     return result as PspResult;
+  }
+
+  /** The TEST_SCENARIOS step for this amount, if scenarios are on and it is a magic amount. */
+  private scenarioStep(txnRef: string, amountPaise: number): MockStep | undefined {
+    if (!this.scenarios) return undefined;
+    const bankDown: MockStep = { kind: 'TECHNICAL_DECLINE', code: 'BANK_UNAVAILABLE' };
+    const debited = (status: 'NONE' | 'INITIATED' | 'COMPLETED'): TransactionInquiry => ({
+      found: true, outcome: 'FAILED', customerDebit: 'DEBITED', capture: 'NOT_CAPTURED', reversal: { status },
+    });
+    switch (amountPaise % 100) {
+      case 51:
+        return { kind: 'BUSINESS_DECLINE', code: 'INSUFFICIENT_FUNDS' };
+      case 52:
+        return /-1$/.test(txnRef) ? bankDown : undefined; // only the first PSP tried
+      case 53:
+        return { kind: 'TECHNICAL_DECLINE', code: 'TIMEOUT', settleAs: this.ok() };
+      case 54:
+        return { kind: 'TECHNICAL_DECLINE', code: 'TIMEOUT' };
+      case 55:
+        this.scriptInquiry(txnRef, [debited('NONE'), debited('INITIATED'), debited('COMPLETED')]);
+        return bankDown;
+      case 56:
+        this.scriptInquiry(txnRef, [debited('NONE')]);
+        return bankDown;
+      case 57:
+        this.scriptInquiry(txnRef, [{ found: true, outcome: 'SUCCESS', customerDebit: 'DEBITED', capture: 'CAPTURED', reversal: { status: 'NONE' }, pspPaymentId: `${this.id}-late-${txnRef}` }]);
+        return bankDown;
+      default:
+        return undefined;
+    }
   }
 
   private random(): MockStep {

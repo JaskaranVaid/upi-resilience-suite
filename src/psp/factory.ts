@@ -70,7 +70,7 @@ export function buildAdapters(env: PspEnv, opts: { fetch?: FetchFn; warn?: (msg:
       );
     }
     const rates: Record<string, MockRates> = env.MOCK_PSP_RATES ? JSON.parse(env.MOCK_PSP_RATES) : {};
-    mockIds.forEach((id, i) => adapters.push(new MockPsp(id, { rates: rates[id] ?? {}, seed: i + 1, latencyMs: 50 })));
+    mockIds.forEach((id, i) => adapters.push(new MockPsp(id, { rates: rates[id] ?? {}, seed: i + 1, latencyMs: 50, scenarios: env.NODE_ENV !== 'production' })));
     if (env.NODE_ENV === 'production') warn(`WARNING: production with MOCK PSP adapters (${mockIds.join(', ')}). No real PSP or NPCI calls are made by them.`);
   }
 
