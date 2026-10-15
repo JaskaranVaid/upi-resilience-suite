@@ -76,7 +76,8 @@ async function main() {
   // Constant simulated latencies (on the demo clock) so PSP performance shows realistic numbers.
   const pspA = new MockPsp('pspA', { seed: 3, latencyMs: 180, sleep: (ms) => clock.sleep(ms), complaintScript: [...COMPLAINT_SCRIPT] });
   const pspB = new MockPsp('pspB', { seed: 5, latencyMs: 120, sleep: (ms) => clock.sleep(ms), complaintScript: [...COMPLAINT_SCRIPT] });
-  const ctx = buildContext({ db, adapters: [pspA, pspB], adminToken: 'demo-admin-token-0000', clock, sleep: clock.sleep });
+  // Seeding fires thousands of API calls in seconds; a local demo doesn't need request limits.
+  const ctx = buildContext({ db, adapters: [pspA, pspB], adminToken: 'demo-admin-token-0000', clock, sleep: clock.sleep, rateLimits: null });
   const app = buildApp(ctx);
 
   const m = await app.inject({

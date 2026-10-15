@@ -31,7 +31,8 @@ async function main() {
   const clock = new FakeClock('2026-10-15T10:00:00+05:30');
   const pspA = new MockPsp('pspA', { seed: 7, rates: { bankUnavailable: 0.2, timeout: 0.08, timeoutActuallySucceeded: 0.5, businessDecline: 0.03 } });
   const pspB = new MockPsp('pspB', { seed: 11, rates: { bankUnavailable: 0.03, timeout: 0.02, businessDecline: 0.03 } });
-  const ctx = buildContext({ db, adapters: [pspA, pspB], adminToken: ADMIN, clock, sleep: clock.sleep });
+  // A time-compressed simulation fires thousands of calls in seconds: request limits off.
+  const ctx = buildContext({ db, adapters: [pspA, pspB], adminToken: ADMIN, clock, sleep: clock.sleep, rateLimits: null });
   const app = buildApp(ctx);
 
   const post = async (url: string, body: unknown, token: string, headers: Record<string, string> = {}) => {

@@ -30,7 +30,7 @@ API and login rate limits; SSRF-safe webhook URLs; deferred-notice timing fix; W
 memory fix. (`sk_test_`/`sk_live_` keys moved to Phase 2, where test and live modes exist.)
 **Exit:** every fix covered by tests; no known correctness issue open.
 
-## Phase 2 — Multi-tenant core
+## Phase 2 — Multi-tenant core ✅ (2026-10-15)
 Per-merchant PSP connections with encrypted credentials; per-connection adapters, routing, health and
 inbound webhooks; test vs live mode by API key (`sk_test_` / `sk_live_`); API key management (multiple keys, rotate, revoke);
 merchant settings API; bulk mandate import.

@@ -108,6 +108,8 @@ h3 { font-size: 13px; margin: 0 0 8px; color: var(--text-2); text-transform: upp
 .nav a[aria-current="page"] { background: var(--info-bg); color: var(--info); font-weight: 600; }
 .sidebar .me { margin-top: auto; padding: 10px; border-top: 1px solid var(--border); font-size: 13px; }
 .main { min-width: 0; }
+.mode-banner { padding: 6px 24px; background: var(--mock-bg); color: var(--mock); border-bottom: 1px solid var(--border); font-size: 13px; }
+.mode-banner strong { margin-right: 8px; text-transform: uppercase; letter-spacing: 0.04em; font-size: 12px; }
 .topbar { display: flex; gap: 12px; align-items: center; padding: 12px 24px; border-bottom: 1px solid var(--border); background: var(--surface); position: sticky; top: 0; z-index: 2; }
 .topbar form { flex: 1; display: flex; gap: 8px; max-width: 640px; }
 .content { padding: 20px 24px 48px; max-width: 1280px; }

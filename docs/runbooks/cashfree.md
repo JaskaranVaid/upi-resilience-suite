@@ -2,26 +2,39 @@
 
 Design and rationale: [`docs/superpowers/specs/2026-10-03-real-psp-cashfree-design.md`](../superpowers/specs/2026-10-03-real-psp-cashfree-design.md).
 
-## 1. Configure
+## 1. Connect a merchant's Cashfree account
+
+Each merchant uses **its own** Cashfree account (ADR 0002). With the merchant's API key:
+
+```http
+POST /v1/psp-connections
+{ "provider": "cashfree", "credentials": { "clientId": "<app id>", "clientSecret": "<secret key>" } }
+```
+
+- A **test-mode** merchant connects its Cashfree **sandbox** keys; a **live** merchant its
+  **production** keys (the environment follows the merchant's mode).
+- The keys are checked with Cashfree first (`401` → `PSP_CREDENTIALS_REJECTED`, nothing saved), then
+  stored sealed. Rotate with `PATCH /v1/psp-connections/:id { credentials }`; pause with `{ status: "DISABLED" }`.
+- **Webhooks**: in the merchant's Cashfree dashboard, point payment, refund and subscription webhooks at
+  the connection's `webhookUrl` (`https://<your-host>/webhooks/psp/<connection id>`; set `PUBLIC_BASE_URL`
+  so the API shows the full URL). Signatures are verified with that connection's secret (raw body,
+  ±5 min timestamp window). Webhooks only trigger an immediate status re-check.
+- Register mandates with `eligiblePsps: ["<connection id>"]`, or import them in bulk with
+  `POST /v1/mandates/import` (`verify=true` checks each subscription is ACTIVE at Cashfree).
+
+**Server settings**
 
 | Variable | Value |
 |---|---|
-| `CASHFREE_CLIENT_ID` / `CASHFREE_CLIENT_SECRET` | From the Cashfree merchant dashboard (sandbox and production keys differ). Secret store only — never commit. |
-| `CASHFREE_ENV` | `sandbox` (default) or `production` |
+| `CREDENTIALS_KEYS` | Key ring that seals merchant credentials — required in production |
 | `CASHFREE_TIMEOUT_MS` | Client-side request timeout, default `10000` |
-| `MOCK_PSPS` | Set **empty** (`MOCK_PSPS=`) to run Cashfree only. In production, mocks refuse to start unless `ALLOW_MOCK_PSPS=true`. |
-
-On boot the server logs `payment providers: cashfree (SANDBOX|LIVE), …` — check it.
-
-**Webhooks**: in the Cashfree dashboard, point payment, refund and subscription webhooks at
-`https://<your-host>/webhooks/psp/cashfree`. Signatures are verified with the client secret
-(raw body, ±5 min timestamp window). Webhooks only trigger an immediate status re-check; the poller
-works without them, just with more latency.
+| `CASHFREE_CLIENT_ID` / `CASHFREE_CLIENT_SECRET` | *Optional* shared **sandbox** account usable by every test-mode merchant (handy for demos and the smoke test). Production keys are refused here. |
+| `MOCK_PSPS` | Shared mock PSPs for test-mode merchants; empty (`MOCK_PSPS=`) for none. In production, mocks refuse to start unless `ALLOW_MOCK_PSPS=true`. |
 
 ## 2. How the integration behaves
 
 - **UPI AutoPay** uses Cashfree's *controlled* flow. Register mandates with
-  `mandateRef` = the Cashfree **subscription_id** and `eligiblePsps: ["cashfree"]`
+  `mandateRef` = the Cashfree **subscription_id** and `eligiblePsps: ["<connection id>"]`
   (Cashfree mandates aren't portable; mixing PSPs is rejected).
   - Pre-debit notice: sent ≥ 25 h + 30 min before execution (Cashfree's 25 h rule).
   - Due dates more than 6 days out: the notice is **deferred** and sent ~6 days before
@@ -95,7 +108,8 @@ about each, but confirm and, if needed, tighten the mapping in `src/psp/cashfree
 4. [ ] UPI collect is enabled for your **production** merchant account (works in sandbox; NPCI
        restricts collect for some P2M use).
 5. [ ] Webhook timestamp unit (ms per docs example; seconds also accepted).
-6. [ ] `CASHFREE_ENV=production`, production keys, `MOCK_PSPS=` empty, webhook URL updated.
+6. [ ] Live merchant onboarded (`mode: "LIVE"`), production keys connected via `POST /v1/psp-connections`,
+       `CREDENTIALS_KEYS` set, `MOCK_PSPS=` empty, connection webhook URL configured in Cashfree.
 
 ## 5. Failure modes
 

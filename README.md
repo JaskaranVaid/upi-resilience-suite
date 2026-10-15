@@ -73,6 +73,22 @@ as separate processes (any number of workers — rows are claimed with `FOR UPDA
 Behind a load balancer set `TRUST_PROXY` to the number of proxy hops (e.g. `1`) or the proxies' CIDRs (`true` is refused: it lets clients spoof their IP). With `NODE_ENV=production`, merchant webhook URLs must
 be https on public hosts (`WEBHOOK_TARGETS=public-only`). See [`.env.example`](.env.example).
 
+## Merchants, modes and PSP connections
+
+Merchantflo never holds funds: each merchant connects **its own** PSP accounts
+([ADR 0002](docs/decisions/0002-merchants-own-psp-accounts.md)).
+
+- **Mode.** A merchant is `TEST` (default) or `LIVE`, fixed at onboarding (`POST /v1/merchants { mode }`).
+  Test merchants get `sk_test_…` keys and may use sandbox/mock PSPs, including the *shared* adapters
+  configured on the server (`MOCK_PSPS`, a platform Cashfree sandbox). Live merchants get `sk_live_…`
+  keys and route **only** through their own production connections — never a shared or mock one.
+- **Connections.** `POST /v1/psp-connections { provider: "cashfree", credentials: { clientId, clientSecret } }`
+  checks the keys with Cashfree, then stores them sealed (AES-256-GCM, `CREDENTIALS_KEYS`). The
+  connection id (`con_…`) is the PSP id everywhere: put it in a mandate's `eligiblePsps`, and point the
+  PSP's webhooks at the connection's `webhookUrl`. `provider: "mock"` gives a test merchant a simulated PSP.
+- **No PSP, no payment.** A merchant with nothing to route through gets `422 NO_PSP_CONNECTED`.
+- **Existing mandates.** `POST /v1/mandates/import` (JSON or CSV, ≤ 5,000 rows, `verify` asks the PSP).
+
 ## API
 
 All `/v1` routes take `Authorization: Bearer <merchant API key>`, except merchant onboarding
@@ -84,7 +100,11 @@ or session cookies — checked before any lookup); over a limit → `429 RATE_LI
 | Method & path | Purpose |
 |---|---|
 | `POST /v1/merchants` *(admin)* | Onboard; returns `apiKey` and `webhookSecret` once |
-| `GET /v1/merchants/me` | Merchant profile |
+| `GET /v1/merchants/me`, `PATCH /v1/merchants/me` | Merchant profile and settings (name, webhook URL, category, method costs, steering) |
+| `POST /v1/merchants/me/webhook-secret/rotate` | New webhook signing secret, returned once |
+| `POST /v1/api-keys`, `GET /v1/api-keys`, `POST /v1/api-keys/:id/revoke` | Key rotation (the key is shown once; the last active key can't be revoked) |
+| `POST /v1/psp-connections`, `GET /v1/psp-connections`, `PATCH /v1/psp-connections/:id` | The merchant's own PSP accounts (credentials checked, sealed, never returned) |
+| `POST /v1/mandates/import` | Bulk import of existing mandates: JSON `{ mandates, verify? }` or `text/csv` |
 | `POST /v1/vendors`, `GET /v1/vendors` | Marketplace vendors (`externalId`, `category`, `smallMerchant`) |
 | `POST /v1/mandates` | Register a mandate (`eligiblePsps` omitted = all portable PSPs; `noAfaLimitPaise` ≤ ₹1 lakh for eligible categories) |
 | `POST /v1/mandates/:id/revoke` | Stop future debits |

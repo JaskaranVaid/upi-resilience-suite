@@ -40,7 +40,7 @@ function parseHash() {
 }
 
 function shell(active) {
-  const { me } = session;
+  const { me, meta } = session;
   const link = (key, href, label) => html`<a href="${href}" ${active === key ? html`aria-current="page"` : ''}>${label}</a>`;
   return html`<div class="shell">
     <aside class="sidebar">
@@ -59,6 +59,9 @@ function shell(active) {
       </div>
     </aside>
     <div class="main">
+      ${meta.merchantMode === 'TEST'
+        ? html`<div class="mode-banner" role="note"><strong>Test mode</strong> Sandbox and simulated payment providers only — no real money moves.</div>`
+        : ''}
       <header class="topbar">
         <form id="search" role="search">
           <input name="q" type="search" required placeholder="Search by UPI ref (12 digits), payment ID or order ID" aria-label="Search payments" class="flex1" />
