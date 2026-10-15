@@ -2,7 +2,7 @@ import { and, count, eq, gte, inArray, isNotNull, isNull, lt, lte, min, or, type
 import type { Clock } from '../clock.js';
 import { getRuleSet } from '../config/rules.js';
 import type { Db } from '../db/client.js';
-import { debits, paymentAttempts, paymentTracking, reconRuns, webhookOutbox } from '../db/schema.js';
+import { debits, executionPauses, paymentAttempts, paymentTracking, reconRuns, webhookOutbox } from '../db/schema.js';
 import type { HealthTracker } from '../routing/health.js';
 import { isRestricted } from '../rules/windows.js';
 import type { Logger } from './log.js';
@@ -42,6 +42,8 @@ export interface OpsMetrics {
   /** PSP circuits this worker currently has open. */
   pspCircuitsOpen: number;
   openCircuits: string[];
+  /** Kill-switch pauses in force (global, merchant or PSP). */
+  executionPausesActive: number;
   /** Always 1: its absence means no worker is reporting. */
   workerHeartbeat: 1;
 }
@@ -57,6 +59,7 @@ export const OPS_METRIC_NAMES = [
   'deadWebhooks24h',
   'reconFailures24h',
   'pspCircuitsOpen',
+  'executionPausesActive',
   'workerHeartbeat',
 ] as const satisfies ReadonlyArray<keyof OpsMetrics>;
 
@@ -66,7 +69,7 @@ interface Deps {
   health: HealthTracker;
 }
 
-async function countWhere(db: Db, table: typeof debits | typeof paymentTracking | typeof webhookOutbox | typeof reconRuns, where: SQL | undefined): Promise<number> {
+async function countWhere(db: Db, table: typeof debits | typeof paymentTracking | typeof webhookOutbox | typeof reconRuns | typeof executionPauses, where: SQL | undefined): Promise<number> {
   const [row] = await db.select({ n: count() }).from(table).where(where);
   return row?.n ?? 0;
 }
@@ -136,6 +139,7 @@ export async function collectOpsMetrics({ db, clock, health }: Deps): Promise<Op
     reconFailures24h: await countWhere(db, reconRuns, and(eq(reconRuns.status, 'FAILED'), gte(reconRuns.finishedAt, before(OPS_WINDOWS.dayMs)))),
     pspCircuitsOpen: openCircuits.length,
     openCircuits,
+    executionPausesActive: await countWhere(db, executionPauses, isNull(executionPauses.liftedAt)),
     workerHeartbeat: 1,
   };
 }

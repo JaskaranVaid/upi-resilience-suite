@@ -134,6 +134,13 @@
       "when": 1792084979532,
       "tag": "0018_operators",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1792085350102,
+      "tag": "0019_execution_pauses",
+      "breakpoints": true
     }
   ]
 }

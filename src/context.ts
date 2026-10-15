@@ -35,6 +35,7 @@ import { SecretBox } from './security/secrets.js';
 import { connectionAdapterFactory } from './psp/connections.js';
 import { Lifecycle } from './ops/lifecycle.js';
 import { OperatorService } from './ops-console/operators.js';
+import { ExecutionControl } from './ops-console/pauses.js';
 import type { Logger } from './ops/log.js';
 import type { ConnectionAdapterFactory } from './psp/registry.js';
 
@@ -83,6 +84,8 @@ export interface AppContext {
   lifecycle: Lifecycle;
   /** Merchantflo staff accounts (ops console). */
   operators: OperatorService;
+  /** The kill switch. */
+  pauses: ExecutionControl;
 }
 
 export function buildContext(args: {
@@ -120,7 +123,9 @@ export function buildContext(args: {
   const secrets = args.secrets ?? SecretBox.development();
   const connectionAdapters = args.connectionAdapters ?? connectionAdapterFactory({ clock });
   const psps = new PspRegistry(args.adapters, { db: args.db, secrets, clock, build: connectionAdapters });
-  const router = new Router(psps, health, clock, sleep, args.router);
+  const operators = new OperatorService({ db: args.db, clock, secrets });
+  const pauses = new ExecutionControl({ db: args.db, clock, operators });
+  const router = new Router(psps, health, clock, sleep, { ...args.router, pausedPsps: () => pauses.pausedPsps() });
   const polling = { ...DEFAULT_POLLING, ...args.polling };
   const tracking = new TrackingService({ db: args.db, clock, psps, cfg: polling });
   const value = new ValueService({ db: args.db });
@@ -131,7 +136,7 @@ export function buildContext(args: {
   // Production policy: connect only to public addresses, checked at connect time (no DNS rebinding).
   const fetchImpl: FetchLike = args.fetchImpl ?? (webhookTargets === 'public-only' ? publicOnlyFetch : (url, init) => fetch(url, init));
   const checkout = new CheckoutService({ db: args.db, clock });
-  const payments = new PaymentService({ db: args.db, clock, router, tracking });
+  const payments = new PaymentService({ db: args.db, clock, router, tracking, pauses });
   const queries = new PaymentQueryService({ db: args.db, clock, cfg: polling, psps });
   const customerTokenSecret = args.customerTokenSecret ?? 'dev-customer-token-secret-not-for-production';
   const logError = args.log ? (msg: string, err?: unknown) => args.log!.error(msg, err) : undefined;
@@ -146,7 +151,7 @@ export function buildContext(args: {
     webhookDeliveries: new WebhookDeliveryService({ db: args.db, clock }),
     checkoutSessions: new CheckoutSessionService({ db: args.db, clock, checkout, payments, psps, queries, tokenSecret: customerTokenSecret }),
     payments,
-    worker: new DebitWorker({ db: args.db, clock, router, tracking, opts: args.worker, ...(logError ? { log: logError } : {}) }),
+    worker: new DebitWorker({ db: args.db, clock, router, tracking, pauses, opts: args.worker, ...(logError ? { log: logError } : {}) }),
     dispatcher: new WebhookDispatcher(args.db, clock, fetchImpl, {
       ...(webhookTargets === 'public-only' ? { targetGuard: publicTargetGuard(args.resolveHost) } : {}),
     }),
@@ -177,6 +182,7 @@ export function buildContext(args: {
     connectionAdapters,
     publicBaseUrl: args.publicBaseUrl ?? null,
     lifecycle: new Lifecycle(),
-    operators: new OperatorService({ db: args.db, clock, secrets }),
+    operators,
+    pauses,
   };
 }

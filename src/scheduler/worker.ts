@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, lt, lte, ne, or } from 'drizzle-orm';
+import { and, asc, eq, lt, lte, ne, notInArray, or } from 'drizzle-orm';
 import type { Clock } from '../clock.js';
 import { getRuleSet } from '../config/rules.js';
 import type { Db } from '../db/client.js';
@@ -11,6 +11,7 @@ import type { AttemptRecord, Router } from '../routing/router.js';
 import { istDateString, istMidnight } from '../rules/time.js';
 import { isRestricted } from '../rules/windows.js';
 import { recordEvents, SYSTEM } from '../events/record.js';
+import type { ExecutionControl } from '../ops-console/pauses.js';
 import type { InitialOutcome, TrackingService } from '../tracking/service.js';
 import { enqueueWebhook } from '../webhooks/outbox.js';
 import { DEFAULT_PLANNING, deferredNoticeAt, noticeWindow, plan, sendNotice, type PlanningOptions } from './planning.js';
@@ -33,6 +34,8 @@ export interface WorkerOptions extends PlanningOptions {
   noticeRetryMs: number;
   /** Stop retrying a refused pre-debit notice this long after the due date (or request). */
   noticeRetryWindowMs: number;
+  /** How often a debit whose PSPs are all paused looks again. */
+  pauseRecheckMs: number;
 }
 
 export const DEFAULT_WORKER: WorkerOptions = {
@@ -44,6 +47,7 @@ export const DEFAULT_WORKER: WorkerOptions = {
   maxPendingMs: 48 * 3600_000,
   noticeRetryMs: 15 * 60_000,
   noticeRetryWindowMs: 48 * 3600_000,
+  pauseRecheckMs: 15 * 60_000,
 };
 
 /**
@@ -58,17 +62,21 @@ export class DebitWorker {
   private readonly log: (msg: string, err?: unknown) => void;
   /** Phase 3 hook: records money facts and starts verification watches. Optional so Engine A runs standalone. */
   private readonly tracking: TrackingService | undefined;
+  /** The kill switch (Phase 6). Optional so Engine A runs standalone. */
+  private readonly pauses: ExecutionControl | undefined;
 
   constructor(deps: {
     db: Db;
     clock: Clock;
     router: Router;
     tracking?: TrackingService;
+    pauses?: ExecutionControl;
     opts?: Partial<WorkerOptions>;
     log?: (msg: string, err?: unknown) => void;
   }) {
     this.db = deps.db;
     this.tracking = deps.tracking;
+    this.pauses = deps.pauses;
     this.clock = deps.clock;
     this.router = deps.router;
     this.opts = { ...DEFAULT_WORKER, ...deps.opts };
@@ -93,13 +101,24 @@ export class DebitWorker {
   private async claim(): Promise<Array<{ debit: Debit; prev: DebitState }>> {
     const now = this.clock.now();
     const staleBefore = new Date(now.getTime() - this.opts.executingTimeoutMs);
+    // Kill switch: paused scopes start nothing new (no execution, no notice); confirmations of
+    // debits already sent to a PSP carry on.
+    const paused = await this.pauses?.state();
+    const newWork = paused?.global
+      ? undefined
+      : and(
+          eq(debits.state, 'SCHEDULED'),
+          lte(debits.scheduledAt, now),
+          paused && paused.merchants.size > 0 ? notInArray(debits.merchantId, [...paused.merchants]) : undefined,
+        );
     return this.db.transaction(async (tx) => {
       const rows = await tx
         .select()
         .from(debits)
         .where(
           or(
-            and(inArray(debits.state, ['SCHEDULED', 'PENDING_CONFIRMATION']), lte(debits.scheduledAt, now)),
+            newWork,
+            and(eq(debits.state, 'PENDING_CONFIRMATION'), lte(debits.scheduledAt, now)),
             and(eq(debits.state, 'EXECUTING'), lt(debits.updatedAt, staleBefore)),
           ),
         )
@@ -122,13 +141,20 @@ export class DebitWorker {
 
   private async execute(d: Debit): Promise<void> {
     const now = this.clock.now();
+    // A pause that began after this debit was claimed (or while a crashed worker held it): put it
+    // back untouched, before any PSP call.
+    const paused = await this.pauses?.state();
+    if (paused && (paused.global || paused.merchants.has(d.merchantId))) return this.holdForPause(d, now, d.scheduledAt);
     const registered = await this.mandate(d.mandateId);
     if (!registered || registered.status !== 'ACTIVE') return this.fail(d, 'MANDATE_INACTIVE', { kind: 'NOT_SUBMITTED' }, null, null);
     // New notices and executions only go to PSPs the merchant can route through now: a connection
     // disabled since the mandate was registered (or a shared adapter, for a live merchant) is skipped.
     const routable = (await this.router.psps.routable(d.merchantId, registered.eligiblePsps)).map((a) => a.id);
     if (routable.length === 0) return this.fail(d, 'NO_PSP_CONNECTED', { kind: 'NOT_SUBMITTED' }, null, null);
-    const mandate = { ...registered, eligiblePsps: routable };
+    // Every eligible PSP paused: wait for the pause to lift rather than burn an attempt.
+    const usable = paused ? routable.filter((id) => !paused.psps.has(id)) : routable;
+    if (usable.length === 0) return this.holdForPause(d, now, new Date(now.getTime() + this.opts.pauseRecheckMs));
+    const mandate = { ...registered, eligiblePsps: usable };
 
     // Guardrails: never debit inside a restricted window or on a date the customer wasn't notified of.
     // (A debit whose notice was deferred has no notice date yet: this sends it and schedules.)
@@ -339,6 +365,11 @@ export class DebitWorker {
       { type: 'PAYMENT_STATE_CHANGED', data: { to } },
     ]);
     await this.tracking?.recordOutcome(tx, { merchantId: d.merchantId, subjectType: 'AUTOPAY', subjectId: d.id, pspId, txnRef, outcome, now });
+  }
+
+  /** Back to SCHEDULED without an attempt, a notice or a webhook: the kill switch is on. */
+  private async holdForPause(d: Debit, now: Date, scheduledAt: Date): Promise<void> {
+    await this.db.update(debits).set({ state: 'SCHEDULED', scheduledAt, executingSince: null, updatedAt: now }).where(eq(debits.id, d.id));
   }
 
   private async mandate(id: string): Promise<Mandate | undefined> {

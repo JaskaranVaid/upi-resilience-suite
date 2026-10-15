@@ -565,6 +565,29 @@ export const operatorAudit = pgTable(
   (t) => [index('operator_audit_time').on(t.createdAt), index('operator_audit_seq').on(t.seq)],
 );
 
+export type PauseScope = 'GLOBAL' | 'MERCHANT' | 'PSP';
+
+/**
+ * The kill switch: while a row is active (lifted_at null), no new money movement starts in its
+ * scope — every merchant (GLOBAL), one merchant, or one PSP (a connection/adapter id, or
+ * `provider:<name>` for every connection of a provider). Nothing is cancelled.
+ */
+export const executionPauses = pgTable(
+  'execution_pauses',
+  {
+    id: text('id').primaryKey(),
+    scope: text('scope').$type<PauseScope>().notNull(),
+    /** Merchant id, PSP id or provider:<name>; null for GLOBAL. */
+    target: text('target'),
+    reason: text('reason').notNull(),
+    createdBy: text('created_by'),
+    createdAt: createdAt(),
+    liftedAt: ts('lifted_at'),
+    liftedBy: text('lifted_by'),
+  },
+  (t) => [index('execution_pauses_active').on(t.liftedAt)],
+);
+
 /**
  * Read model unifying one-off collects and AutoPay debits for the dashboard.
  * Created by drizzle/0002_merchant_payments_view.sql; declared here for typed queries only.

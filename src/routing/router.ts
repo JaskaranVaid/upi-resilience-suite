@@ -9,6 +9,8 @@ export interface RouterOptions {
   /** Stop starting new attempts once this much time has elapsed. */
   maxTotalMs?: number;
   random?: () => number;
+  /** PSPs the kill switch has paused: never sent new payments or executions (status checks still go). */
+  pausedPsps?: () => Promise<ReadonlySet<string>>;
 }
 
 export interface RouteRequest {
@@ -72,7 +74,7 @@ export class Router {
     opts: RouterOptions = {},
   ) {
     this.psps = Array.isArray(psps) ? new PspRegistry(psps) : psps;
-    this.opts = { timeoutRetryDelayMs: [3000, 5000], maxTotalMs: 30_000, random: Math.random, ...opts };
+    this.opts = { timeoutRetryDelayMs: [3000, 5000], maxTotalMs: 30_000, random: Math.random, pausedPsps: async () => new Set(), ...opts };
   }
 
   adapter(id: string): Promise<PspAdapter> {
@@ -100,7 +102,9 @@ export class Router {
     // Candidates the registry can't resolve (e.g. a connection since deleted) are skipped.
     const resolved = new Map<string, PspAdapter>();
     const channel = req.channel ?? 'UPI_COLLECT';
+    const paused = await this.opts.pausedPsps();
     for (const id of req.candidates) {
+      if (paused.has(id)) continue;
       try {
         const psp = await this.psps.get(id);
         if (req.op === 'collect' && !psp.capabilities.channels.includes(channel)) continue;

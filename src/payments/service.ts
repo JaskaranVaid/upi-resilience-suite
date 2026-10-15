@@ -6,6 +6,7 @@ import { AppError } from '../errors.js';
 import { recordEvents, SYSTEM } from '../events/record.js';
 import { newId } from '../ids.js';
 import type { PaymentChannel, PspResult } from '../psp/types.js';
+import type { ExecutionControl } from '../ops-console/pauses.js';
 import type { AttemptRecord, Router } from '../routing/router.js';
 import type { InitialOutcome, TrackingService } from '../tracking/service.js';
 import { applyPaymentOutcome, paymentView, type Payment } from './outcome.js';
@@ -45,17 +46,23 @@ function initialOutcome(result: PspResult, pspId: string | null): InitialOutcome
 
 /** One-off UPI collect at checkout, routed through the smart router (Phase 2). */
 export class PaymentService {
-  constructor(private readonly deps: { db: Db; clock: Clock; router: Router; tracking: TrackingService }) {}
+  constructor(private readonly deps: { db: Db; clock: Clock; router: Router; tracking: TrackingService; pauses?: ExecutionControl }) {}
 
   async create(merchantId: string, input: CreatePaymentInput): Promise<{ payment: Payment; created: boolean }> {
     const { db, clock, router, tracking } = this.deps;
     const existing = await this.findByKey(merchantId, input.idempotencyKey);
     if (existing) return this.replay(existing, input);
+    // The kill switch: no new payment starts while this merchant (or everything) is paused.
+    await this.deps.pauses?.assertMayStartPayment(merchantId);
 
     const channel: PaymentChannel = input.channel ?? (input.payerVpa ? 'UPI_COLLECT' : 'UPI_INTENT');
     if (channel === 'UPI_COLLECT' && !input.payerVpa) throw new AppError('VALIDATION', 'payerVpa is required for a UPI collect');
     const adapters = (await router.psps.requireForMerchant(merchantId)).filter((a) => a.capabilities.channels.includes(channel));
     if (adapters.length === 0) throw new AppError('NO_PSP_CONNECTED', `None of this merchant's payment providers accepts ${channel} payments`);
+    const paused = (await this.deps.pauses?.pausedPsps()) ?? new Set<string>();
+    if (adapters.every((a) => paused.has(a.id))) {
+      throw new AppError('EXECUTION_PAUSED', "This merchant's payment providers are paused by Merchantflo operations; please retry later");
+    }
     const pspIds = adapters.map((a) => a.id);
     const needsPhone = adapters.filter((a) => a.capabilities.collectRequires.includes('customerPhone')).map((a) => a.id);
     if (needsPhone.length > 0 && !input.customerPhone) {
