@@ -7,6 +7,7 @@ import { createDb } from './db/client.js';
 import { assertSchemaCurrent, schemaStatus } from './db/migrate.js';
 import { DEFAULT_HEARTBEAT_FILE, writeHeartbeat } from './ops/lifecycle.js';
 import { jsonLogger } from './ops/log.js';
+import { emitOpsMetrics } from './ops/metrics.js';
 import { buildAdapters } from './psp/factory.js';
 import { connectionAdapterFactory } from './psp/connections.js';
 import { SecretBox } from './security/secrets.js';
@@ -80,6 +81,17 @@ async function main() {
       await loop;
     });
     log.info(`worker polling every ${env.WORKER_POLL_MS}ms`);
+
+    if (env.OPS_METRICS_INTERVAL_MS > 0) {
+      // Its own timer, so a long tick (slow PSPs) doesn't silence the heartbeat metric.
+      let collecting = false;
+      const timer = setInterval(() => {
+        if (collecting) return;
+        collecting = true;
+        void emitOpsMetrics({ db, clock: ctx.clock, health: ctx.health }, log).finally(() => (collecting = false));
+      }, env.OPS_METRICS_INTERVAL_MS);
+      stops.unshift(async () => clearInterval(timer));
+    }
   }
 
   let shuttingDown = false;

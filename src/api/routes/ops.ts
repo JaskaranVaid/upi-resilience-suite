@@ -3,7 +3,8 @@ import { sql } from 'drizzle-orm';
 import type { AppContext } from '../../context.js';
 import { getRuleSet, MDR_2026, mdrStatus } from '../../config/rules.js';
 import { savingsSummary } from '../../ledger/savings.js';
-import { merchantOf } from '../app.js';
+import { collectOpsMetrics } from '../../ops/metrics.js';
+import { merchantOf, requireAdmin } from '../app.js';
 import { savingsQuery } from '../schemas.js';
 
 export const opsRoutes = (ctx: AppContext) => async (app: FastifyInstance) => {
@@ -26,6 +27,12 @@ export const opsRoutes = (ctx: AppContext) => async (app: FastifyInstance) => {
   app.get('/health', async () => {
     await ctx.db.execute(sql`select 1`);
     return { status: 'ok', time: ctx.clock.now(), ruleSet: getRuleSet(ctx.clock.now()).id };
+  });
+
+  /** Operator view of the gauges the production alarms watch (the worker also logs them every minute). */
+  app.get('/v1/admin/ops/metrics', async (req) => {
+    requireAdmin(ctx, req);
+    return collectOpsMetrics({ db: ctx.db, clock: ctx.clock, health: ctx.health });
   });
 
   app.get('/v1/psps/health', async (req) => {

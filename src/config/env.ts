@@ -31,6 +31,8 @@ const schema = z.object({
   SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().min(1000).max(600_000).default(25_000),
   /** The worker writes the time of each completed tick here; the container health check reads it. */
   HEARTBEAT_FILE: z.string().optional(),
+  /** How often the worker logs an `ops.metrics` line (the alarms' source). 0 turns it off. */
+  OPS_METRICS_INTERVAL_MS: z.coerce.number().int().min(0).default(60_000),
   /** The health check fails when the worker's last completed tick is older than this. */
   WORKER_STALL_MS: z.coerce.number().int().min(10_000).default(600_000),
   /** Comma-separated mock PSP ids (may be empty). Mocks never reach a real PSP. */
