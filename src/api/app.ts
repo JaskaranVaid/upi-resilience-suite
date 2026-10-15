@@ -9,6 +9,7 @@ import type { AppContext } from '../context.js';
 import { merchants } from '../db/schema.js';
 import { AppError } from '../errors.js';
 import { dashboardApi } from './dashboard/plugin.js';
+import { docsRoutes } from './openapi.js';
 import { registerRateLimits } from './rate-limit.js';
 import { checkoutRoutes } from './routes/checkout.js';
 import { mandateRoutes } from './routes/mandates.js';
@@ -134,5 +135,6 @@ export function buildApp(ctx: AppContext, opts: { logger?: boolean; trustProxy?:
   app.register(connectionRoutes(ctx));
   app.register(settlementRoutes(ctx));
   app.register(publicCheckoutRoutes(ctx));
+  app.register(docsRoutes());
   return app;
 }

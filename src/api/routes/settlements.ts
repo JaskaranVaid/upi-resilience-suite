@@ -6,7 +6,7 @@ import { settlements } from '../../db/schema.js';
 import { AppError } from '../../errors.js';
 import { merchantOf } from '../app.js';
 
-const query = z.object({
+export const settlementsQuery = z.object({
   from: z.iso.datetime({ offset: true }).optional(),
   to: z.iso.datetime({ offset: true }).optional(),
   /** matched = tied to one of your payments; unmatched = in the PSP report but not ours. */
@@ -20,7 +20,7 @@ const query = z.object({
 export const settlementRoutes = (ctx: AppContext) => async (app: FastifyInstance) => {
   app.get('/v1/settlements', async (req) => {
     const merchant = merchantOf(req);
-    const q = query.parse(req.query);
+    const q = settlementsQuery.parse(req.query);
     const to = q.to ? new Date(q.to) : ctx.clock.now();
     const from = q.from ? new Date(q.from) : new Date(to.getTime() - 30 * 86_400_000);
     if (to <= from) throw new AppError('VALIDATION', '"to" must be after "from"');

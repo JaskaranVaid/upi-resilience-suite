@@ -9,7 +9,7 @@ import { vpa } from '../schemas.js';
 
 const TOKEN_HEADER = 'x-checkout-token';
 
-const payBody = z
+export const payBody = z
   .object({
     method: z.enum(PAYMENT_METHODS),
     upiFlow: z.enum(['INTENT', 'QR', 'COLLECT']).optional(),

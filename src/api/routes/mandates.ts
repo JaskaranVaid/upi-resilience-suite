@@ -19,6 +19,19 @@ export function withIdempotencyKey(req: FastifyRequest): unknown {
   return typeof header === 'string' && body.idempotencyKey === undefined ? { ...body, idempotencyKey: header } : body;
 }
 
+export const importMandatesBody = z.object({ mandates: z.array(z.unknown()).min(1), verify: z.boolean().default(false) });
+export const importMandatesQuery = z.object({ verify: z.enum(['true', 'false']).default('false') });
+export const updateMandateBody = z
+  .object({ eligiblePsps: z.array(z.string().min(1)).min(1), maxAmountPaise: positivePaise, noAfaLimitPaise: createMandate.shape.noAfaLimitPaise.unwrap().nullable() })
+  .partial()
+  .strict()
+  .refine((b) => Object.keys(b).length > 0, 'Nothing to update');
+export const movePspBody = z.object({ from: z.string().min(1), to: z.string().min(1) }).strict();
+export const listDebitsQuery = z.object({
+  state: z.enum(['SCHEDULED', 'EXECUTING', 'PENDING_CONFIRMATION', 'SUCCEEDED', 'FAILED']).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+});
+
 export const mandateRoutes = (ctx: AppContext) => async (app: FastifyInstance) => {
   // CSV bodies for bulk import (scoped to these routes).
   app.addContentTypeParser('text/csv', { parseAs: 'string', bodyLimit: 5 * 1024 * 1024 }, (_req, body, done) => done(null, body));
@@ -38,9 +51,9 @@ export const mandateRoutes = (ctx: AppContext) => async (app: FastifyInstance) =
       } catch (e) {
         throw new AppError('VALIDATION', e instanceof Error ? e.message : 'Invalid CSV');
       }
-      verify = z.object({ verify: z.enum(['true', 'false']).default('false') }).parse(req.query).verify === 'true';
+      verify = importMandatesQuery.parse(req.query).verify === 'true';
     } else {
-      const body = z.object({ mandates: z.array(z.unknown()).min(1), verify: z.boolean().default(false) }).parse(req.body);
+      const body = importMandatesBody.parse(req.body);
       rows = body.mandates;
       verify = body.verify;
     }
@@ -72,12 +85,7 @@ export const mandateRoutes = (ctx: AppContext) => async (app: FastifyInstance) =
   app.patch('/v1/mandates/:id', async (req) => {
     const merchant = merchantOf(req);
     const { id } = idParam.parse(req.params);
-    const body = z
-      .object({ eligiblePsps: z.array(z.string().min(1)).min(1), maxAmountPaise: positivePaise, noAfaLimitPaise: createMandate.shape.noAfaLimitPaise.unwrap().nullable() })
-      .partial()
-      .strict()
-      .refine((b) => Object.keys(b).length > 0, 'Nothing to update')
-      .parse(req.body);
+    const body = updateMandateBody.parse(req.body);
     const available = new Map((await ctx.psps.requireForMerchant(merchant.id)).map((a) => [a.id, a]));
     const patch = { ...body, ...(body.eligiblePsps ? { eligiblePsps: resolveEligiblePsps(available, body.eligiblePsps) } : {}) };
     const [m] = await ctx.db.update(mandates).set(patch).where(and(eq(mandates.id, id), eq(mandates.merchantId, merchant.id))).returning();
@@ -91,7 +99,7 @@ export const mandateRoutes = (ctx: AppContext) => async (app: FastifyInstance) =
    */
   app.post('/v1/mandates/move-psp', async (req) => {
     const merchant = merchantOf(req);
-    const { from, to } = z.object({ from: z.string().min(1), to: z.string().min(1) }).strict().parse(req.body);
+    const { from, to } = movePspBody.parse(req.body);
     const available = new Map((await ctx.psps.requireForMerchant(merchant.id)).map((a) => [a.id, a]));
     resolveEligiblePsps(available, [to]); // `to` must be one of this merchant's routable PSPs
     const affected = await ctx.db
@@ -151,12 +159,7 @@ export const mandateRoutes = (ctx: AppContext) => async (app: FastifyInstance) =
 
   app.get('/v1/debits', async (req) => {
     const merchant = merchantOf(req);
-    const q = z
-      .object({
-        state: z.enum(['SCHEDULED', 'EXECUTING', 'PENDING_CONFIRMATION', 'SUCCEEDED', 'FAILED']).optional(),
-        limit: z.coerce.number().int().min(1).max(200).default(50),
-      })
-      .parse(req.query);
+    const q = listDebitsQuery.parse(req.query);
     const rows = await ctx.db
       .select()
       .from(debits)

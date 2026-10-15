@@ -16,7 +16,7 @@ const razorpayCredentials = z
   .strict();
 const anyCredentials = z.record(z.string(), z.string());
 
-const createBody = z.object({
+export const createConnectionBody = z.object({
   provider: z.enum(['cashfree', 'razorpay', 'mock']),
   label: z.string().min(1).max(100).optional(),
   /** Defaults to the merchant's mode: sandbox for TEST merchants, production for LIVE ones. */
@@ -26,7 +26,7 @@ const createBody = z.object({
   priority: z.number().int().min(0).max(1000).optional(),
 });
 
-const updateBody = z
+export const updateConnectionBody = z
   .object({
     label: z.string().min(1).max(100).optional(),
     priority: z.number().int().min(0).max(1000).optional(),
@@ -99,7 +99,7 @@ export const connectionRoutes = (ctx: AppContext) => async (app: FastifyInstance
 
   app.post('/v1/psp-connections', async (req, reply) => {
     const merchant = merchantOf(req);
-    const body = createBody.parse(req.body);
+    const body = createConnectionBody.parse(req.body);
     const environment = body.environment ?? ENVIRONMENT_FOR_MODE[merchant.mode];
     checkEnvironment(merchant.mode, body.provider, environment);
     const credentials = credentialsFor(body.provider, environment, body.credentials);
@@ -134,7 +134,7 @@ export const connectionRoutes = (ctx: AppContext) => async (app: FastifyInstance
   app.patch('/v1/psp-connections/:id', async (req) => {
     const merchant = merchantOf(req);
     const { id } = idParam.parse(req.params);
-    const body = updateBody.parse(req.body);
+    const body = updateConnectionBody.parse(req.body);
     const [current] = await ctx.db.select().from(pspConnections).where(and(eq(pspConnections.id, id), eq(pspConnections.merchantId, merchant.id)));
     if (!current) throw new AppError('NOT_FOUND', `Connection ${id} not found`);
     const patch: Partial<ConnectionRow> = { updatedAt: ctx.clock.now() };
