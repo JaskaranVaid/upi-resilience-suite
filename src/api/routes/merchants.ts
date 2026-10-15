@@ -12,7 +12,7 @@ import { userView } from '../../auth/users.js';
 import { merchantOf, requireAdmin, type Merchant } from '../app.js';
 import { apiKeyView } from '../../auth/api-keys.js';
 import { createUserBody } from '../dashboard/plugin.js';
-import { createMerchant, createVendor, idParam } from '../schemas.js';
+import { createMerchant, createVendor, idParam, updateMerchant } from '../schemas.js';
 
 export function merchantView(m: Merchant) {
   return {
@@ -74,6 +74,30 @@ export const merchantRoutes = (ctx: AppContext) => async (app: FastifyInstance) 
   });
 
   app.get('/v1/merchants/me', async (req) => merchantView(merchantOf(req)));
+
+  app.patch('/v1/merchants/me', async (req) => {
+    const merchant = merchantOf(req);
+    const body = updateMerchant.parse(req.body);
+    if (body.webhookUrl) {
+      const problem = checkWebhookUrl(body.webhookUrl, ctx.webhookTargets);
+      if (problem) throw new AppError('VALIDATION', `webhookUrl ${problem}`);
+    }
+    const { steering, ...rest } = body;
+    const [m] = await ctx.db
+      .update(merchants)
+      .set({ ...rest, ...(steering ? { steering: { ...merchant.steering, ...steering } } : {}) })
+      .where(eq(merchants.id, merchant.id))
+      .returning();
+    return merchantView(m!);
+  });
+
+  /** New webhook signing secret, returned once. Deliveries from now on are signed with it. */
+  app.post('/v1/merchants/me/webhook-secret/rotate', async (req) => {
+    const merchant = merchantOf(req);
+    const webhookSecret = `whsec_${randomBytes(24).toString('base64url')}`;
+    await ctx.db.update(merchants).set({ webhookSecret }).where(eq(merchants.id, merchant.id));
+    return { webhookSecret };
+  });
 
   app.post('/v1/vendors', async (req, reply) => {
     const merchant = merchantOf(req);

@@ -11,6 +11,16 @@ export const idempotencyKey = z.string().min(1).max(255);
 
 const feeSpec = z.object({ percentBps: z.number().int().min(0).max(10_000), flatPaise: paise, capPaise: paise.optional() });
 
+const methodCosts = z.object({ NETBANKING: feeSpec.optional(), RUPAY_DEBIT: feeSpec.optional(), CARD: feeSpec.optional() });
+const steering = z
+  .object({
+    enabled: z.boolean(),
+    shareBps: z.number().int().min(0).max(10_000),
+    minSavingsPaise: paise,
+    maxDiscountPaise: paise,
+  })
+  .partial();
+
 export const createMerchant = z.object({
   name: z.string().min(1).max(200),
   /** TEST (default) uses sandbox/mock PSPs only; LIVE only the merchant's own production PSP accounts. */
@@ -18,19 +28,26 @@ export const createMerchant = z.object({
   webhookUrl: z.url().optional(),
   category: category.default('GENERAL'),
   smallMerchant: z.boolean().default(false),
-  methodCosts: z
-    .object({ NETBANKING: feeSpec.optional(), RUPAY_DEBIT: feeSpec.optional(), CARD: feeSpec.optional() })
-    .default({}),
-  steering: z
-    .object({
-      enabled: z.boolean(),
-      shareBps: z.number().int().min(0).max(10_000),
-      minSavingsPaise: paise,
-      maxDiscountPaise: paise,
-    })
-    .partial()
-    .default({}),
+  methodCosts: methodCosts.default({}),
+  steering: steering.default({}),
 });
+
+/** Merchant self-service settings. Mode is not editable: test and live are separate merchants. */
+export const updateMerchant = z
+  .object({
+    name: z.string().min(1).max(200),
+    /** null removes the webhook URL (webhooks then stop being delivered). */
+    webhookUrl: z.url().nullable(),
+    category,
+    smallMerchant: z.boolean(),
+    /** Replaces the method cost table. */
+    methodCosts,
+    /** Merged into the current steering settings. */
+    steering,
+  })
+  .partial()
+  .strict()
+  .refine((b) => Object.keys(b).length > 0, 'Nothing to update');
 
 export const createVendor = z.object({
   externalId: z.string().min(1).max(200),
