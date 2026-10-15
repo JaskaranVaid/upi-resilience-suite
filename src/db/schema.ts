@@ -153,6 +153,10 @@ export const checkoutQuotes = pgTable('checkout_quotes', {
   quote: jsonb('quote').notNull(),
   acceptedMethod: text('accepted_method'),
   acceptedAt: ts('accepted_at'),
+  /** When the merchant reported the payment for this quote as paid (savings are booked then). */
+  paidAt: ts('paid_at'),
+  /** The merchant's / PSP's reference for that payment. */
+  paymentReference: text('payment_reference'),
   createdAt: createdAt(),
 });
 

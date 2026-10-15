@@ -139,6 +139,7 @@ async function main() {
       const quote = (await app.inject({ method: 'POST', url: '/v1/checkout/quote', headers: { authorization: `Bearer ${apiKey}` }, payload: { amountPaise: cartAmounts[(d + k) % cartAmounts.length] } })).json();
       if (quote.offer && ++q % 5 < 2) {
         await app.inject({ method: 'POST', url: `/v1/checkout/quotes/${quote.quoteId}/accept`, headers: { authorization: `Bearer ${apiKey}` }, payload: { method: quote.offer.method } });
+        await app.inject({ method: 'POST', url: `/v1/checkout/quotes/${quote.quoteId}/paid`, headers: { authorization: `Bearer ${apiKey}` }, payload: { method: quote.offer.method, paymentReference: `nb-${quote.quoteId}` } });
       }
     }
   }

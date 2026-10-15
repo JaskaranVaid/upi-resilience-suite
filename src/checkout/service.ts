@@ -48,28 +48,69 @@ export class CheckoutService {
     return { quoteId, ruleSetId: rules.id, expiresAt: new Date(now.getTime() + QUOTE_TTL_MS), ...q };
   }
 
-  /** Called when the customer pays; books the realised saving if they took the offer. */
+  /**
+   * The customer chose a method at checkout. Records the choice only: a saving is booked once the
+   * payment is confirmed paid (`markPaid`), so an abandoned or failed payment never counts.
+   */
   async accept(merchantId: string, quoteId: string, method: PaymentMethod) {
     const { db, clock } = this.deps;
     const now = clock.now();
-    const [row] = await db.select().from(checkoutQuotes).where(and(eq(checkoutQuotes.id, quoteId), eq(checkoutQuotes.merchantId, merchantId)));
-    if (!row) throw new AppError('NOT_FOUND', `Quote ${quoteId} not found`);
-    const q = row.quote as MethodsQuote;
-    if (!q.methods.some((m) => m.method === method)) throw new AppError('VALIDATION', `Method ${method} was not quoted`);
-    if (row.acceptedMethod) {
-      if (row.acceptedMethod !== method) throw new AppError('CONFLICT', `Quote already accepted with ${row.acceptedMethod}`);
-      return { quoteId, acceptedMethod: method, steeringSavingsPaise: q.offer?.method === method ? q.offer.merchantNetSavingsPaise : 0 };
+    const { row, q } = await this.choosable(merchantId, quoteId, method);
+    if (!row.acceptedMethod) {
+      if (now.getTime() - row.createdAt.getTime() > QUOTE_TTL_MS) throw new AppError('CONFLICT', 'Quote expired');
+      await db.update(checkoutQuotes).set({ acceptedMethod: method, acceptedAt: now }).where(eq(checkoutQuotes.id, quoteId));
     }
-    if (now.getTime() - row.createdAt.getTime() > QUOTE_TTL_MS) throw new AppError('CONFLICT', 'Quote expired');
+    return this.view(quoteId, q, method, row.paidAt !== null);
+  }
 
-    const took = q.offer?.method === method;
+  /**
+   * The payment for this quote succeeded with `method`. Books the steering saving (net of the
+   * discount) exactly once when the customer paid with the offered method. Idempotent per quote.
+   */
+  async markPaid(merchantId: string, quoteId: string, input: { method: PaymentMethod; paymentReference: string }) {
+    const { db, clock } = this.deps;
+    const now = clock.now();
+    const { row, q } = await this.choosable(merchantId, quoteId, input.method);
+    if (row.paidAt) {
+      if (row.paymentReference !== input.paymentReference) {
+        throw new AppError('CONFLICT', `Quote already paid with reference ${row.paymentReference}`);
+      }
+      return this.view(quoteId, q, input.method, true);
+    }
+    if (!row.acceptedMethod && now.getTime() - row.createdAt.getTime() > QUOTE_TTL_MS) throw new AppError('CONFLICT', 'Quote expired');
+
     await db.transaction(async (tx) => {
-      await tx.update(checkoutQuotes).set({ acceptedMethod: method, acceptedAt: now }).where(eq(checkoutQuotes.id, quoteId));
-      if (took && q.offer) {
+      await tx
+        .update(checkoutQuotes)
+        .set({ acceptedMethod: input.method, acceptedAt: row.acceptedAt ?? now, paidAt: now, paymentReference: input.paymentReference })
+        .where(eq(checkoutQuotes.id, quoteId));
+      if (q.offer && q.offer.method === input.method) {
         await recordSavings(tx, { merchantId, type: 'MDR_STEERING_ACCEPTED', amountPaise: q.offer.merchantNetSavingsPaise, refId: quoteId, now });
       }
     });
-    return { quoteId, acceptedMethod: method, steeringSavingsPaise: took && q.offer ? q.offer.merchantNetSavingsPaise : 0 };
+    return this.view(quoteId, q, input.method, true);
+  }
+
+  /** Load a quote for a method choice; the method must have been quoted and match any earlier choice. */
+  private async choosable(merchantId: string, quoteId: string, method: PaymentMethod) {
+    const [row] = await this.deps.db.select().from(checkoutQuotes).where(and(eq(checkoutQuotes.id, quoteId), eq(checkoutQuotes.merchantId, merchantId)));
+    if (!row) throw new AppError('NOT_FOUND', `Quote ${quoteId} not found`);
+    const q = row.quote as MethodsQuote;
+    if (!q.methods.some((m) => m.method === method)) throw new AppError('VALIDATION', `Method ${method} was not quoted`);
+    if (row.acceptedMethod && row.acceptedMethod !== method) throw new AppError('CONFLICT', `Quote already accepted with ${row.acceptedMethod}`);
+    return { row, q };
+  }
+
+  private view(quoteId: string, q: MethodsQuote, method: PaymentMethod, paid: boolean) {
+    const offerTaken = q.offer?.method === method;
+    return {
+      quoteId,
+      acceptedMethod: method,
+      offerTaken,
+      paid,
+      /** Booked saving: non-zero only once the steered payment is confirmed paid. */
+      steeringSavingsPaise: paid && offerTaken && q.offer ? q.offer.merchantNetSavingsPaise : 0,
+    };
   }
 
   async split(merchant: Merchant, lineItems: LineItem[]): Promise<SplitResult & { ruleSetId: string }> {

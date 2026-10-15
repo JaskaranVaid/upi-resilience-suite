@@ -50,6 +50,13 @@
       "when": 1790983903641,
       "tag": "0006_deferred_notice",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792053719680,
+      "tag": "0007_quote_paid",
+      "breakpoints": true
     }
   ]
 }

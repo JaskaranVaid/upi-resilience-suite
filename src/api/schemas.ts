@@ -57,6 +57,8 @@ export const quoteRequest = z.object({ amountPaise: positivePaise });
 
 export const acceptQuote = z.object({ method: z.enum(PAYMENT_METHODS) });
 
+export const quotePaid = z.object({ method: z.enum(PAYMENT_METHODS), paymentReference: z.string().min(1).max(200) });
+
 export const splitRequest = z.object({
   lineItems: z
     .array(z.object({ vendorId: z.string().min(1), amountPaise: positivePaise, sku: z.string().optional() }))

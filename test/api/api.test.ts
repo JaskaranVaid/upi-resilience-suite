@@ -73,7 +73,7 @@ describe('HTTP API (end to end)', () => {
     expect(savings.revenueProtectedPaise).toBe(rs(499));
   });
 
-  it('Engine B: quote offers a discount-only NetBanking incentive and books the saving on accept', async () => {
+  it('Engine B: quote offers a discount-only NetBanking incentive; the saving is booked only once the steered payment is paid', async () => {
     clock.set(ist('2026-10-15T14:00:00'));
     const quote = (await call('POST', '/v1/checkout/quote', { amountPaise: rs(5000) })).json();
     expect(quote.ruleSetId).toBe('npci-mdr-2026');
@@ -81,14 +81,31 @@ describe('HTTP API (end to end)', () => {
     const upi = quote.methods.find((m: { method: string }) => m.method === 'UPI');
     expect(upi.customerPayablePaise).toBe(rs(5000));
 
+    // Choosing the method books nothing: the payment might still be abandoned or fail.
     const accepted = (await call('POST', `/v1/checkout/quotes/${quote.quoteId}/accept`, { method: 'NETBANKING' })).json();
-    expect(accepted.steeringSavingsPaise).toBe(rs(9));
+    expect(accepted).toMatchObject({ offerTaken: true, paid: false, steeringSavingsPaise: 0 });
+    expect((await call('GET', '/v1/savings')).json().feesSavedPaise).toBe(0);
+
+    const paid = (await call('POST', `/v1/checkout/quotes/${quote.quoteId}/paid`, { method: 'NETBANKING', paymentReference: 'nb-889' })).json();
+    expect(paid).toMatchObject({ offerTaken: true, paid: true, steeringSavingsPaise: rs(9) });
+    // Reporting the same payment again is idempotent; a different reference is a conflict.
+    expect((await call('POST', `/v1/checkout/quotes/${quote.quoteId}/paid`, { method: 'NETBANKING', paymentReference: 'nb-889' })).statusCode).toBe(200);
+    expect((await call('POST', `/v1/checkout/quotes/${quote.quoteId}/paid`, { method: 'NETBANKING', paymentReference: 'nb-other' })).statusCode).toBe(409);
     const savings = (await call('GET', '/v1/savings')).json();
     expect(savings.feesSavedPaise).toBe(rs(9));
+    expect(savings.byType.MDR_STEERING_ACCEPTED.count).toBe(1);
     expect(savings.byType.MDR_STEERING_OFFERED.count).toBe(1);
 
     const conflict = await call('POST', `/v1/checkout/quotes/${quote.quoteId}/accept`, { method: 'UPI' });
     expect(conflict.statusCode).toBe(409);
+  });
+
+  it('Engine B: a quote paid with UPI (offer declined) books no saving', async () => {
+    clock.set(ist('2026-10-15T14:00:00'));
+    const quote = (await call('POST', '/v1/checkout/quote', { amountPaise: rs(5000) })).json();
+    const paid = (await call('POST', `/v1/checkout/quotes/${quote.quoteId}/paid`, { method: 'UPI', paymentReference: 'upi-1' })).json();
+    expect(paid).toMatchObject({ acceptedMethod: 'UPI', offerTaken: false, paid: true, steeringSavingsPaise: 0 });
+    expect((await call('GET', '/v1/savings')).json().feesSavedPaise).toBe(0);
   });
 
   it('Engine B: before 15 Oct 2026 UPI is free, so no steering', async () => {

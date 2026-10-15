@@ -118,6 +118,8 @@ async function main() {
       if (rand() < 0.4) {
         taken++;
         await post(`/v1/checkout/quotes/${q.quoteId}/accept`, { method: q.offer.method }, apiKey);
+        // The customer completes the steered payment; only then is the saving booked.
+        await post(`/v1/checkout/quotes/${q.quoteId}/paid`, { method: q.offer.method, paymentReference: `nb-${i}` }, apiKey);
         const chosen = q.methods.find((m: { method: string }) => m.method === q.offer.method);
         mdrAfter += chosen.merchantCostPaise;
         discounts += q.offer.discountPaise;

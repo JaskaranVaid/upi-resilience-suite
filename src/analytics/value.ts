@@ -34,13 +34,15 @@ export const VALUE_LINES: Record<ValueKey, { type: SavingsType; label: string; m
   mdrSaved: {
     type: 'MDR_STEERING_ACCEPTED',
     label: 'MDR saved through payment-method steering',
-    methodNote: 'Fees avoided when customers chose the cheaper payment method we offered, net of the discount given to them.',
+    methodNote:
+      'Fees avoided on payments confirmed paid with the cheaper payment method we offered, net of the discount given to the customer. Counted when the payment is reported paid, not when the method is chosen.',
     inTotal: true,
   },
   mdrOffered: {
     type: 'MDR_STEERING_OFFERED',
     label: 'Further MDR savings offered but not taken',
-    methodNote: 'Savings that were available on carts where the customer kept UPI. Shown for context; not counted in the total.',
+    methodNote:
+      'Savings that were available on carts where no payment with the offered method was completed (the customer kept UPI or did not pay). Shown for context; not counted in the total.',
     inTotal: false,
   },
 };
