@@ -85,7 +85,7 @@ describe('PSP webhooks (Cashfree, against a fake API)', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ received: true, matched: 1 });
     const [p] = await ctx.db.select().from(payments).where(eq(payments.id, payment.id));
-    expect(p).toMatchObject({ state: 'SUCCEEDED', pspTxnId: '612345678901' });
+    expect(p).toMatchObject({ state: 'SUCCEEDED', pspTxnId: '77' }); // Cashfree's payment id: what its settlement report refers to
   });
 
   it('a webhook that claims success while the API still says pending changes nothing', async () => {

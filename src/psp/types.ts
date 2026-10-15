@@ -72,6 +72,8 @@ export type TransactionInquiry =
       reversal: { status: ReversalStatus; initiatedAt?: Date; completedAt?: Date };
       upiRrn?: string;
       npciTxnId?: string;
+      /** The PSP's own id for the payment that succeeded (what its settlement report refers to). */
+      pspPaymentId?: string;
       /** PSP-specific code. Internal only — never surfaced to merchants or customers. */
       failureCode?: string;
     };

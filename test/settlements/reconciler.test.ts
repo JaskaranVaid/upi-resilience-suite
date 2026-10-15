@@ -61,6 +61,22 @@ describe('settlement reconciliation', () => {
     expect(await caseOf(p.id)).toBeUndefined();
   });
 
+  it('matches a payment the poller confirmed later (pending at first, like every Razorpay payment) by the PSP payment id', async () => {
+    const { payment } = await ctx.payments.create(merchantId, { amountPaise: rs(2500), channel: 'UPI_INTENT', idempotencyKey: 'intent-1' });
+    expect(payment.state).toBe('PENDING');
+    const t = await tracking(payment.id);
+    clock.set(t.nextCheckAt!);
+    await ctx.poller.runOnce(); // the customer paid: the PSP now reports success
+    const [paid] = await ctx.db.select().from(payments).where(eq(payments.id, payment.id));
+    expect(paid!.state).toBe('SUCCEEDED');
+    // The report names the PSP's own payment id, which must be what we stored.
+    const pspOwnId = `${connId}-1`;
+    expect(paid!.pspTxnId).toBe(pspOwnId);
+    psp.addSettlements(line({ pspPaymentId: pspOwnId }));
+    await ctx.reconciler.reconcile(merchantId, connId, '2026-10-16');
+    expect((await tracking(payment.id)).settlementStatus).toBe('SETTLED');
+  });
+
   it('matches by our reference when the PSP reports the order rather than its payment id', async () => {
     const p = await captured();
     const [attempt] = await ctx.db.select().from(paymentAttempts).where(and(eq(paymentAttempts.paymentId, p.id), eq(paymentAttempts.op, 'collect')));

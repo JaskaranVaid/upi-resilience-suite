@@ -113,7 +113,8 @@ export function inquiryFromOrder(payments: CfOrderPayment[], refunds: CfRefund[]
   const failureCode = p?.error_details?.error_code ? { failureCode: p.error_details.error_code } : {};
 
   if (p?.payment_status === 'SUCCESS') {
-    return { found: true, outcome: 'SUCCESS', customerDebit: 'DEBITED', capture: p.is_captured === false ? 'UNKNOWN' : 'CAPTURED', reversal: { status: 'NONE' }, ...rrn };
+    const id = p.cf_payment_id != null ? { pspPaymentId: String(p.cf_payment_id) } : {};
+    return { found: true, outcome: 'SUCCESS', customerDebit: 'DEBITED', capture: p.is_captured === false ? 'UNKNOWN' : 'CAPTURED', reversal: { status: 'NONE' }, ...rrn, ...id };
   }
   if (!p || ['FAILED', 'USER_DROPPED', 'VOID', 'CANCELLED'].includes(p.payment_status ?? '')) {
     if (reversal) {
@@ -252,7 +253,7 @@ export function inquiryFromExecution(e: CfExecution | null): TransactionInquiry 
   const failureCode = e.failure_details?.failure_error_code ? { failureCode: e.failure_details.failure_error_code } : {};
   switch (r.kind) {
     case 'SUCCESS':
-      return { found: true, outcome: 'SUCCESS', customerDebit: 'DEBITED', capture: 'CAPTURED', reversal: { status: 'NONE' } };
+      return { found: true, outcome: 'SUCCESS', customerDebit: 'DEBITED', capture: 'CAPTURED', reversal: { status: 'NONE' }, pspPaymentId: r.pspTxnId };
     case 'BUSINESS_DECLINE':
       return { found: true, outcome: 'FAILED', customerDebit: 'NOT_DEBITED', capture: 'NOT_CAPTURED', reversal: { status: 'NONE' }, ...failureCode };
     case 'TECHNICAL_DECLINE':

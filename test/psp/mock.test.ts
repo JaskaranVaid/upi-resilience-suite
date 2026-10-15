@@ -35,7 +35,7 @@ describe('MockPsp — Phase 3 capabilities', () => {
     await collect(psp, 'pend');
     expect(await psp.inquire('ok')).toEqual({
       found: true, outcome: 'SUCCESS', customerDebit: 'DEBITED', capture: 'CAPTURED',
-      reversal: { status: 'NONE' }, upiRrn: mockRrn('pspA', 'ok'), npciTxnId: 'MOCKpspAok',
+      reversal: { status: 'NONE' }, upiRrn: mockRrn('pspA', 'ok'), npciTxnId: 'MOCKpspAok', pspPaymentId: 'x',
     });
     expect(await psp.inquire('bd')).toMatchObject({ outcome: 'FAILED', customerDebit: 'NOT_DEBITED', capture: 'NOT_CAPTURED', failureCode: 'INSUFFICIENT_FUNDS' });
     expect(await psp.inquire('pend')).toMatchObject({ outcome: 'PENDING', customerDebit: 'UNKNOWN', capture: 'UNKNOWN' });

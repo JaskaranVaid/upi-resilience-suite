@@ -249,7 +249,11 @@ export class TrackingService {
           .limit(1);
         const result: PspResult =
           out.domainOutcome.to === 'SUCCEEDED'
-            ? { kind: 'SUCCESS', pspTxnId: out.facts.npciTxnId ?? out.facts.upiRrn ?? t.txnRef ?? t.subjectId }
+            ? {
+                kind: 'SUCCESS',
+                // The PSP's payment id when it gives one: settlement reports match on it.
+                pspTxnId: ('found' in inquiry && inquiry.found && inquiry.pspPaymentId) || (out.facts.npciTxnId ?? out.facts.upiRrn ?? t.txnRef ?? t.subjectId),
+              }
             : { kind: 'BUSINESS_DECLINE', code: 'OTHER' };
         const p = await applyPaymentOutcome(tx, {
           id: t.subjectId,

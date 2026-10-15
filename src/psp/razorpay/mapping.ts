@@ -98,7 +98,7 @@ export function inquiryFromPayment(p: RzpPayment | undefined, refunds: RzpRefund
   const code = p.error_code ? { failureCode: p.error_code } : {};
   switch (p.status) {
     case 'captured':
-      return { found: true, outcome: 'SUCCESS', customerDebit: 'DEBITED', capture: 'CAPTURED', reversal: { status: 'NONE' }, ...rrn };
+      return { found: true, outcome: 'SUCCESS', customerDebit: 'DEBITED', capture: 'CAPTURED', reversal: { status: 'NONE' }, ...rrn, pspPaymentId: p.id };
     case 'authorized':
       // The customer has paid; the merchant's account captures it (auto-capture) or Razorpay reverses it.
       return { found: true, outcome: 'PENDING', customerDebit: 'DEBITED', capture: 'UNKNOWN', reversal: { status: 'NONE' }, ...rrn };

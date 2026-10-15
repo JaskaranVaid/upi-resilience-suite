@@ -206,7 +206,7 @@ export class MockPsp implements PspAdapter {
     const ids = { upiRrn: mockRrn(this.id, txnRef), npciTxnId: `MOCK${this.id}${txnRef}`.replace(/[^A-Za-z0-9]/g, '') };
     switch (r.kind) {
       case 'SUCCESS':
-        return { found: true, outcome: 'SUCCESS', customerDebit: 'DEBITED', capture: 'CAPTURED', reversal: { status: 'NONE' }, ...ids };
+        return { found: true, outcome: 'SUCCESS', customerDebit: 'DEBITED', capture: 'CAPTURED', reversal: { status: 'NONE' }, ...ids, pspPaymentId: r.pspTxnId };
       case 'PENDING':
         return { found: true, outcome: 'PENDING', customerDebit: 'UNKNOWN', capture: 'UNKNOWN', reversal: { status: 'NONE' }, ...ids };
       case 'TECHNICAL_DECLINE':
