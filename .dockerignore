@@ -1,0 +1,10 @@
+# Only what the image build needs goes into the build context.
+*
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.build.json
+!src/
+!drizzle/
+!dashboard/
+!checkout/

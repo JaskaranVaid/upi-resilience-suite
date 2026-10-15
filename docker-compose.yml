@@ -1,0 +1,82 @@
+# Production-like local stack: Postgres, a one-off migrate step, then the api and worker roles.
+#   docker compose up -d --build --wait && bash scripts/compose-smoke.sh
+# The secrets below are for this local stack only; real environments read them from AWS Secrets Manager.
+name: merchantflo
+
+x-app: &app
+  image: merchantflo:local
+  build:
+    context: .
+  environment: &env
+    NODE_ENV: production
+    DATABASE_URL: postgres://merchantflo:merchantflo@postgres:5432/merchantflo
+    DATABASE_POOL_MAX: "5"
+    ADMIN_TOKEN: local-admin-token-change-me
+    CUSTOMER_TOKEN_SECRET: local-customer-token-secret-not-for-real-use
+    CREDENTIALS_KEYS: k1:bG9jYWwtY29tcG9zZS1rZXktMzItYnl0ZXMtbG9uZyE=
+    MOCK_PSPS: pspA,pspB
+    ALLOW_MOCK_PSPS: "true"
+    WEBHOOK_TARGETS: any
+    PUBLIC_BASE_URL: http://localhost:3000
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: merchantflo
+      POSTGRES_PASSWORD: merchantflo
+      POSTGRES_DB: merchantflo
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U merchantflo -d merchantflo"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    <<: *app
+    environment:
+      <<: *env
+      ROLE: migrate
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    environment:
+      <<: *env
+      ROLE: api
+      SHUTDOWN_DRAIN_MS: "2000"
+    ports:
+      - "3000:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "dist/ops/healthcheck.js"]
+      interval: 5s
+      timeout: 5s
+      start_period: 30s
+      retries: 6
+
+  worker:
+    <<: *app
+    environment:
+      <<: *env
+      ROLE: worker
+      OPS_METRICS_INTERVAL_MS: "15000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "dist/ops/healthcheck.js"]
+      interval: 5s
+      timeout: 5s
+      start_period: 30s
+      retries: 6
+
+volumes:
+  pgdata:
