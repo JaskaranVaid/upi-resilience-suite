@@ -42,10 +42,14 @@ export function merchantOf(req: FastifyRequest): Merchant {
 }
 
 export function requireAdmin(ctx: AppContext, req: FastifyRequest): void {
+  ctx.authFailures?.assertAllowed(req.ip);
   const token = bearer(req) ?? '';
   const a = Buffer.from(token);
   const b = Buffer.from(ctx.adminToken);
-  if (a.length !== b.length || !timingSafeEqual(a, b)) throw new AppError('UNAUTHORIZED', 'Admin token required');
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+    ctx.authFailures?.recordFailure(req.ip);
+    throw new AppError('UNAUTHORIZED', 'Admin token required');
+  }
 }
 
 export function buildApp(ctx: AppContext, opts: { logger?: boolean; trustProxy?: false | number | string[] } = {}): FastifyInstance {
@@ -63,8 +67,12 @@ export function buildApp(ctx: AppContext, opts: { logger?: boolean; trustProxy?:
     if (!route.startsWith('/v1/') || (route === '/v1/merchants' && req.method === 'POST')) return;
     const key = bearer(req);
     if (!key) throw new AppError('UNAUTHORIZED', 'Missing API key');
+    ctx.authFailures?.assertAllowed(req.ip);
     const [m] = await ctx.db.select().from(merchants).where(eq(merchants.apiKeyHash, hashApiKey(key)));
-    if (!m) throw new AppError('UNAUTHORIZED', 'Invalid API key');
+    if (!m) {
+      ctx.authFailures?.recordFailure(req.ip);
+      throw new AppError('UNAUTHORIZED', 'Invalid API key');
+    }
     req.merchant = m;
   });
 

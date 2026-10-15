@@ -61,8 +61,14 @@ export const dashboardApi = (ctx: AppContext) => async (app: FastifyInstance) =>
       throw new AppError('FORBIDDEN', `Missing ${CSRF_HEADER} header`);
     }
     if (req.routeOptions.url === '/dashboard/api/login') return;
-    req.dashboardUser = await ctx.sessions.authenticate(req.cookies[SESSION_COOKIE]);
-    if (!req.dashboardUser) throw new AppError('UNAUTHORIZED', 'Please sign in');
+    const token = req.cookies[SESSION_COOKIE];
+    // A presented-but-invalid session counts against the IP, so made-up cookies can't be farmed.
+    if (token) ctx.authFailures?.assertAllowed(req.ip);
+    req.dashboardUser = await ctx.sessions.authenticate(token);
+    if (!req.dashboardUser) {
+      if (token) ctx.authFailures?.recordFailure(req.ip);
+      throw new AppError('UNAUTHORIZED', 'Please sign in');
+    }
     // Merchant isolation is enforced by every query using the user's merchant id.
   });
 

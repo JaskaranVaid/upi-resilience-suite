@@ -24,6 +24,7 @@ import { WebhookDispatcher, type FetchLike } from './webhooks/outbox.js';
 import { publicTargetGuard, type ResolveHost, type WebhookTargetPolicy } from './webhooks/url.js';
 import { publicOnlyFetch } from './webhooks/http.js';
 import { DEFAULT_RATE_LIMITS, type RateLimits } from './api/rate-limit.js';
+import { AuthFailureLimiter } from './api/auth-failures.js';
 
 export interface AppContext {
   db: Db;
@@ -52,6 +53,8 @@ export interface AppContext {
   webhookIngest: PspWebhookIngest;
   /** Per-caller request limits; null disables them. */
   rateLimits: RateLimits | null;
+  /** Per-IP budget for failed authentication; null when rate limits are disabled. */
+  authFailures: AuthFailureLimiter | null;
   /** 'public-only' refuses merchant webhook URLs that are not https or point at private networks. */
   webhookTargets: WebhookTargetPolicy;
 }
@@ -87,6 +90,7 @@ export function buildContext(args: {
   const value = new ValueService({ db: args.db });
   const issues = new IssueAnalytics({ db: args.db });
   const webhookTargets = args.webhookTargets ?? 'any';
+  const rateLimits = args.rateLimits === null ? null : { ...DEFAULT_RATE_LIMITS, ...args.rateLimits };
   // Production policy: connect only to public addresses, checked at connect time (no DNS rebinding).
   const fetchImpl: FetchLike = args.fetchImpl ?? (webhookTargets === 'public-only' ? publicOnlyFetch : (url, init) => fetch(url, init));
   return {
@@ -114,7 +118,8 @@ export function buildContext(args: {
     customerTokenSecret: args.customerTokenSecret ?? 'dev-customer-token-secret-not-for-production',
     analytics: { value, psps: new PspAnalytics({ db: args.db }), issues, statement: new StatementService({ db: args.db, value, issues }) },
     webhookIngest: new PspWebhookIngest({ db: args.db, clock, tracking }),
-    rateLimits: args.rateLimits === null ? null : { ...DEFAULT_RATE_LIMITS, ...args.rateLimits },
+    rateLimits,
+    authFailures: rateLimits ? new AuthFailureLimiter(rateLimits.authFailuresPerMinute) : null,
     webhookTargets,
   };
 }

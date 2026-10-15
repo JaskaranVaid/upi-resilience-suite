@@ -13,6 +13,8 @@ export interface RateLimits {
   publicPerMinute: number;
   /** Per signed-in session (or IP) on the rest of the dashboard API. */
   dashboardPerMinute: number;
+  /** Per client IP: requests with an invalid API key or no valid session, before any lookup is made. */
+  authFailuresPerMinute: number;
 }
 
 export const DEFAULT_RATE_LIMITS: RateLimits = {
@@ -20,6 +22,7 @@ export const DEFAULT_RATE_LIMITS: RateLimits = {
   loginPerMinute: 20,
   publicPerMinute: 300,
   dashboardPerMinute: 600,
+  authFailuresPerMinute: 30,
 };
 
 type Group = keyof RateLimits | null;
@@ -65,6 +68,7 @@ export function registerRateLimits(app: FastifyInstance, limits: RateLimits): vo
       const group = groupOf(req);
       return group ? limits[group] : Number.MAX_SAFE_INTEGER;
     },
+    // Counted per presented credential; made-up credentials are capped per IP by AuthFailureLimiter.
     errorResponseBuilder: (_req, ctx) => new AppError('RATE_LIMITED', `Too many requests — try again in ${ctx.after}`),
   });
 }

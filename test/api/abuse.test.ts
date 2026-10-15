@@ -55,6 +55,22 @@ describe('rate limits', () => {
     expect((await status()).statusCode).toBe(429);
   });
 
+  it('caps made-up credentials per IP before any lookup (random keys and cookies get no fresh buckets)', async () => {
+    const { db } = await freshDb();
+    const clock = new FakeClock(ist('2026-10-15T14:00:00'));
+    const ctx = buildContext({ db, adapters: [new MockPsp('pspA')], adminToken: ADMIN, clock, sleep: clock.sleep, rateLimits: { authFailuresPerMinute: 3 } });
+    const app2 = buildApp(ctx);
+    const random = () => app2.inject({ method: 'GET', url: '/v1/merchants/me', headers: { authorization: `Bearer sk_live_${Math.random()}` } });
+    for (let i = 0; i < 3; i++) expect((await random()).statusCode).toBe(401);
+    const blocked = await random();
+    expect(blocked.statusCode).toBe(429);
+    expect(blocked.json().error.code).toBe('RATE_LIMITED');
+    const cookie = await app2.inject({ method: 'GET', url: '/dashboard/api/me', headers: { cookie: 'rs_session=made-up' } });
+    expect(cookie.statusCode).toBe(429);
+    // Visiting the dashboard without a cookie is not a failed credential.
+    expect((await app2.inject({ method: 'GET', url: '/dashboard/api/me' })).statusCode).toBe(401);
+  });
+
   it('never limits health checks or static dashboard assets', async () => {
     for (let i = 0; i < 6; i++) expect((await app.inject({ method: 'GET', url: '/health' })).statusCode).toBe(200);
     for (let i = 0; i < 6; i++) expect((await app.inject({ method: 'GET', url: '/dashboard/app.js' })).statusCode).toBe(200);
