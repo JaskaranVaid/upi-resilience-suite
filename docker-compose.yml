@@ -3,10 +3,11 @@
 # The secrets below are for this local stack only; real environments read them from AWS Secrets Manager.
 name: merchantflo
 
+# One image for every role: migrate builds it, api and worker reuse it (parallel builds of the same
+# context race in BuildKit).
 x-app: &app
   image: merchantflo:local
-  build:
-    context: .
+  pull_policy: never
   environment: &env
     NODE_ENV: production
     DATABASE_URL: postgres://merchantflo:merchantflo@postgres:5432/merchantflo
@@ -36,6 +37,8 @@ services:
 
   migrate:
     <<: *app
+    build:
+      context: .
     environment:
       <<: *env
       ROLE: migrate
