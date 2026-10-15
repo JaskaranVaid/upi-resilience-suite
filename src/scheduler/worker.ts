@@ -122,8 +122,13 @@ export class DebitWorker {
 
   private async execute(d: Debit): Promise<void> {
     const now = this.clock.now();
-    const mandate = await this.mandate(d.mandateId);
-    if (!mandate || mandate.status !== 'ACTIVE') return this.fail(d, 'MANDATE_INACTIVE', { kind: 'NOT_SUBMITTED' }, null, null);
+    const registered = await this.mandate(d.mandateId);
+    if (!registered || registered.status !== 'ACTIVE') return this.fail(d, 'MANDATE_INACTIVE', { kind: 'NOT_SUBMITTED' }, null, null);
+    // New notices and executions only go to PSPs the merchant can route through now: a connection
+    // disabled since the mandate was registered (or a shared adapter, for a live merchant) is skipped.
+    const routable = (await this.router.psps.routable(d.merchantId, registered.eligiblePsps)).map((a) => a.id);
+    if (routable.length === 0) return this.fail(d, 'NO_PSP_CONNECTED', { kind: 'NOT_SUBMITTED' }, null, null);
+    const mandate = { ...registered, eligiblePsps: routable };
 
     // Guardrails: never debit inside a restricted window or on a date the customer wasn't notified of.
     // (A debit whose notice was deferred has no notice date yet: this sends it and schedules.)

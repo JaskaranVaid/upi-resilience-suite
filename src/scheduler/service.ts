@@ -91,15 +91,22 @@ export class SchedulerService {
       );
     }
 
+    // Only PSPs the merchant can route through now (active, its own, matching its mode).
+    const routable = (await this.router.psps.routable(merchantId, mandate.eligiblePsps)).map((a) => a.id);
+    if (routable.length === 0) {
+      throw new AppError('NO_PSP_CONNECTED', "None of this mandate's payment providers is active for this merchant");
+    }
+    const usable = { ...mandate, eligiblePsps: routable };
+
     const now = this.clock.now();
     const id = newId('dbt');
     const due = input.dueDate ? istMidnight(input.dueDate) : now;
-    const win = await noticeWindow(this.router, mandate);
+    const win = await noticeWindow(this.router, usable);
     const p = plan({ earliest: new Date(Math.max(now.getTime(), due.getTime())), now, seed: id, noticeDate: null, opts: this.opts, minNoticeMs: win.minNoticeMs });
     // Too far ahead for the provider to accept a notice: the worker sends it later, then schedules.
     const noticeAt = deferredNoticeAt(p.scheduledAt, now, win, id);
     // Notice first: if it fails nothing is persisted and the merchant can retry with the same key.
-    if (!noticeAt) await sendNotice(this.router, mandate, id, input.amountPaise, p.noticeDate);
+    if (!noticeAt) await sendNotice(this.router, usable, id, input.amountPaise, p.noticeDate);
 
     try {
       const debit = await this.db.transaction(async (tx) => {

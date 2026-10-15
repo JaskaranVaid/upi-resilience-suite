@@ -18,6 +18,7 @@ export interface ConnectionSource {
   clock: Clock;
   /** Rebuild a cached adapter at most this often if its row changed elsewhere (other processes). */
   refreshMs?: number;
+  log?: (msg: string) => void;
 }
 
 /** Which connection environments a merchant in each mode may use. */
@@ -91,11 +92,35 @@ export class PspRegistry {
       )
       .orderBy(asc(pspConnections.priority), asc(pspConnections.createdAt));
     const now = src.clock.now().getTime();
-    const own = rows.map((row) => {
+    const own: PspAdapter[] = [];
+    for (const row of rows) {
       const hit = this.cache.get(row.id);
-      return hit && hit.updatedAt === row.updatedAt.getTime() ? hit.adapter : this.remember(row, now);
-    });
+      if (hit && hit.updatedAt === row.updatedAt.getTime()) {
+        own.push(hit.adapter);
+        continue;
+      }
+      try {
+        own.push(this.remember(row, now));
+      } catch (e) {
+        // One unusable connection (e.g. sealed with a key no longer configured) must not take the
+        // merchant's other connections down with it. Never log credentials: only the id and reason.
+        (src.log ?? ((m) => console.error(m)))(`PSP connection ${row.id} skipped: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
     return m.mode === 'TEST' ? [...own, ...this.shared.values()] : own;
+  }
+
+  /**
+   * The subset of `ids` this merchant may send *new* work to (executions, notices) right now —
+   * its own ACTIVE connections for its mode, plus shared adapters for TEST merchants — in the
+   * order given. Lookups of past transactions use get(), which also resolves disabled connections.
+   */
+  async routable(merchantId: string, ids: string[]): Promise<PspAdapter[]> {
+    const allowed = new Map((await this.forMerchant(merchantId)).map((a) => [a.id, a]));
+    return ids.flatMap((id) => {
+      const a = allowed.get(id);
+      return a ? [a] : [];
+    });
   }
 
   async idsFor(merchantId: string): Promise<string[]> {
