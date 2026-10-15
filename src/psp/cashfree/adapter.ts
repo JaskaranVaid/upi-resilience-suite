@@ -28,7 +28,7 @@ import {
   idempotencyKey,
   inquiryFromExecution,
   inquiryFromOrder,
-  latestPayment,
+  decisivePayment,
   mapExecution,
   mapOrderPayment,
   mapRequestError,
@@ -182,7 +182,7 @@ export class CashfreeAdapter implements PspAdapter {
       return e ? mapExecution(e) : { kind: 'NOT_FOUND' };
     }
     const payments = await this.fetchOrderPayments(txnRef);
-    return payments ? mapOrderPayment(latestPayment(payments)) : { kind: 'NOT_FOUND' };
+    return payments ? mapOrderPayment(decisivePayment(payments)) : { kind: 'NOT_FOUND' };
   }
 
   async inquire(txnRef: string, ctx: TxnContext): Promise<TransactionInquiry> {

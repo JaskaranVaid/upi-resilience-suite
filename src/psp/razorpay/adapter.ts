@@ -18,7 +18,8 @@ import type {
 import {
   actionFromUpiResponse,
   inquiryFromPayment,
-  latestPayment,
+  decisivePayment,
+  isLive,
   mapPayment,
   mapReconItem,
   mapRequestError,
@@ -95,11 +96,23 @@ export class RazorpayAdapter implements PspAdapter {
     if (!req.customerPhone) return { kind: 'BUSINESS_DECLINE', code: 'OTHER' };
     if (req.channel === 'UPI_QR' || (req.channel === 'UPI_COLLECT' && !req.payerVpa)) return { kind: 'BUSINESS_DECLINE', code: 'OTHER' };
     let order: RzpOrder | undefined;
+    let alreadyLive = false;
     return this.debitCall(
       async () => {
         const found = await this.findOrder(req.txnRef);
-        if (found) order = found;
-        else {
+        if (found) {
+          order = found;
+          // Razorpay has no idempotency key on payment creation: if an earlier attempt on this
+          // order is still live, don't send the customer a second UPI request.
+          if (req.channel === 'UPI_COLLECT' || req.channel === 'UPI_INTENT') {
+            const existing = await this.get(`/orders/${encodeURIComponent(found.id)}/payments`);
+            this.assertOk(existing);
+            if (((existing.json as { items?: RzpPayment[] } | null)?.items ?? []).some(isLive)) {
+              alreadyLive = true;
+              return { status: 200, json: null };
+            }
+          }
+        } else {
           const created = await this.post('/orders', { amount: req.amountPaise, currency: 'INR', receipt: req.txnRef, notes: { merchantflo_ref: req.txnRef } });
           if (created.status < 200 || created.status >= 300) return created;
           order = created.json as RzpOrder;
@@ -125,6 +138,10 @@ export class RazorpayAdapter implements PspAdapter {
           const environment = this.mode === 'LIVE' ? 'production' : 'sandbox';
           return { kind: 'PENDING', action: { type: 'PSP_CHECKOUT', provider: 'razorpay', environment, params: { keyId: this.cfg.keyId, orderId: order!.id, method: req.channel.toLowerCase() } } };
         }
+        if (alreadyLive) {
+          // The earlier request stands; a collect's action is known, an intent's link was handed out before.
+          return req.channel === 'UPI_COLLECT' && req.payerVpa ? { kind: 'PENDING', action: { type: 'UPI_COLLECT', vpa: req.payerVpa } } : { kind: 'PENDING' };
+        }
         const action = actionFromUpiResponse(req.channel === 'UPI_INTENT' ? 'intent' : 'collect', req.payerVpa, res.json as { next?: Array<{ action?: string; url?: string }> } | null);
         return action ? { kind: 'PENDING', action } : { kind: 'TECHNICAL_DECLINE', code: 'PSP_ERROR' };
       },
@@ -133,13 +150,13 @@ export class RazorpayAdapter implements PspAdapter {
 
   async status(txnRef: string, _ctx: TxnContext): Promise<PspResult> {
     const payments = await this.orderPayments(txnRef);
-    return payments ? mapPayment(latestPayment(payments)) : { kind: 'NOT_FOUND' };
+    return payments ? mapPayment(decisivePayment(payments)) : { kind: 'NOT_FOUND' };
   }
 
   async inquire(txnRef: string, _ctx: TxnContext): Promise<TransactionInquiry> {
     const payments = await this.orderPayments(txnRef);
     if (!payments) return { found: false };
-    const p = latestPayment(payments);
+    const p = decisivePayment(payments);
     const refunds = p && p.status === 'refunded' && !p.captured ? await this.refunds(p.id) : [];
     return inquiryFromPayment(p, refunds);
   }

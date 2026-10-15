@@ -63,12 +63,38 @@ describe('RazorpayAdapter — one-off payments', () => {
   it('reuses the existing order on a retried reference instead of creating a second one', async () => {
     const { adapter, requests } = fakeRazorpay({
       'GET /orders': () => ({ status: 200, body: { items: [{ id: 'order_OLD', receipt: 'pay_1-1' }] } }),
+      'GET /orders/order_OLD/payments': () => ({ status: 200, body: { items: [{ id: 'pay_failed', status: 'failed', created_at: 1 }] } }),
       'POST /payments/create/upi': () => ({ status: 200, body: { razorpay_payment_id: 'pay_RZ2', next: [{ action: 'poll', url: 'x' }] } }),
     });
     const res = await adapter.collect({ ...base, channel: 'UPI_COLLECT', payerVpa: 'asha@okhdfc' });
     expect(res).toEqual({ kind: 'PENDING', action: { type: 'UPI_COLLECT', vpa: 'asha@okhdfc' } });
     expect(requests.filter((r) => r.path === '/orders' && r.method === 'POST')).toHaveLength(0);
     expect(requests.at(-1)!.body).toMatchObject({ order_id: 'order_OLD', upi: { flow: 'collect', vpa: 'asha@okhdfc' } });
+  });
+
+  it('never sends a second UPI request while an earlier one on the same order is still live', async () => {
+    const { adapter, requests } = fakeRazorpay({
+      'GET /orders': () => ({ status: 200, body: { items: [{ id: 'order_OLD', receipt: 'pay_1-1' }] } }),
+      'GET /orders/order_OLD/payments': () => ({ status: 200, body: { items: [{ id: 'pay_live', status: 'created', created_at: 1 }] } }),
+    });
+    expect(await adapter.collect({ ...base, channel: 'UPI_COLLECT', payerVpa: 'asha@okhdfc' })).toEqual({ kind: 'PENDING', action: { type: 'UPI_COLLECT', vpa: 'asha@okhdfc' } });
+    expect(await adapter.collect({ ...base, channel: 'UPI_INTENT' })).toEqual({ kind: 'PENDING' });
+    expect(requests.some((r) => r.path === '/payments/create/upi')).toBe(false);
+  });
+
+  it('a captured attempt decides the order even when a later attempt failed; the debit of a timed-out payment is unknown', async () => {
+    const order = { 'GET /orders': () => ({ status: 200, body: { items: [{ id: 'order_R1', receipt: 'pay_1-1' }] } }) };
+    const late = fakeRazorpay({
+      ...order,
+      'GET /orders/order_R1/payments': () => ({ status: 200, body: { items: [{ id: 'pay_ok', status: 'captured', captured: true, created_at: 1 }, { id: 'pay_retry', status: 'failed', error_source: 'customer', created_at: 9 }] } }),
+    }).adapter;
+    expect(await late.status('pay_1-1', COLLECT)).toEqual({ kind: 'SUCCESS', pspTxnId: 'pay_ok' });
+    const timedOut = fakeRazorpay({
+      ...order,
+      'GET /orders/order_R1/payments': () => ({ status: 200, body: { items: [{ id: 'pay_t', status: 'failed', error_source: 'customer', error_reason: 'payment_timed_out', created_at: 1 }] } }),
+    }).adapter;
+    expect(await timedOut.status('pay_1-1', COLLECT)).toEqual({ kind: 'BUSINESS_DECLINE', code: 'OTHER' }); // never failed over
+    expect(await timedOut.inquire('pay_1-1', COLLECT)).toMatchObject({ outcome: 'FAILED', customerDebit: 'UNKNOWN' }); // still watched
   });
 
   it('cards and netbanking open Razorpay Checkout with the order — nothing card-related passes through us', async () => {

@@ -157,3 +157,22 @@ describe('reduce', () => {
     expect(types(second)).toEqual(['STATUS_CHECKED']);
   });
 });
+
+describe('reduce — checkout retries', () => {
+  it('does not fail a card/netbanking checkout on a failed attempt while the customer can still retry', () => {
+    const base = {
+      subjectType: 'COLLECT' as const,
+      domainState: 'PENDING' as const,
+      facts: UNKNOWN_FACTS,
+      verificationStatus: 'IN_PROGRESS' as const,
+      verificationStartedAt: new Date('2026-10-15T08:00:00Z'),
+      inquiry: { found: true as const, outcome: 'FAILED' as const, customerDebit: 'NOT_DEBITED' as const, capture: 'NOT_CAPTURED' as const, reversal: { status: 'NONE' as const } },
+      cfg: DEFAULT_POLLING,
+    };
+    const open = reduce({ ...base, now: new Date('2026-10-15T08:10:00Z'), retryOpenUntil: new Date('2026-10-15T08:30:00Z') });
+    expect(open.domainOutcome).toBeNull();
+    expect(open.verificationStatus).toBe('IN_PROGRESS');
+    const closed = reduce({ ...base, now: new Date('2026-10-15T08:31:00Z'), retryOpenUntil: new Date('2026-10-15T08:30:00Z') });
+    expect(closed.domainOutcome).toEqual({ to: 'FAILED', code: 'FAILED' });
+  });
+});

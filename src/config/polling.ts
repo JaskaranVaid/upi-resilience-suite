@@ -18,6 +18,11 @@ export interface PollingConfig {
   leaseMs: number;
   /** A pending payment older than this is described as "verification in progress". */
   verifyingAfterMs: number;
+  /**
+   * Card and netbanking checkouts let the customer retry on the same order: a failed attempt within
+   * this window doesn't fail the payment (the next attempt may succeed).
+   */
+  checkoutRetryWindowMs: number;
   /** Minimum gap between manual "Recheck now" requests for the same payment. */
   manualRecheckCooldownMs: number;
   batchSize: number;
@@ -38,6 +43,7 @@ export const DEFAULT_POLLING: PollingConfig = {
   maxChecks: null,
   leaseMs: 30 * SECOND,
   verifyingAfterMs: 45 * SECOND,
+  checkoutRetryWindowMs: 30 * MINUTE,
   manualRecheckCooldownMs: 10 * SECOND,
   batchSize: 50,
   concurrency: 8,

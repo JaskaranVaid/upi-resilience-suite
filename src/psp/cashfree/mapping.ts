@@ -60,9 +60,13 @@ export interface CfRefund {
   processed_at?: string | null;
 }
 
-/** The order's most recent payment attempt. */
-export function latestPayment(payments: CfOrderPayment[]): CfOrderPayment | undefined {
-  return [...payments].sort((a, b) => Date.parse(b.payment_time ?? '') - Date.parse(a.payment_time ?? ''))[0];
+/**
+ * The attempt that decides an order's outcome: a successful one wins over any later failure (a
+ * customer may retry in checkout), then one still in progress, then the most recent.
+ */
+export function decisivePayment(payments: CfOrderPayment[]): CfOrderPayment | undefined {
+  const newestFirst = [...payments].sort((a, b) => Date.parse(b.payment_time ?? '') - Date.parse(a.payment_time ?? ''));
+  return newestFirst.find((p) => p.payment_status === 'SUCCESS') ?? newestFirst.find((p) => p.payment_status === 'PENDING') ?? newestFirst[0];
 }
 
 const errorText = (p: CfOrderPayment) => [p.error_details?.error_reason, p.error_details?.error_description].filter(Boolean).join(' ');
@@ -106,7 +110,7 @@ export function reversalFromRefunds(refunds: CfRefund[]): { status: ReversalStat
 }
 
 export function inquiryFromOrder(payments: CfOrderPayment[], refunds: CfRefund[]): TransactionInquiry {
-  const p = latestPayment(payments);
+  const p = decisivePayment(payments);
   const reversal = reversalFromRefunds(refunds);
   if (!p && !reversal) return { found: false };
   const rrn = p?.bank_reference ? { upiRrn: String(p.bank_reference) } : {};

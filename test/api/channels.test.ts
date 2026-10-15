@@ -80,4 +80,20 @@ describe('payment channels', () => {
     const after = (await app.inject({ method: 'GET', url: `/v1/payments/${p.id}`, headers: { authorization: `Bearer ${key}` } })).json();
     expect(after).toMatchObject({ state: 'SUCCEEDED', customerAction: null, capture: 'CAPTURED' });
   });
+
+  it("a card checkout survives a failed attempt within the retry window and succeeds on the customer's retry", async () => {
+    full.scriptNextInquiry([
+      { found: true, outcome: 'FAILED', customerDebit: 'NOT_DEBITED', capture: 'NOT_CAPTURED', reversal: { status: 'NONE' } },
+      { found: true, outcome: 'SUCCESS', customerDebit: 'DEBITED', capture: 'CAPTURED', reversal: { status: 'NONE' }, pspPaymentId: 'retry-ok' },
+    ]);
+    const p = (await pay({ amountPaise: rs(5000), idempotencyKey: 'card-retry', channel: 'CARD' })).json();
+    const check = async () => {
+      const [t] = await ctx.db.select().from(paymentTracking).where(eq(paymentTracking.subjectId, p.id));
+      clock.set(t!.nextCheckAt!);
+      await ctx.poller.runOnce();
+      return (await app.inject({ method: 'GET', url: `/v1/payments/${p.id}`, headers: { authorization: `Bearer ${key}` } })).json();
+    };
+    expect((await check()).state).toBe('PENDING'); // first attempt failed; the customer can retry
+    expect(await check()).toMatchObject({ state: 'SUCCEEDED', pspTxnId: 'retry-ok' });
+  });
 });

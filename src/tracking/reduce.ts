@@ -11,6 +11,8 @@ export interface ReduceInput {
   verificationStartedAt: Date | null;
   /** The enquiry result, or the transport error message if the enquiry failed. */
   inquiry: TransactionInquiry | { error: string };
+  /** Until when a failed attempt is not final, because the customer may retry on the same order. */
+  retryOpenUntil?: Date | null;
   now: Date;
   cfg: PollingConfig;
 }
@@ -55,7 +57,9 @@ export function reduce(i: ReduceInput): ReduceOutput {
     facts = mergeFacts(prev, q, i.now);
     if (i.subjectType === 'COLLECT' && i.domainState === 'PENDING') {
       if (q.outcome === 'SUCCESS') domainOutcome = { to: 'SUCCEEDED' };
-      else if (q.outcome === 'FAILED') domainOutcome = { to: 'FAILED', code: q.failureCode ?? 'FAILED' };
+      else if (q.outcome === 'FAILED' && !(i.retryOpenUntil && i.now < i.retryOpenUntil)) {
+        domainOutcome = { to: 'FAILED', code: q.failureCode ?? 'FAILED' };
+      }
     }
   }
 

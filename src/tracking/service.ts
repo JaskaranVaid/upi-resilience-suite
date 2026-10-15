@@ -194,6 +194,7 @@ export class TrackingService {
     const out = reduce({
       subjectType: t.subjectType,
       domainState,
+      retryOpenUntil: await this.retryOpenUntil(t),
       facts: factsOf(t),
       verificationStatus: t.verificationStatus,
       verificationStartedAt: t.verificationStartedAt,
@@ -371,6 +372,14 @@ export class TrackingService {
   async latestComplaint(db: DbOrTx, caseId: string) {
     const [c] = await db.select().from(udirComplaints).where(eq(udirComplaints.caseId, caseId)).orderBy(desc(udirComplaints.raisedAt)).limit(1);
     return c;
+  }
+
+  /** Card/netbanking checkouts may be retried on the same order for a while after a failed attempt. */
+  private async retryOpenUntil(t: Tracking): Promise<Date | null> {
+    if (t.subjectType !== 'COLLECT') return null;
+    const [p] = await this.deps.db.select({ channel: payments.channel, createdAt: payments.createdAt }).from(payments).where(eq(payments.id, t.subjectId));
+    if (!p || (p.channel !== 'CARD' && p.channel !== 'NETBANKING')) return null;
+    return new Date(p.createdAt.getTime() + this.deps.cfg.checkoutRetryWindowMs);
   }
 
   /** What the PSP needs to look this transaction up: AutoPay needs the mandate and base payment. */

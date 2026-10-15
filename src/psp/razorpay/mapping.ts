@@ -56,10 +56,21 @@ export function failureResult(p: Pick<RzpPayment, 'error_source' | 'error_reason
   return { kind: 'TECHNICAL_DECLINE', code: 'PSP_ERROR' };
 }
 
-/** The most recent payment attempt on an order. */
-export function latestPayment(payments: RzpPayment[]): RzpPayment | undefined {
-  return [...payments].sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0))[0];
+/**
+ * The attempt that decides an order's outcome: a captured one wins over any later failure (the
+ * customer may retry in Checkout), then one still in progress, then the most recent.
+ */
+export function decisivePayment(payments: RzpPayment[]): RzpPayment | undefined {
+  const newestFirst = [...payments].sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0));
+  return (
+    newestFirst.find((p) => p.status === 'captured' || (p.status === 'refunded' && p.captured)) ??
+    newestFirst.find((p) => p.status === 'authorized' || p.status === 'created') ??
+    newestFirst[0]
+  );
 }
+
+/** Attempts still live on an order (a new UPI request must not be sent alongside them). */
+export const isLive = (p: RzpPayment) => p.status === 'created' || p.status === 'authorized' || p.status === 'captured';
 
 export function mapPayment(p: RzpPayment | undefined): PspResult {
   if (!p) return { kind: 'NOT_FOUND' };
@@ -106,7 +117,8 @@ export function inquiryFromPayment(p: RzpPayment | undefined, refunds: RzpRefund
       if (p.captured) return { found: true, outcome: 'SUCCESS', customerDebit: 'DEBITED', capture: 'CAPTURED', reversal: { status: 'NONE' }, ...rrn };
       return { found: true, outcome: 'FAILED', customerDebit: 'DEBITED', capture: 'NOT_CAPTURED', reversal: reversalFrom(refunds), ...rrn };
     case 'failed': {
-      const notDebited = failureResult(p).kind === 'BUSINESS_DECLINE';
+      // A timed-out payment is the one Razorpay may still authorize late: its debit is unknown.
+      const notDebited = failureResult(p).kind === 'BUSINESS_DECLINE' && (p.error_reason ?? '').toLowerCase() !== 'payment_timed_out';
       return { found: true, outcome: 'FAILED', customerDebit: notDebited ? 'NOT_DEBITED' : 'UNKNOWN', capture: 'NOT_CAPTURED', reversal: { status: 'NONE' }, ...rrn, ...code };
     }
     default:
