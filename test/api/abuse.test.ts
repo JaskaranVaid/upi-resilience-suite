@@ -77,3 +77,32 @@ describe('merchant webhook URLs (production policy)', () => {
     expect((await onboard('https://hooks.merchant.example/upi')).statusCode).toBe(201);
   });
 });
+
+describe('client IPs behind a proxy', () => {
+  it('parses TRUST_PROXY as a hop count or proxy list, and refuses "true"', async () => {
+    const { loadEnv } = await import('../../src/config/env.js');
+    const base = { NODE_ENV: 'test', ADMIN_TOKEN: 'x'.repeat(20), CUSTOMER_TOKEN_SECRET: 'y'.repeat(40) } as NodeJS.ProcessEnv;
+    expect(loadEnv({ ...base }).TRUST_PROXY).toBe(false);
+    expect(loadEnv({ ...base, TRUST_PROXY: '1' }).TRUST_PROXY).toBe(1);
+    expect(loadEnv({ ...base, TRUST_PROXY: '10.0.0.0/8, 172.16.0.0/12' }).TRUST_PROXY).toEqual(['10.0.0.0/8', '172.16.0.0/12']);
+    expect(() => loadEnv({ ...base, TRUST_PROXY: 'true' })).toThrow(/hops/);
+  });
+
+  it('with one trusted hop, a client cannot dodge the login limit by forging X-Forwarded-For', async () => {
+    const { db } = await freshDb();
+    const clock = new FakeClock(ist('2026-10-15T14:00:00'));
+    const ctx = buildContext({ db, adapters: [new MockPsp('pspA')], adminToken: ADMIN, clock, sleep: clock.sleep, rateLimits: { loginPerMinute: 2 } });
+    const app = buildApp(ctx, { trustProxy: 1 });
+    // The load balancer appends the real client address; anything before it is client-supplied.
+    const login = (forged: string) =>
+      app.inject({
+        method: 'POST',
+        url: '/dashboard/api/login',
+        headers: { 'x-dashboard-request': '1', 'x-forwarded-for': `${forged}, 49.36.1.10` },
+        payload: { email: 'x@y.example', password: 'nope-nope-nope' },
+      });
+    expect((await login('1.1.1.1')).statusCode).toBe(401);
+    expect((await login('2.2.2.2')).statusCode).toBe(401);
+    expect((await login('3.3.3.3')).statusCode).toBe(429);
+  });
+});

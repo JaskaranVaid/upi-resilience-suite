@@ -28,7 +28,7 @@ async function main() {
   const stops: Array<() => Promise<void>> = [];
 
   if (env.ROLE !== 'worker') {
-    const app = buildApp(ctx, { logger: true, trustProxy: env.TRUST_PROXY === 'true' });
+    const app = buildApp(ctx, { logger: true, trustProxy: env.TRUST_PROXY });
     // Configured port only (no silent switching for the real server); a busy port is a clear error.
     await app.listen({ host: env.HOST, port: await choosePort(env.PORT, { explicit: true, host: env.HOST }) });
     stops.push(() => app.close());

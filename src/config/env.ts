@@ -26,8 +26,24 @@ const schema = z.object({
    * announced 15 Oct 2026 start with no new date, so no fee is quoted until this is set.
    */
   MDR_EFFECTIVE_FROM: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD').optional(),
-  /** 'true' behind a load balancer, so client IPs (used by rate limits) come from X-Forwarded-For. */
-  TRUST_PROXY: z.enum(['true', 'false']).default('false'),
+  /**
+   * Proxies in front of the API, so client IPs (used by rate limits) come from X-Forwarded-For:
+   * 'false', a hop count (e.g. 1 behind one load balancer), or comma-separated proxy IPs/CIDRs.
+   * 'true' is refused: trusting every hop lets clients choose their own IP.
+   */
+  TRUST_PROXY: z
+    .string()
+    .default('false')
+    .transform((v, c): false | number | string[] => {
+      const s = v.trim();
+      if (s === 'false' || s === '') return false;
+      if (/^\d+$/.test(s)) return Number(s);
+      if (s === 'true') {
+        c.addIssue({ code: 'custom', message: 'TRUST_PROXY=true trusts client-supplied X-Forwarded-For; set the number of proxy hops (e.g. 1) or proxy CIDRs' });
+        return z.NEVER;
+      }
+      return s.split(',').map((p) => p.trim()).filter(Boolean);
+    }),
   /**
    * Where merchant webhooks may point. Defaults to public-only (https, public hosts) in production
    * and to any http(s) URL elsewhere, so local development can use http://localhost.
