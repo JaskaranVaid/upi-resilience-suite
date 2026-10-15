@@ -110,6 +110,17 @@ describe('HTTP API (end to end)', () => {
     expect(conflict.statusCode).toBe(409);
   });
 
+  it('Engine B: two concurrent paid reports with different references — exactly one wins, saving booked once', async () => {
+    clock.set(ist('2026-10-15T14:00:00'));
+    const quote = (await call('POST', '/v1/checkout/quote', { amountPaise: rs(5000) })).json();
+    const [a, b] = await Promise.all([
+      call('POST', `/v1/checkout/quotes/${quote.quoteId}/paid`, { method: 'NETBANKING', paymentReference: 'nb-a' }),
+      call('POST', `/v1/checkout/quotes/${quote.quoteId}/paid`, { method: 'NETBANKING', paymentReference: 'nb-b' }),
+    ]);
+    expect([a.statusCode, b.statusCode].sort()).toEqual([200, 409]);
+    expect((await call('GET', '/v1/savings')).json().byType.MDR_STEERING_ACCEPTED.count).toBe(1);
+  });
+
   it('Engine B: a quote paid with UPI (offer declined) books no saving', async () => {
     clock.set(ist('2026-10-15T14:00:00'));
     const quote = (await call('POST', '/v1/checkout/quote', { amountPaise: rs(5000) })).json();

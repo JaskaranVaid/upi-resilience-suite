@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Clock } from '../clock.js';
 import { getRuleSet } from '../config/rules.js';
 import type { Db } from '../db/client.js';
@@ -13,6 +13,15 @@ import { quoteMethods, type MethodsQuote, type PaymentMethod } from '../rules/st
 type Merchant = typeof merchants.$inferSelect;
 
 export const QUOTE_TTL_MS = 30 * 60_000;
+
+/** The customer's method choice on a quote, and whether its steering saving is booked. */
+export interface QuoteChoice {
+  quoteId: string;
+  acceptedMethod: PaymentMethod;
+  offerTaken: boolean;
+  paid: boolean;
+  steeringSavingsPaise: number;
+}
 
 export interface QuoteResponse extends MethodsQuote {
   quoteId: string;
@@ -67,7 +76,7 @@ export class CheckoutService {
    * The payment for this quote succeeded with `method`. Books the steering saving (net of the
    * discount) exactly once when the customer paid with the offered method. Idempotent per quote.
    */
-  async markPaid(merchantId: string, quoteId: string, input: { method: PaymentMethod; paymentReference: string }) {
+  async markPaid(merchantId: string, quoteId: string, input: { method: PaymentMethod; paymentReference: string }): Promise<QuoteChoice> {
     const { db, clock } = this.deps;
     const now = clock.now();
     const { row, q } = await this.choosable(merchantId, quoteId, input.method);
@@ -79,15 +88,20 @@ export class CheckoutService {
     }
     if (!row.acceptedMethod && now.getTime() - row.createdAt.getTime() > QUOTE_TTL_MS) throw new AppError('CONFLICT', 'Quote expired');
 
-    await db.transaction(async (tx) => {
-      await tx
+    const won = await db.transaction(async (tx) => {
+      // Only the first report wins; a concurrent report with another reference is a conflict.
+      const [updated] = await tx
         .update(checkoutQuotes)
         .set({ acceptedMethod: input.method, acceptedAt: row.acceptedAt ?? now, paidAt: now, paymentReference: input.paymentReference })
-        .where(eq(checkoutQuotes.id, quoteId));
+        .where(and(eq(checkoutQuotes.id, quoteId), isNull(checkoutQuotes.paidAt)))
+        .returning({ id: checkoutQuotes.id });
+      if (!updated) return false;
       if (q.offer && q.offer.method === input.method) {
         await recordSavings(tx, { merchantId, type: 'MDR_STEERING_ACCEPTED', amountPaise: q.offer.merchantNetSavingsPaise, refId: quoteId, now });
       }
+      return true;
     });
+    if (!won) return this.markPaid(merchantId, quoteId, input); // re-read: same reference = replay, else conflict
     return this.view(quoteId, q, input.method, true);
   }
 
@@ -101,7 +115,7 @@ export class CheckoutService {
     return { row, q };
   }
 
-  private view(quoteId: string, q: MethodsQuote, method: PaymentMethod, paid: boolean) {
+  private view(quoteId: string, q: MethodsQuote, method: PaymentMethod, paid: boolean): QuoteChoice {
     const offerTaken = q.offer?.method === method;
     return {
       quoteId,
