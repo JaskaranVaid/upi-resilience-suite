@@ -94,7 +94,7 @@ export class SchedulerService {
     const now = this.clock.now();
     const id = newId('dbt');
     const due = input.dueDate ? istMidnight(input.dueDate) : now;
-    const win = noticeWindow(this.router, mandate);
+    const win = await noticeWindow(this.router, mandate);
     const p = plan({ earliest: new Date(Math.max(now.getTime(), due.getTime())), now, seed: id, noticeDate: null, opts: this.opts, minNoticeMs: win.minNoticeMs });
     // Too far ahead for the provider to accept a notice: the worker sends it later, then schedules.
     const noticeAt = deferredNoticeAt(p.scheduledAt, now, win, id);

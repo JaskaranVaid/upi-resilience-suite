@@ -168,7 +168,7 @@ export class TrackingService {
       inquiry = { error: 'no PSP reference recorded' };
     } else {
       try {
-        inquiry = await psps.get(t.pspId).inquire(t.txnRef, await this.txnContext(t));
+        inquiry = await (await psps.get(t.pspId)).inquire(t.txnRef, await this.txnContext(t));
       } catch (e) {
         inquiry = { error: e instanceof Error ? e.message : String(e) };
       }
@@ -180,7 +180,7 @@ export class TrackingService {
     let complaintChanged = false;
     if (complaint && !RESOLVED_COMPLAINT.has(complaint.status)) {
       try {
-        const s = await psps.get(complaint.pspId).complaintStatus(complaint.pspComplaintRef);
+        const s = await (await psps.get(complaint.pspId)).complaintStatus(complaint.pspComplaintRef);
         if (s.ok && s.status !== complaint.status) {
           complaintStatus = s.status;
           complaintChanged = true;

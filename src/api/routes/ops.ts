@@ -12,10 +12,11 @@ export const opsRoutes = (ctx: AppContext) => async (app: FastifyInstance) => {
     return { status: 'ok', time: ctx.clock.now(), ruleSet: getRuleSet(ctx.clock.now()).id };
   });
 
-  app.get('/v1/psps/health', async () => {
+  app.get('/v1/psps/health', async (req) => {
     const known = new Map(ctx.health.snapshot().map((s) => [s.pspId, s]));
+    const ids = await ctx.psps.idsFor(merchantOf(req).id);
     return {
-      data: ctx.pspIds.map((pspId) => known.get(pspId) ?? { pspId, state: ctx.health.state(pspId), score: ctx.health.score(pspId), samples: 0 }),
+      data: ids.map((pspId) => known.get(pspId) ?? { pspId, state: ctx.health.state(pspId), score: ctx.health.score(pspId), samples: 0 }),
     };
   });
 

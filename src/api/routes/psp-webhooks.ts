@@ -13,7 +13,7 @@ export const pspWebhookRoutes = (ctx: AppContext) => async (app: FastifyInstance
     const { pspId } = z.object({ pspId: z.string().min(1).max(50) }).parse(req.params);
     let adapter;
     try {
-      adapter = ctx.psps.get(pspId);
+      adapter = await ctx.psps.get(pspId);
     } catch {
       return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Unknown payment provider' } });
     }

@@ -23,8 +23,10 @@ type PspEnv = Pick<
 >;
 
 /**
- * Build the configured PSP adapters, in routing-priority order (real providers first).
- * Refuses unsafe combinations instead of starting in a state that could fake payments.
+ * Build the process-level *shared* PSP adapters, in routing-priority order. Shared adapters serve
+ * TEST merchants only (mocks, a platform Cashfree sandbox account); live merchants use their own
+ * PSP connections (ADR 0002). Refuses unsafe combinations instead of starting in a state that
+ * could fake payments or route money through our account.
  */
 export function buildAdapters(env: PspEnv, opts: { fetch?: FetchFn; warn?: (msg: string) => void } = {}): PspAdapter[] {
   const warn = opts.warn ?? ((m) => console.warn(m));
@@ -39,8 +41,14 @@ export function buildAdapters(env: PspEnv, opts: { fetch?: FetchFn; warn?: (msg:
         throw new PspConfigError(`${name} looks like a placeholder, not a real key. Replace it with the value from the Cashfree dashboard.`);
       }
     }
-    if (env.NODE_ENV === 'production' && env.CASHFREE_ENV === 'sandbox') {
-      warn('WARNING: NODE_ENV=production but CASHFREE_ENV=sandbox — payments go to the Cashfree test environment.');
+    if (env.CASHFREE_ENV === 'production') {
+      throw new PspConfigError(
+        'Live Cashfree credentials must belong to a merchant: add them with POST /v1/psp-connections. ' +
+          'CASHFREE_CLIENT_ID/SECRET configure a shared sandbox account for test-mode merchants only.',
+      );
+    }
+    if (env.NODE_ENV === 'production') {
+      warn('Shared Cashfree sandbox adapter enabled: test-mode merchants can use it; live merchants never do.');
     }
     adapters.push(
       new CashfreeAdapter({
@@ -69,6 +77,5 @@ export function buildAdapters(env: PspEnv, opts: { fetch?: FetchFn; warn?: (msg:
   const ids = adapters.map((a) => a.id);
   const dup = ids.find((id, i) => ids.indexOf(id) !== i);
   if (dup) throw new PspConfigError(`Duplicate PSP id: ${dup}`);
-  if (adapters.length === 0) throw new PspConfigError('No payment providers configured (set CASHFREE_* and/or MOCK_PSPS)');
-  return adapters;
+  return adapters; // may be empty: merchants then route only through their own connections
 }

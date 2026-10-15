@@ -172,7 +172,7 @@ export class PaymentQueryService {
       submittedToPsp: Boolean(row.pspId),
       activeComplaint,
       reversalCompleted: row.reversalStatus === 'COMPLETED',
-      providerSupportsComplaints: supportsComplaints(psps, row.pspId),
+      providerSupportsComplaints: await supportsComplaints(psps, row.pspId),
     });
     const actions: string[] = [];
     // An AutoPay debit still waiting for its slot hasn't been sent anywhere yet, so there's nothing to check.
@@ -181,7 +181,7 @@ export class PaymentQueryService {
 
     let providerMode: PspMode | null = null;
     try {
-      providerMode = row.pspId ? psps.get(row.pspId).mode : null;
+      providerMode = row.pspId ? (await psps.get(row.pspId)).mode : null;
     } catch {
       providerMode = null;
     }

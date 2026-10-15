@@ -1,5 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { eq } from 'drizzle-orm';
 import { z } from 'zod';
+import { merchants } from '../../db/schema.js';
 import type { AppContext } from '../../context.js';
 import { recordEvents } from '../../events/record.js';
 import { CASE_REASON_LABELS, CASE_RESOLUTION_LABELS, CASE_STATUS_LABELS, COMPLAINT_STATUS_LABELS } from '../../events/timeline.js';
@@ -49,15 +51,20 @@ export const dashboardDataRoutes = (ctx: AppContext) => async (app: FastifyInsta
     ]);
 
   /** Labels for filters and badges, so the UI never hard-codes domain vocabulary. */
-  app.get('/dashboard/api/meta', async () => ({
-    merchantStatuses: Object.entries(MERCHANT_STATUS_LABELS).map(([code, label]) => ({ code, label })),
-    caseStatuses: Object.entries(CASE_STATUS_LABELS).map(([code, label]) => ({ code, label })),
-    paymentTypes: [
-      { code: 'COLLECT', label: 'Collect' },
-      { code: 'AUTOPAY', label: 'AutoPay' },
-    ],
-    psps: ctx.pspIds.map((id) => ({ id, mode: ctx.psps.get(id).mode })),
-  }));
+  app.get('/dashboard/api/meta', async (req) => {
+    const merchantId = userOf(req).merchantId;
+    const [m] = await ctx.db.select({ mode: merchants.mode }).from(merchants).where(eq(merchants.id, merchantId));
+    return {
+      merchantMode: m?.mode ?? 'TEST',
+      merchantStatuses: Object.entries(MERCHANT_STATUS_LABELS).map(([code, label]) => ({ code, label })),
+      caseStatuses: Object.entries(CASE_STATUS_LABELS).map(([code, label]) => ({ code, label })),
+      paymentTypes: [
+        { code: 'COLLECT', label: 'Collect' },
+        { code: 'AUTOPAY', label: 'AutoPay' },
+      ],
+      psps: (await ctx.psps.forMerchant(merchantId)).map((a) => ({ id: a.id, mode: a.mode })),
+    };
+  });
 
   app.get('/dashboard/api/overview', async (req) => {
     const q = z.object({ from: isoDate.optional(), to: isoDate.optional() }).parse(req.query);

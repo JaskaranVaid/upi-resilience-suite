@@ -229,7 +229,7 @@ export class DebitWorker {
    */
   private async reschedule(d: Debit, mandate: Mandate, earliest: Date, errorCode: string | null, reason: RescheduleReason | null): Promise<void> {
     const now = this.clock.now();
-    const win = noticeWindow(this.router, mandate);
+    const win = await noticeWindow(this.router, mandate);
     const p = plan({ earliest, now, seed: `${d.id}:${d.attempts}`, noticeDate: d.noticeDate, opts: this.opts, minNoticeMs: win.minNoticeMs });
     const noticeAt = p.needsNotice ? deferredNoticeAt(p.scheduledAt, now, win, d.id) : null;
     if (noticeAt) {

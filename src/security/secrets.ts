@@ -38,6 +38,11 @@ export class SecretBox {
     if (ring) return SecretBox.fromKeyRing(ring);
     if (nodeEnv === 'production') throw new Error('CREDENTIALS_KEYS is required in production (encrypts PSP credentials)');
     warn('CREDENTIALS_KEYS not set — using an insecure development key for PSP credentials');
+    return SecretBox.development();
+  }
+
+  /** Fixed, publicly known key for development and tests only. */
+  static development(): SecretBox {
     return new SecretBox(new Map([['dev', createHash('sha256').update('merchantflo-dev-credentials-key').digest()]]), 'dev');
   }
 

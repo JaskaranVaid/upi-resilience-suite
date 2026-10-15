@@ -30,10 +30,10 @@ export function complaintEligibility(i: {
 }
 
 /** Whether the PSP a payment went through can raise UDIR complaints (unknown PSP → no). */
-export function supportsComplaints(psps: PspRegistry, pspId: string | null): boolean {
+export async function supportsComplaints(psps: PspRegistry, pspId: string | null): Promise<boolean> {
   if (!pspId) return false;
   try {
-    return psps.get(pspId).capabilities.udirComplaints;
+    return (await psps.get(pspId)).capabilities.udirComplaints;
   } catch {
     return false;
   }

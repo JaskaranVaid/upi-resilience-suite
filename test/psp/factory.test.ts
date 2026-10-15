@@ -29,8 +29,14 @@ describe('buildAdapters', () => {
     ]);
   });
 
-  it('runs Cashfree alone when mocks are switched off', () => {
-    expect(buildAdapters({ ...base, MOCK_PSPS: '', CASHFREE_CLIENT_ID: 'id', CASHFREE_CLIENT_SECRET: 's', CASHFREE_ENV: 'production' }).map((a) => [a.id, a.mode])).toEqual([['cashfree', 'LIVE']]);
+  it('runs a shared Cashfree sandbox alone when mocks are switched off', () => {
+    expect(buildAdapters({ ...base, MOCK_PSPS: '', CASHFREE_CLIENT_ID: 'id', CASHFREE_CLIENT_SECRET: 's' }).map((a) => [a.id, a.mode])).toEqual([['cashfree', 'SANDBOX']]);
+  });
+
+  it('refuses live Cashfree credentials as a shared adapter: they belong to a merchant connection', () => {
+    expect(() => buildAdapters({ ...base, MOCK_PSPS: '', CASHFREE_CLIENT_ID: 'id', CASHFREE_CLIENT_SECRET: 's', CASHFREE_ENV: 'production' })).toThrow(
+      /must belong to a merchant: add them with POST \/v1\/psp-connections/,
+    );
   });
 
   it('rejects half-configured credentials', () => {
@@ -57,14 +63,14 @@ describe('buildAdapters', () => {
     expect(warnings.join(' ')).toMatch(/MOCK PSP adapters/);
   });
 
-  it('warns when production points at the Cashfree sandbox', () => {
+  it('says in production that the shared sandbox serves test-mode merchants only', () => {
     const warnings: string[] = [];
     buildAdapters({ ...base, NODE_ENV: 'production', MOCK_PSPS: '', CASHFREE_CLIENT_ID: 'id', CASHFREE_CLIENT_SECRET: 's' }, { warn: (m) => warnings.push(m) });
-    expect(warnings.join(' ')).toMatch(/Cashfree test environment/);
+    expect(warnings.join(' ')).toMatch(/test-mode merchants can use it; live merchants never do/);
   });
 
-  it('refuses an empty configuration and duplicate ids', () => {
-    expect(() => buildAdapters({ ...base, MOCK_PSPS: '' })).toThrow(/No payment providers/);
+  it('allows no shared adapters (merchants then use only their own connections) and refuses duplicate ids', () => {
+    expect(buildAdapters({ ...base, MOCK_PSPS: '' })).toEqual([]);
     expect(() => buildAdapters({ ...base, MOCK_PSPS: 'cashfree', CASHFREE_CLIENT_ID: 'i', CASHFREE_CLIENT_SECRET: 's' })).toThrow(/Duplicate PSP id/);
   });
 });

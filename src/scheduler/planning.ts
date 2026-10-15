@@ -57,10 +57,10 @@ export interface NoticeWindow {
 }
 
 /** The notice window of the PSP that sends this mandate's notices (its primary PSP). */
-export function noticeWindow(router: Router, mandate: Mandate): NoticeWindow {
+export async function noticeWindow(router: Router, mandate: Mandate): Promise<NoticeWindow> {
   const primary = mandate.eligiblePsps[0];
   try {
-    const caps = primary ? router.adapter(primary).capabilities : null;
+    const caps = primary ? (await router.adapter(primary)).capabilities : null;
     return { minNoticeMs: caps?.minNoticeMs ?? 0, maxNoticeLeadMs: caps?.maxNoticeLeadMs ?? null };
   } catch {
     return { minNoticeMs: 0, maxNoticeLeadMs: null };
@@ -88,7 +88,7 @@ export async function sendNotice(router: Router, mandate: Mandate, debitId: stri
   if (!primary) throw new AppError('NOTICE_FAILED', 'Mandate has no PSP configured');
   let res;
   try {
-    res = await router.adapter(primary).sendPreDebitNotice({
+    res = await (await router.adapter(primary)).sendPreDebitNotice({
       noticeRef: debitId,
       mandateRef: mandate.mandateRef,
       amountPaise,

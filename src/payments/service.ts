@@ -39,14 +39,16 @@ function initialOutcome(result: PspResult, pspId: string | null): InitialOutcome
 
 /** One-off UPI collect at checkout, routed through the smart router (Phase 2). */
 export class PaymentService {
-  constructor(private readonly deps: { db: Db; clock: Clock; router: Router; pspIds: string[]; tracking: TrackingService }) {}
+  constructor(private readonly deps: { db: Db; clock: Clock; router: Router; tracking: TrackingService }) {}
 
   async create(merchantId: string, input: CreatePaymentInput): Promise<{ payment: Payment; created: boolean }> {
-    const { db, clock, router, pspIds, tracking } = this.deps;
+    const { db, clock, router, tracking } = this.deps;
     const existing = await this.findByKey(merchantId, input.idempotencyKey);
     if (existing) return this.replay(existing, input);
 
-    const needsPhone = pspIds.filter((id) => router.adapter(id).capabilities.collectRequires.includes('customerPhone'));
+    const adapters = await router.psps.requireForMerchant(merchantId);
+    const pspIds = adapters.map((a) => a.id);
+    const needsPhone = adapters.filter((a) => a.capabilities.collectRequires.includes('customerPhone')).map((a) => a.id);
     if (needsPhone.length > 0 && !input.customerPhone) {
       throw new AppError('VALIDATION', `customerPhone is required by the payment provider (${needsPhone.join(', ')})`);
     }

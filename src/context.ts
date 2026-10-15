@@ -26,12 +26,14 @@ import { publicTargetGuard, type ResolveHost, type WebhookTargetPolicy } from '.
 import { publicOnlyFetch } from './webhooks/http.js';
 import { DEFAULT_RATE_LIMITS, type RateLimits } from './api/rate-limit.js';
 import { AuthFailureLimiter } from './api/auth-failures.js';
+import { SecretBox } from './security/secrets.js';
+import { connectionAdapterFactory } from './psp/connections.js';
+import type { ConnectionAdapterFactory } from './psp/registry.js';
 
 export interface AppContext {
   db: Db;
   clock: Clock;
   adminToken: string;
-  pspIds: string[];
   health: HealthTracker;
   router: Router;
   scheduler: SchedulerService;
@@ -59,11 +61,21 @@ export interface AppContext {
   authFailures: AuthFailureLimiter | null;
   /** 'public-only' refuses merchant webhook URLs that are not https or point at private networks. */
   webhookTargets: WebhookTargetPolicy;
+  /** Seals merchants' PSP credentials. */
+  secrets: SecretBox;
+  /** Public base URL of this API, for showing PSP webhook URLs (null = relative paths). */
+  publicBaseUrl: string | null;
 }
 
 export function buildContext(args: {
   db: Db;
+  /** Shared PSP adapters (mocks, a platform sandbox account): usable by TEST merchants only. */
   adapters: PspAdapter[];
+  /** Seals merchants' PSP credentials (development key by default). */
+  secrets?: SecretBox;
+  /** Builds adapters for merchant connections (real Cashfree/mock by default; faked in tests). */
+  connectionAdapters?: ConnectionAdapterFactory;
+  publicBaseUrl?: string;
   adminToken: string;
   clock?: Clock;
   sleep?: Sleep;
@@ -84,9 +96,9 @@ export function buildContext(args: {
   const clock = args.clock ?? systemClock;
   const sleep = args.sleep ?? realSleep;
   const health = new HealthTracker(args.health ?? {}, clock);
-  const router = new Router(args.adapters, health, clock, sleep, args.router);
-  const pspIds = args.adapters.map((a) => a.id);
-  const psps = new PspRegistry(args.adapters);
+  const secrets = args.secrets ?? SecretBox.development();
+  const psps = new PspRegistry(args.adapters, { db: args.db, secrets, clock, build: args.connectionAdapters ?? connectionAdapterFactory() });
+  const router = new Router(psps, health, clock, sleep, args.router);
   const polling = { ...DEFAULT_POLLING, ...args.polling };
   const tracking = new TrackingService({ db: args.db, clock, psps, cfg: polling });
   const value = new ValueService({ db: args.db });
@@ -99,12 +111,11 @@ export function buildContext(args: {
     db: args.db,
     clock,
     adminToken: args.adminToken,
-    pspIds,
     health,
     router,
     scheduler: new SchedulerService({ db: args.db, clock, router, opts: args.scheduler }),
     checkout: new CheckoutService({ db: args.db, clock }),
-    payments: new PaymentService({ db: args.db, clock, router, pspIds, tracking }),
+    payments: new PaymentService({ db: args.db, clock, router, tracking }),
     worker: new DebitWorker({ db: args.db, clock, router, tracking, opts: args.worker }),
     dispatcher: new WebhookDispatcher(args.db, clock, fetchImpl, {
       ...(webhookTargets === 'public-only' ? { targetGuard: publicTargetGuard(args.resolveHost) } : {}),
@@ -124,5 +135,7 @@ export function buildContext(args: {
     rateLimits,
     authFailures: rateLimits ? new AuthFailureLimiter(rateLimits.authFailuresPerMinute) : null,
     webhookTargets,
+    secrets,
+    publicBaseUrl: args.publicBaseUrl ?? null,
   };
 }

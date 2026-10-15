@@ -5,6 +5,8 @@ import { configureMdrEffectiveFrom, mdrStatus } from './config/rules.js';
 import { buildContext } from './context.js';
 import { createDb } from './db/client.js';
 import { buildAdapters } from './psp/factory.js';
+import { connectionAdapterFactory } from './psp/connections.js';
+import { SecretBox } from './security/secrets.js';
 
 async function main() {
   loadDotEnv();
@@ -15,12 +17,16 @@ async function main() {
   const { db, close } = await createDb(env.DATABASE_URL);
 
   const adapters = buildAdapters(env);
-  console.log(`payment providers: ${adapters.map((a) => `${a.id} (${a.mode})`).join(', ')}`);
+  console.log(`shared payment providers (test-mode merchants): ${adapters.map((a) => `${a.id} (${a.mode})`).join(', ') || 'none'}`);
+  const secrets = SecretBox.fromEnv(env.CREDENTIALS_KEYS, env.NODE_ENV);
 
   const ctx = buildContext({
     db,
     adapters,
     adminToken: env.ADMIN_TOKEN,
+    secrets,
+    connectionAdapters: connectionAdapterFactory({ cashfreeTimeoutMs: env.CASHFREE_TIMEOUT_MS }),
+    ...(env.PUBLIC_BASE_URL ? { publicBaseUrl: env.PUBLIC_BASE_URL } : {}),
     secureCookies: env.NODE_ENV === 'production',
     customerTokenSecret: env.CUSTOMER_TOKEN_SECRET,
     webhookTargets: env.WEBHOOK_TARGETS ?? (env.NODE_ENV === 'production' ? 'public-only' : 'any'),

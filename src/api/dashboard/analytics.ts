@@ -27,9 +27,10 @@ export const analyticsRoutes = (ctx: AppContext) => async (app: FastifyInstance)
     return { ...summary, uplift };
   });
 
-  app.get('/dashboard/api/analytics/psps', async (req) =>
-    ctx.analytics.psps.summary(userOf(req).merchantId, period(req), ctx.pspIds, ctx.health.snapshot()),
-  );
+  app.get('/dashboard/api/analytics/psps', async (req) => {
+    const merchantId = userOf(req).merchantId;
+    return ctx.analytics.psps.summary(merchantId, period(req), await ctx.psps.idsFor(merchantId), ctx.health.snapshot());
+  });
 
   app.get('/dashboard/api/analytics/issues', async (req) => ctx.analytics.issues.summary(userOf(req).merchantId, period(req)));
 

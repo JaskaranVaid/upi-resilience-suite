@@ -84,11 +84,11 @@ describe('MockPsp — Phase 3 capabilities', () => {
 });
 
 describe('PspRegistry', () => {
-  it('looks up adapters by id', () => {
+  it('looks up shared adapters by id', async () => {
     const a = new MockPsp('pspA');
     const reg = new PspRegistry([a, new MockPsp('pspB')]);
-    expect(reg.get('pspA')).toBe(a);
-    expect(reg.ids()).toEqual(['pspA', 'pspB']);
-    expect(() => reg.get('x')).toThrow();
+    expect(await reg.get('pspA')).toBe(a);
+    expect(reg.sharedIds()).toEqual(['pspA', 'pspB']);
+    await expect(reg.get('x')).rejects.toThrow(/Unknown PSP x/);
   });
 });

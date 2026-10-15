@@ -36,7 +36,8 @@ export class PspWebhookIngest {
     const confirming = await db
       .update(debits)
       .set({ scheduledAt: now, updatedAt: now })
-      .where(and(eq(debits.state, 'PENDING_CONFIRMATION'), or(inArray(debits.lastTxnRef, refs), inArray(debits.id, refs))))
+      // Scoped to this PSP: a webhook from one merchant's connection never touches another's debits.
+      .where(and(eq(debits.state, 'PENDING_CONFIRMATION'), eq(debits.lastPspId, pspId), or(inArray(debits.lastTxnRef, refs), inArray(debits.id, refs))))
       .returning({ id: debits.id });
 
     return { matched: tracked.length + confirming.length };

@@ -37,6 +37,8 @@ const BASE_URLS = { sandbox: 'https://sandbox.cashfree.com/pg', production: 'htt
 const HOUR = 3_600_000;
 
 export interface CashfreeConfig {
+  /** PSP id: 'cashfree' for a shared adapter, the connection id for a merchant's own account. */
+  id?: string;
   clientId: string;
   clientSecret: string;
   env: 'sandbox' | 'production';
@@ -63,7 +65,7 @@ const DEFAULT_COLLECT_HEADERS = {
  * Secrets never leave the request headers: nothing here logs them.
  */
 export class CashfreeAdapter implements PspAdapter {
-  readonly id = 'cashfree';
+  readonly id: string;
   readonly mode: PspMode;
   readonly capabilities: PspCapabilities = {
     minNoticeMs: 25 * HOUR, // Cashfree: 25 h between a successful notification and execution
@@ -79,6 +81,7 @@ export class CashfreeAdapter implements PspAdapter {
 
   constructor(private readonly cfg: CashfreeConfig) {
     if (!cfg.clientId || !cfg.clientSecret) throw new Error('Cashfree adapter needs a client id and secret');
+    this.id = cfg.id ?? 'cashfree';
     this.mode = cfg.env === 'production' ? 'LIVE' : 'SANDBOX';
     this.baseUrl = BASE_URLS[cfg.env];
     this.timeoutMs = cfg.timeoutMs ?? 10_000;

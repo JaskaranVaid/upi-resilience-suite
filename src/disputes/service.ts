@@ -57,12 +57,12 @@ export class DisputeService {
       submittedToPsp: Boolean(t.pspId && t.txnRef),
       activeComplaint: false,
       reversalCompleted: t.reversalStatus === 'COMPLETED',
-      providerSupportsComplaints: supportsComplaints(psps, t.pspId),
+      providerSupportsComplaints: await supportsComplaints(psps, t.pspId),
     });
     if (!eligible.ok) throw new AppError('COMPLAINT_NOT_ALLOWED', eligible.reason);
 
     const priorComplaints = await db.select({ n: count() }).from(udirComplaints).innerJoin(paymentCases, eq(paymentCases.id, udirComplaints.caseId)).where(eq(paymentCases.trackingId, t.id));
-    const adapter = psps.get(t.pspId!);
+    const adapter = await psps.get(t.pspId!);
     const res = await adapter.raiseComplaint({
       txnRef: t.txnRef!,
       ...(t.upiRrn ? { upiRrn: t.upiRrn } : {}),

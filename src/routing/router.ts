@@ -1,5 +1,6 @@
 import type { Clock, Sleep } from '../clock.js';
 import type { PspAdapter, PspResult, TxnContext } from '../psp/types.js';
+import { PspRegistry } from '../psp/registry.js';
 import type { HealthTracker } from './health.js';
 
 export interface RouterOptions {
@@ -56,29 +57,27 @@ const isTimeout = (r: PspResult) => r.kind === 'TECHNICAL_DECLINE' && r.code ===
  *    with a fresh txnRef only if this PSP has nothing live for the request.
  */
 export class Router {
-  private readonly adapters: Map<string, PspAdapter>;
+  readonly psps: PspRegistry;
   private readonly opts: Required<RouterOptions>;
 
   constructor(
-    adapters: PspAdapter[],
+    psps: PspRegistry | PspAdapter[],
     private readonly health: HealthTracker,
     private readonly clock: Clock,
     private readonly sleep: Sleep,
     opts: RouterOptions = {},
   ) {
-    this.adapters = new Map(adapters.map((a) => [a.id, a]));
+    this.psps = Array.isArray(psps) ? new PspRegistry(psps) : psps;
     this.opts = { timeoutRetryDelayMs: [3000, 5000], maxTotalMs: 30_000, random: Math.random, ...opts };
   }
 
-  adapter(id: string): PspAdapter {
-    const a = this.adapters.get(id);
-    if (!a) throw new Error(`Unknown PSP ${id}`);
-    return a;
+  adapter(id: string): Promise<PspAdapter> {
+    return this.psps.get(id);
   }
 
   /** Status lookup used by reconciliation of PENDING payments. */
   async status(pspId: string, txnRef: string, ctx: TxnContext): Promise<PspResult> {
-    return this.adapter(pspId).status(txnRef, ctx);
+    return (await this.adapter(pspId)).status(txnRef, ctx);
   }
 
   private ctxOf(req: RouteRequest): TxnContext {
@@ -94,10 +93,19 @@ export class Router {
     let seq = 0;
     let last: RouteOutcome | undefined;
 
-    const { order: candidates, probe } = this.health.routeWithProbe(req.candidates.filter((id) => this.adapters.has(id)));
+    // Candidates the registry can't resolve (e.g. a connection since deleted) are skipped.
+    const resolved = new Map<string, PspAdapter>();
+    for (const id of req.candidates) {
+      try {
+        resolved.set(id, await this.psps.get(id));
+      } catch {
+        // not routable
+      }
+    }
+    const { order: candidates, probe } = this.health.routeWithProbe([...resolved.keys()]);
     for (const pspId of candidates) {
       if (outOfTime()) break;
-      const psp = this.adapter(pspId);
+      const psp = resolved.get(pspId)!;
       const txnRef = `${req.baseRef}-${++seq}`;
 
       // The request may have gone through at this PSP despite the error (e.g. a connection reset
