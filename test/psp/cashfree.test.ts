@@ -55,7 +55,7 @@ describe('CashfreeAdapter — configuration', () => {
       udirComplaints: false,
       portableMandates: false,
       collectRequires: ['customerPhone'],
-      channels: ['UPI_COLLECT'],
+      channels: ['UPI_COLLECT', 'UPI_INTENT', 'UPI_QR', 'NETBANKING', 'CARD'],
     });
   });
 
@@ -167,7 +167,7 @@ describe('CashfreeAdapter — UPI collect', () => {
       'POST /orders/sessions': () => ({ status: 200, body: { cf_payment_id: 1, payment_method: 'upi', channel: 'collect', action: 'custom' } }),
     });
     const res = await adapter.collect({ channel: 'UPI_COLLECT', txnRef: 'pay_1-1', payerVpa: 'asha@okhdfc', amountPaise: 250_000, customerPhone: '9876543210' });
-    expect(res).toEqual({ kind: 'PENDING' }); // the customer approves in their UPI app
+    expect(res).toEqual({ kind: 'PENDING', action: { type: 'UPI_COLLECT', vpa: 'asha@okhdfc' } }); // the customer approves in their UPI app
     expect(requests.map((r) => `${r.method} ${r.path}`)).toEqual(['POST /orders', 'POST /orders/sessions']);
     expect(requests[0]!.body).toEqual({
       order_id: 'pay_1-1',
@@ -186,7 +186,7 @@ describe('CashfreeAdapter — UPI collect', () => {
       'GET /orders/pay_1-1': () => ORDER,
       'POST /orders/sessions': () => ({ status: 200, body: {} }),
     });
-    expect(await adapter.collect({ channel: 'UPI_COLLECT', txnRef: 'pay_1-1', payerVpa: 'ab@ok', amountPaise: 100, customerPhone: '9876543210' })).toEqual({ kind: 'PENDING' });
+    expect(await adapter.collect({ channel: 'UPI_COLLECT', txnRef: 'pay_1-1', payerVpa: 'ab@ok', amountPaise: 100, customerPhone: '9876543210' })).toEqual({ kind: 'PENDING', action: { type: 'UPI_COLLECT', vpa: 'ab@ok' } });
     expect(requests.map((r) => `${r.method} ${r.path}`)).toEqual(['POST /orders', 'GET /orders/pay_1-1', 'POST /orders/sessions']);
   });
 
@@ -391,5 +391,60 @@ describe('CashfreeAdapter — account checks', () => {
     expect(rejected).toMatchObject({ ok: false, rejected: true });
     const down = await fakeCashfree({ 'GET /orders/.*': () => 'NETWORK' }).adapter.checkCredentials();
     expect(down).toMatchObject({ ok: false, rejected: false, reason: expect.stringMatching(/Couldn't reach Cashfree/) });
+  });
+});
+
+describe('CashfreeAdapter — payment channels (Order Pay)', () => {
+  const ORDER = { status: 200, body: { order_id: 'pay_9-1', payment_session_id: 'session_xyz' } };
+  const base = { txnRef: 'pay_9-1', amountPaise: 99_900, customerPhone: '9876543210' };
+
+  it('UPI intent: passes the deeplinks through unmodified', async () => {
+    const { adapter, requests } = fakeCashfree({
+      'POST /orders': () => ORDER,
+      'POST /orders/sessions': () => ({
+        status: 200,
+        body: { action: 'custom', channel: 'link', data: { url: null, payload: { default: 'upi://pay?pa=cf@axis&am=999.00&tr=X1', gpay: 'tez://upi/pay?pa=cf@axis&am=999.00', phonepe: 'phonepe://pay?pa=cf@axis&am=999.00', bhim: 'upi://pay?pa=cf@axis&am=999.00' } } },
+      }),
+    });
+    const res = await adapter.collect({ ...base, channel: 'UPI_INTENT' });
+    expect(res).toEqual({
+      kind: 'PENDING',
+      action: {
+        type: 'UPI_INTENT',
+        url: 'upi://pay?pa=cf@axis&am=999.00&tr=X1',
+        appUrls: { gpay: 'tez://upi/pay?pa=cf@axis&am=999.00', phonepe: 'phonepe://pay?pa=cf@axis&am=999.00', bhim: 'upi://pay?pa=cf@axis&am=999.00' },
+      },
+    });
+    expect(requests[1]!.body).toMatchObject({ payment_session_id: 'session_xyz', payment_method: { upi: { channel: 'link' } } });
+  });
+
+  it('UPI QR: returns the UPI string, or a base64 image when that is what Cashfree sends', async () => {
+    const qr = fakeCashfree({ 'POST /orders': () => ORDER, 'POST /orders/sessions': () => ({ status: 200, body: { channel: 'qrcode', data: { payload: { qrData: 'upi://pay?pa=cf@axis&am=999.00' } } } }) });
+    expect(await qr.adapter.collect({ ...base, channel: 'UPI_QR' })).toEqual({ kind: 'PENDING', action: { type: 'UPI_QR', qrData: 'upi://pay?pa=cf@axis&am=999.00' } });
+    expect(qr.requests[1]!.body).toMatchObject({ payment_method: { upi: { channel: 'qrcode' } } });
+    const img = fakeCashfree({ 'POST /orders': () => ORDER, 'POST /orders/sessions': () => ({ status: 200, body: { data: { payload: { qrcode: 'data:image/png;base64,iVBORw0K' } } } }) });
+    expect(await img.adapter.collect({ ...base, channel: 'UPI_QR' })).toEqual({ kind: 'PENDING', action: { type: 'UPI_QR', qrImage: 'data:image/png;base64,iVBORw0K' } });
+  });
+
+  it('netbanking to a chosen bank redirects to the bank', async () => {
+    const { adapter, requests } = fakeCashfree({
+      'POST /orders': () => ORDER,
+      'POST /orders/sessions': () => ({ status: 200, body: { action: 'link', channel: 'link', data: { url: 'https://api.cashfree.com/pg/view/gateway/session_xyz' } } }),
+    });
+    const res = await adapter.collect({ ...base, channel: 'NETBANKING', netbankingBankCode: '3021' });
+    expect(res).toEqual({ kind: 'PENDING', action: { type: 'REDIRECT', url: 'https://api.cashfree.com/pg/view/gateway/session_xyz' } });
+    expect(requests[1]!.body).toMatchObject({ payment_method: { netbanking: { channel: 'link', netbanking_bank_code: 3021 } } });
+  });
+
+  it("cards (and netbanking without a bank) open Cashfree's own checkout — no card data passes through us", async () => {
+    const { adapter, requests } = fakeCashfree({ 'POST /orders': () => ORDER });
+    const res = await adapter.collect({ ...base, channel: 'CARD' });
+    expect(res).toEqual({ kind: 'PENDING', action: { type: 'PSP_CHECKOUT', provider: 'cashfree', environment: 'sandbox', params: { paymentSessionId: 'session_xyz', orderId: 'pay_9-1' } } });
+    expect(requests.map((r) => r.path)).toEqual(['/orders']);
+  });
+
+  it('treats an intent response without any deeplink as a provider error (status-checked before failover)', async () => {
+    const { adapter } = fakeCashfree({ 'POST /orders': () => ORDER, 'POST /orders/sessions': () => ({ status: 200, body: { data: { payload: {} } } }) });
+    expect(await adapter.collect({ ...base, channel: 'UPI_INTENT' })).toEqual({ kind: 'TECHNICAL_DECLINE', code: 'PSP_ERROR' });
   });
 });

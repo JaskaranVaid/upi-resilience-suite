@@ -4,7 +4,7 @@
  * re-checked and never retried blindly. See docs/superpowers/specs/2026-10-03-real-psp-cashfree-design.md.
  */
 import { createHash } from 'node:crypto';
-import type { BusinessDeclineCode, ReversalStatus, PspResult, TransactionInquiry } from '../types.js';
+import type { BusinessDeclineCode, CollectRequest, CustomerAction, ReversalStatus, PspResult, TransactionInquiry } from '../types.js';
 
 export const toRupees = (paise: number) => Number((paise / 100).toFixed(2));
 export const toPaise = (rupees: unknown) => Math.round(Number(rupees) * 100);
@@ -133,6 +133,67 @@ export function inquiryFromOrder(payments: CfOrderPayment[], refunds: CfRefund[]
     };
   }
   return { found: true, outcome: 'PENDING', customerDebit: 'UNKNOWN', capture: 'UNKNOWN', reversal: reversal ?? { status: 'NONE' }, ...rrn };
+}
+
+// ── Order Pay (one-off payment channels) ──────────────────────────────────────────────
+
+/** Response of POST /orders/sessions (Order Pay). */
+export interface CfOrderPay {
+  action?: string;
+  cf_payment_id?: string | number;
+  channel?: string;
+  data?: { url?: string | null; payload?: Record<string, unknown> | null } | null;
+}
+
+/** The Order Pay payment_method for a channel, or null when the customer uses Cashfree's checkout. */
+export function orderPayMethod(req: CollectRequest): Record<string, unknown> | null {
+  switch (req.channel) {
+    case 'UPI_COLLECT':
+      return { upi: { channel: 'collect', upi_id: req.payerVpa } };
+    case 'UPI_INTENT':
+      return { upi: { channel: 'link' } };
+    case 'UPI_QR':
+      return { upi: { channel: 'qrcode' } };
+    case 'NETBANKING': {
+      if (!req.netbankingBankCode) return null;
+      const code = Number(req.netbankingBankCode);
+      return { netbanking: { channel: 'link', ...(Number.isInteger(code) ? { netbanking_bank_code: code } : { netbanking_bank_name: req.netbankingBankCode }) } };
+    }
+    case 'CARD':
+      return null;
+  }
+}
+
+const str = (v: unknown) => (typeof v === 'string' && v.length > 0 ? v : undefined);
+
+/** What the customer must do, from the Order Pay response (deeplinks and QR data passed through unmodified). */
+export function customerActionFor(
+  req: CollectRequest,
+  pay: CfOrderPay | null,
+  session: { sessionId: string; environment: 'sandbox' | 'production' },
+): CustomerAction | null {
+  const payload = pay?.data?.payload ?? {};
+  switch (req.channel) {
+    case 'UPI_COLLECT':
+      return { type: 'UPI_COLLECT', vpa: req.payerVpa! };
+    case 'UPI_INTENT': {
+      // App-specific deeplinks use their own schemes (tez://, phonepe://, paytmmp://…): keep any URL.
+      const apps = Object.fromEntries(Object.entries(payload).filter(([k, v]) => k !== 'default' && typeof v === 'string' && /^[a-z][a-z0-9+.-]*:\/\//i.test(v))) as Record<string, string>;
+      const url = str(payload.default) ?? Object.values(apps)[0];
+      return url ? { type: 'UPI_INTENT', url, appUrls: apps } : null;
+    }
+    case 'UPI_QR': {
+      const qrData = str(payload.qrData) ?? (str(payload.qrcode)?.startsWith('upi:') ? str(payload.qrcode) : undefined);
+      const qrImage = str(payload.qrcode) && !str(payload.qrcode)!.startsWith('upi:') ? str(payload.qrcode) : undefined;
+      return qrData || qrImage ? { type: 'UPI_QR', ...(qrData ? { qrData } : {}), ...(qrImage ? { qrImage } : {}) } : null;
+    }
+    case 'NETBANKING':
+    case 'CARD': {
+      const url = str(pay?.data?.url);
+      if (pay && url) return { type: 'REDIRECT', url };
+      return { type: 'PSP_CHECKOUT', provider: 'cashfree', environment: session.environment, params: { paymentSessionId: session.sessionId, orderId: req.txnRef } };
+    }
+  }
 }
 
 // ── UPI AutoPay controlled execution ───────────────────────────────────────────────────

@@ -18,7 +18,10 @@ import type {
   WebhookVerification,
 } from '../types.js';
 import {
+  customerActionFor,
   customerIdFor,
+  orderPayMethod,
+  type CfOrderPay,
   idempotencyKey,
   inquiryFromExecution,
   inquiryFromOrder,
@@ -75,7 +78,7 @@ export class CashfreeAdapter implements PspAdapter {
     udirComplaints: false, // no merchant-raised UDIR API; customers raise from their UPI app
     portableMandates: false, // a Cashfree subscription is executed through Cashfree only
     collectRequires: ['customerPhone'],
-    channels: ['UPI_COLLECT'],
+    channels: ['UPI_COLLECT', 'UPI_INTENT', 'UPI_QR', 'NETBANKING', 'CARD'],
   };
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
@@ -126,6 +129,8 @@ export class CashfreeAdapter implements PspAdapter {
       this.log('collect rejected locally: customer phone is required by Cashfree', { txnRef: req.txnRef });
       return { kind: 'BUSINESS_DECLINE', code: 'OTHER' };
     }
+    if (req.channel === 'UPI_COLLECT' && !req.payerVpa) return { kind: 'BUSINESS_DECLINE', code: 'OTHER' };
+    let sessionId: string | undefined;
     return this.debitCall(
       async () => {
         const order = await this.post(
@@ -138,7 +143,7 @@ export class CashfreeAdapter implements PspAdapter {
           },
           idempotencyKey('order', req.txnRef),
         );
-        let sessionId = (order.json as { payment_session_id?: string } | null)?.payment_session_id;
+        sessionId = (order.json as { payment_session_id?: string } | null)?.payment_session_id;
         if (order.status === 409 || (order.status >= 400 && !sessionId && /already exists/i.test(String((order.json as CfError | null)?.message ?? '')))) {
           // Order created by an earlier attempt with this txnRef: reuse it.
           const existing = await this.get(`/orders/${encodeURIComponent(req.txnRef)}`);
@@ -147,15 +152,22 @@ export class CashfreeAdapter implements PspAdapter {
           return order;
         }
         if (!sessionId) return { status: 502, json: { message: 'order has no payment_session_id' } };
+        const method = orderPayMethod(req);
+        // Cards, and netbanking without a chosen bank, go through Cashfree's own checkout (its JS
+        // SDK, opened with the session id): card details never pass through us.
+        if (!method) return { status: 200, json: null };
         return this.post(
           '/orders/sessions',
-          { payment_session_id: sessionId, payment_method: { upi: { channel: 'collect', upi_id: req.payerVpa } } },
-          idempotencyKey('pay', req.txnRef),
+          { payment_session_id: sessionId, payment_method: method },
+          idempotencyKey(`pay:${req.channel}`, req.txnRef),
           { ...DEFAULT_COLLECT_HEADERS, ...this.cfg.collectClientHeaders },
         );
       },
-      // A collect request was sent to the customer's UPI app: outcome comes later via status.
-      () => ({ kind: 'PENDING' }),
+      // The customer must act (approve, open the app, scan, log in to the bank): the outcome comes later via status.
+      (res) => {
+        const action = customerActionFor(req, res.json as CfOrderPay | null, { sessionId: sessionId!, environment: this.cfg.env });
+        return action ? { kind: 'PENDING', action } : { kind: 'TECHNICAL_DECLINE', code: 'PSP_ERROR' };
+      },
     );
   }
 
