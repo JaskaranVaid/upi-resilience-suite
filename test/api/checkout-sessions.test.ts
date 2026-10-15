@@ -122,4 +122,10 @@ describe('checkout sessions', () => {
     expect(b.statusCode).toBe(200);
     expect(b.json().id).toBe(a.json().id);
   });
+
+  it('takes only an http(s) returnUrl (the widget sends the customer there)', async () => {
+    expect((await createSession({ amountPaise: rs(100), returnUrl: 'javascript:alert(1)' })).statusCode).toBe(400);
+    expect((await createSession({ amountPaise: rs(100), returnUrl: 'data:text/html,hi' })).statusCode).toBe(400);
+    expect((await createSession({ amountPaise: rs(100), returnUrl: 'http://localhost:4000/done' })).statusCode).toBe(201);
+  });
 });

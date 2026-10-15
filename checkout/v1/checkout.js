@@ -29,8 +29,11 @@
   // Payment links come from the PSP; only these schemes may reach an href or window.location.
   var SAFE_URL = /^(?:upi|tez|phonepe|paytmmp|paytm|gpay|bhim|credpay|intent):|^https:\/\//i;
 
-  function safeUrl(u) {
-    return typeof u === 'string' && SAFE_URL.test(u) ? u : null;
+  /** `allowHttp`: for the merchant's own return URL (http in local development), web URLs only. */
+  function safeUrl(u, o) {
+    if (typeof u !== 'string') return null;
+    if (o && o.allowHttp) return /^https?:\/\//i.test(u) ? u : null;
+    return SAFE_URL.test(u) ? u : null;
   }
   function rupees(paise) {
     return '₹' + (paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -228,7 +231,7 @@
         state.done = true;
         render(header() + '<div class="ok">Payment successful</div>');
         if (opts.onComplete) opts.onComplete({ status: 'success', paymentId: p.id });
-        var ret = safeUrl(state.view.returnUrl);
+        var ret = safeUrl(state.view.returnUrl, { allowHttp: true });
         if (ret && !state.destroyed) setTimeout(function () { window.location.assign(ret); }, 1500);
         return;
       }

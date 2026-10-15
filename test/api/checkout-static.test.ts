@@ -50,7 +50,7 @@ describe('checkout.js static assets', () => {
   });
 
   it('only lets payment links with safe schemes reach href or location', () => {
-    const window: { Merchantflo?: { safeUrl: (u: string) => string | null; version: string } } = {};
+    const window: { Merchantflo?: { safeUrl: (u: string, o?: { allowHttp?: boolean }) => string | null; version: string } } = {};
     runInNewContext(readFileSync(widgetPath, 'utf8'), { window, document: { currentScript: null } });
     const { safeUrl } = window.Merchantflo!;
     expect(window.Merchantflo!.version).toBe('1');
@@ -60,5 +60,9 @@ describe('checkout.js static assets', () => {
     for (const bad of ['javascript:alert(1)', ' JavaScript:alert(1)', 'data:text/html,x', 'vbscript:x', 'http://bank.example/nb', '//evil.example', 'file:///etc/passwd', '']) {
       expect(safeUrl(bad), bad).toBeNull();
     }
+    // The merchant's own return URL may be http (local development); scripts and data never.
+    expect(safeUrl('http://localhost:4000/done', { allowHttp: true })).toBe('http://localhost:4000/done');
+    expect(safeUrl('javascript:alert(1)', { allowHttp: true })).toBeNull();
+    expect(safeUrl('upi://pay?pa=a@b', { allowHttp: true })).toBeNull();
   });
 });
