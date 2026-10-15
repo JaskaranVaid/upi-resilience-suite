@@ -18,6 +18,19 @@ describe('webhook target safety', () => {
     ['fd12:3456::1', true],
     ['::ffff:10.0.0.1', true],
     ['2606:4700::1111', false],
+    // IPv6 forms that embed an IPv4 address — each must be judged by the address inside.
+    ['::ffff:a9fe:a9fe', true], // mapped 169.254.169.254, as the URL parser serialises it
+    ['0:0:0:0:0:ffff:10.0.0.1', true],
+    ['::ffff:808:808', false], // mapped 8.8.8.8
+    ['::127.0.0.1', true], // deprecated IPv4-compatible
+    ['64:ff9b::a00:1', true], // NAT64 of 10.0.0.1
+    ['64:ff9b::808:808', false], // NAT64 of 8.8.8.8
+    ['2002:a00:1::', true], // 6to4 of 10.0.0.1
+    ['2001:0:4136:e378:8000:63bf:3fff:fdd2', true], // Teredo
+    ['fec0::1', true], // site-local
+    ['2001:db8::1', true], // documentation
+    ['100::1', true], // discard-only
+    ['fe80::1%eth0', true], // zoned link-local
   ])('%s non-public=%s', (ip, expected) => {
     expect(isNonPublicAddress(ip)).toBe(expected);
   });
@@ -35,6 +48,11 @@ describe('webhook target safety', () => {
     expect(checkWebhookUrl('https://billing.internal/hooks', 'public-only')).toMatch(/public host/);
     expect(checkWebhookUrl('https://169.254.169.254/latest/meta-data', 'public-only')).toMatch(/private/);
     expect(checkWebhookUrl('https://[::1]/hooks', 'public-only')).toMatch(/private/);
+    expect(checkWebhookUrl('https://[::ffff:169.254.169.254]/latest', 'public-only')).toMatch(/private/);
+    expect(checkWebhookUrl('https://[0:0:0:0:0:ffff:10.0.0.1]/', 'public-only')).toMatch(/private/);
+    expect(checkWebhookUrl('https://[::127.0.0.1]/', 'public-only')).toMatch(/private/);
+    expect(checkWebhookUrl('https://2130706433/', 'public-only')).toMatch(/private/); // decimal 127.0.0.1
+    expect(checkWebhookUrl('https://localhost./hooks', 'public-only')).toMatch(/public host/); // trailing dot
     expect(checkWebhookUrl('https://user:pass@merchant.example/hooks', 'any')).toMatch(/credentials/);
   });
 

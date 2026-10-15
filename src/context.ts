@@ -22,6 +22,7 @@ import { StatusPoller } from './tracking/poller.js';
 import { TrackingService } from './tracking/service.js';
 import { WebhookDispatcher, type FetchLike } from './webhooks/outbox.js';
 import { publicTargetGuard, type ResolveHost, type WebhookTargetPolicy } from './webhooks/url.js';
+import { publicOnlyFetch } from './webhooks/http.js';
 import { DEFAULT_RATE_LIMITS, type RateLimits } from './api/rate-limit.js';
 
 export interface AppContext {
@@ -85,8 +86,9 @@ export function buildContext(args: {
   const tracking = new TrackingService({ db: args.db, clock, psps, cfg: polling });
   const value = new ValueService({ db: args.db });
   const issues = new IssueAnalytics({ db: args.db });
-  const fetchImpl: FetchLike = args.fetchImpl ?? ((url, init) => fetch(url, init));
   const webhookTargets = args.webhookTargets ?? 'any';
+  // Production policy: connect only to public addresses, checked at connect time (no DNS rebinding).
+  const fetchImpl: FetchLike = args.fetchImpl ?? (webhookTargets === 'public-only' ? publicOnlyFetch : (url, init) => fetch(url, init));
   return {
     db: args.db,
     clock,

@@ -41,18 +41,44 @@ export function isNonPublicAddress(ip: string): boolean {
     return V4_BLOCKED.some(([base, bits]) => (n >>> (32 - bits)) === (v4ToInt(base) >>> (32 - bits)));
   }
   if (kind === 6) {
-    const a = ip.toLowerCase();
-    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(a);
-    if (mapped) return isNonPublicAddress(mapped[1]!);
+    const x = ipv6Hextets(ip);
+    if (!x) return true;
+    const v4 = (hi: number, lo: number) => isNonPublicAddress(`${hi >>> 8}.${hi & 0xff}.${lo >>> 8}.${lo & 0xff}`);
+    const zeros = (from: number, to: number) => x.slice(from, to).every((h) => h === 0);
+    // Forms that carry an IPv4 address are judged by that address (mapped, compatible, NAT64, 6to4).
+    if (zeros(0, 5) && x[5] === 0xffff) return v4(x[6]!, x[7]!); // ::ffff:a.b.c.d
+    if (zeros(0, 6)) return true; // ::, ::1 and deprecated ::a.b.c.d
+    if (x[0] === 0x64 && x[1] === 0xff9b) return zeros(2, 6) ? v4(x[6]!, x[7]!) : true; // NAT64 (local-use /48 blocked)
+    if (x[0] === 0x2002) return v4(x[1]!, x[2]!); // 6to4
+    const a = x[0]!;
     return (
-      a === '::' ||
-      a === '::1' ||
-      /^f[cd][0-9a-f]{2}:/.test(a) || // unique local fc00::/7
-      /^fe[89ab][0-9a-f]:/.test(a) || // link-local fe80::/10
-      /^ff[0-9a-f]{2}:/.test(a) // multicast
+      (a === 0x2001 && x[1] === 0) || // Teredo (embeds an obfuscated IPv4 address)
+      (a === 0x2001 && x[1] === 0xdb8) || // documentation
+      (a === 0x100 && zeros(1, 4)) || // discard-only
+      (a & 0xfe00) === 0xfc00 || // unique local fc00::/7
+      (a & 0xffc0) === 0xfe80 || // link-local fe80::/10
+      (a & 0xffc0) === 0xfec0 || // site-local fec0::/10
+      (a & 0xff00) === 0xff00 // multicast
     );
   }
   return true; // not an IP at all: never "public"
+}
+
+/** The eight 16-bit groups of an IPv6 address (handles `::`, zone ids and a trailing dotted quad). */
+function ipv6Hextets(ip: string): number[] | null {
+  let s = ip.toLowerCase().replace(/%.*$/, '');
+  const dotted = /(\d+\.\d+\.\d+\.\d+)$/.exec(s);
+  if (dotted) {
+    const n = v4ToInt(dotted[1]!);
+    s = `${s.slice(0, -dotted[1]!.length)}${(n >>> 16).toString(16)}:${(n & 0xffff).toString(16)}`;
+  }
+  const halves = s.split('::');
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(':') : [];
+  const tail = halves.length === 2 ? (halves[1] ? halves[1].split(':') : []) : null;
+  const parts = tail === null ? head : [...head, ...Array<string>(8 - head.length - tail.length).fill('0'), ...tail];
+  if (parts.length !== 8 || parts.some((p) => !/^[0-9a-f]{1,4}$/.test(p))) return null;
+  return parts.map((p) => parseInt(p, 16));
 }
 
 const INTERNAL_SUFFIXES = ['.localhost', '.local', '.internal', '.lan', '.home.arpa'];
@@ -69,7 +95,7 @@ export function checkWebhookUrl(raw: string, policy: WebhookTargetPolicy): strin
   if (url.username || url.password) return 'must not contain credentials';
   if (policy === 'any') return null;
   if (url.protocol !== 'https:') return 'must use https';
-  const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase().replace(/\.$/, '');
   if (host === 'localhost' || INTERNAL_SUFFIXES.some((s) => host.endsWith(s))) return 'must be a public host';
   if (isIP(host) && isNonPublicAddress(host)) return 'must not point at a private or internal network address';
   return null;

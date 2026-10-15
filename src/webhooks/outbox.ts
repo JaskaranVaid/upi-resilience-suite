@@ -40,7 +40,7 @@ export async function enqueueWebhook(
 
 export type FetchLike = (
   url: string,
-  init: { method: 'POST'; headers: Record<string, string>; body: string; signal?: AbortSignal },
+  init: { method: 'POST'; headers: Record<string, string>; body: string; signal?: AbortSignal; redirect?: 'manual' },
 ) => Promise<{ ok: boolean; status: number }>;
 
 export interface DispatcherOptions {
@@ -138,6 +138,8 @@ export class WebhookDispatcher {
         },
         body,
         signal: AbortSignal.timeout(this.opts.requestTimeoutMs),
+        // Never follow redirects: a 3xx could point the POST anywhere. It counts as a failed delivery.
+        redirect: 'manual',
       });
       return res.ok ? null : `HTTP ${res.status}`;
     } catch (e) {
