@@ -1,0 +1,12 @@
+# Secret scanning (gitleaks, CI workflow "secrets"). Default rules, plus an allowlist for test
+# fixtures and documented placeholders, which are fake by design. Real secrets live in Secrets
+# Manager or a password manager, never in the repository.
+title = "Merchantflo"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Test fixtures and placeholders"
+paths = ['''^test/''']
+regexes = ['''change-me''', '''not-for-real-use''', '''not-for-production''']

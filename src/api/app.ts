@@ -101,16 +101,28 @@ export function buildApp(ctx: AppContext, opts: { logger?: boolean; trustProxy?:
     return reply.status(500).send({ error: { code: 'INTERNAL', message: 'Internal error' } });
   });
 
+  app.addHook('onSend', async (req, reply, payload) => {
+    reply.header('x-content-type-options', 'nosniff');
+    // Production is served over HTTPS only (the load balancer redirects http).
+    if (ctx.secureCookies) reply.header('strict-transport-security', 'max-age=31536000; includeSubDomains');
+    // API answers carry merchant and payment data: never stored by browsers or proxies.
+    const url = req.url;
+    if ((url.startsWith('/v1/') || url.startsWith('/dashboard/api/') || url.startsWith('/ops/api/')) && !reply.hasHeader('cache-control')) {
+      reply.header('cache-control', 'no-store');
+    }
+    return payload;
+  });
+
   app.register(fastifyCookie);
   if (ctx.rateLimits) registerRateLimits(app, ctx.rateLimits);
   // Static merchant console. API calls go to /dashboard/api/*, registered below (more specific routes win).
   app.register(fastifyStatic, {
     root: fileURLToPath(new URL('../../dashboard', import.meta.url)),
     prefix: '/dashboard/',
-    setHeaders: (res) => {
-      res.setHeader('content-security-policy', "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
-      res.setHeader('x-content-type-options', 'nosniff');
-      res.setHeader('referrer-policy', 'same-origin');
+    setHeaders: (reply) => {
+      reply.header('content-security-policy', "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+      reply.header('x-content-type-options', 'nosniff');
+      reply.header('referrer-policy', 'same-origin');
     },
   });
   app.get('/dashboard', async (_req, reply) => reply.redirect('/dashboard/'));
@@ -120,12 +132,12 @@ export function buildApp(ctx: AppContext, opts: { logger?: boolean; trustProxy?:
     prefix: '/checkout/',
     decorateReply: false,
     cacheControl: false,
-    setHeaders: (res, path) => {
-      res.setHeader('cross-origin-resource-policy', 'cross-origin');
-      res.setHeader('x-content-type-options', 'nosniff');
-      res.setHeader('cache-control', 'public, max-age=300');
+    setHeaders: (reply, path) => {
+      reply.header('cross-origin-resource-policy', 'cross-origin');
+      reply.header('x-content-type-options', 'nosniff');
+      reply.header('cache-control', 'public, max-age=300');
       if (path.endsWith('.html')) {
-        res.setHeader(
+        reply.header(
           'content-security-policy',
           "default-src 'self'; img-src 'self' data:; script-src 'self' https://sdk.cashfree.com https://checkout.razorpay.com; connect-src 'self' https:; frame-src https:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
         );
