@@ -63,6 +63,8 @@ export interface AppContext {
   webhookTargets: WebhookTargetPolicy;
   /** Seals merchants' PSP credentials. */
   secrets: SecretBox;
+  /** Builds the adapter for a merchant connection (also used to check credentials before saving). */
+  connectionAdapters: ConnectionAdapterFactory;
   /** Public base URL of this API, for showing PSP webhook URLs (null = relative paths). */
   publicBaseUrl: string | null;
 }
@@ -97,7 +99,8 @@ export function buildContext(args: {
   const sleep = args.sleep ?? realSleep;
   const health = new HealthTracker(args.health ?? {}, clock);
   const secrets = args.secrets ?? SecretBox.development();
-  const psps = new PspRegistry(args.adapters, { db: args.db, secrets, clock, build: args.connectionAdapters ?? connectionAdapterFactory() });
+  const connectionAdapters = args.connectionAdapters ?? connectionAdapterFactory();
+  const psps = new PspRegistry(args.adapters, { db: args.db, secrets, clock, build: connectionAdapters });
   const router = new Router(psps, health, clock, sleep, args.router);
   const polling = { ...DEFAULT_POLLING, ...args.polling };
   const tracking = new TrackingService({ db: args.db, clock, psps, cfg: polling });
@@ -136,6 +139,7 @@ export function buildContext(args: {
     authFailures: rateLimits ? new AuthFailureLimiter(rateLimits.authFailuresPerMinute) : null,
     webhookTargets,
     secrets,
+    connectionAdapters,
     publicBaseUrl: args.publicBaseUrl ?? null,
   };
 }

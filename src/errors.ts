@@ -16,7 +16,9 @@ export type ErrorCode =
   | 'ACCOUNT_LOCKED'
   | 'AFA_REQUIRED'
   | 'RATE_LIMITED'
-  | 'NO_PSP_CONNECTED';
+  | 'NO_PSP_CONNECTED'
+  | 'PSP_CREDENTIALS_REJECTED'
+  | 'PSP_UNREACHABLE';
 
 const STATUS: Record<ErrorCode, number> = {
   NOT_FOUND: 404,
@@ -37,6 +39,8 @@ const STATUS: Record<ErrorCode, number> = {
   AFA_REQUIRED: 422,
   RATE_LIMITED: 429,
   NO_PSP_CONNECTED: 422,
+  PSP_CREDENTIALS_REJECTED: 422,
+  PSP_UNREACHABLE: 502,
 };
 
 export class AppError extends Error {

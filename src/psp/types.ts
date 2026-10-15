@@ -132,7 +132,11 @@ export interface PspAdapter {
    * trigger a status re-check; they never change state by themselves.
    */
   verifyWebhook?(rawBody: string, headers: Record<string, string | string[] | undefined>, now: Date): WebhookVerification;
+  /** Confirm the credentials work (a harmless authenticated lookup), before they are saved. */
+  checkCredentials?(): Promise<CredentialCheck>;
 }
+
+export type CredentialCheck = { ok: true } | { ok: false; reason: string; rejected: boolean };
 
 export function isTerminal(r: PspResult): boolean {
   return r.kind === 'SUCCESS' || r.kind === 'BUSINESS_DECLINE';

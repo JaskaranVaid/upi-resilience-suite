@@ -3,6 +3,7 @@ import { requestJson, TransportError, type FetchFn, type HttpResponse } from '..
 import type {
   CollectRequest,
   ComplaintResult,
+  CredentialCheck,
   ComplaintStatusResult,
   ExecuteMandateRequest,
   NoticeResult,
@@ -179,6 +180,19 @@ export class CashfreeAdapter implements PspAdapter {
 
   async complaintStatus(): Promise<ComplaintStatusResult> {
     return { ok: false, reason: 'Cashfree does not offer merchant-raised UDIR complaints' };
+  }
+
+  /** An authenticated lookup of an order that can't exist: 404 means the keys work. */
+  async checkCredentials(): Promise<CredentialCheck> {
+    let res: HttpResponse;
+    try {
+      res = await this.get(`/orders/mf-credential-check-${randomUUID()}`);
+    } catch (e) {
+      return { ok: false, rejected: false, reason: `Couldn't reach Cashfree: ${e instanceof Error ? e.message : String(e)}` };
+    }
+    if (res.status === 404) return { ok: true };
+    if (res.status === 401 || res.status === 403) return { ok: false, rejected: true, reason: 'Cashfree rejected these credentials (check the keys and the environment)' };
+    return { ok: false, rejected: false, reason: `Unexpected response from Cashfree: ${this.describe(res)}` };
   }
 
   verifyWebhook(rawBody: string, headers: Record<string, string | string[] | undefined>, now: Date): WebhookVerification {
