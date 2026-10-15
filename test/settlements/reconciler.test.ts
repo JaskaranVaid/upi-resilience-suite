@@ -116,3 +116,39 @@ describe('settlement reconciliation', () => {
     expect((await ctx.db.select().from(payments)).length).toBe(0);
   });
 });
+
+describe('settlement surfaces', () => {
+  it('shows settlement in the payment detail, the API, analytics and the statement', async () => {
+    const { buildApp } = await import('../../src/api/app.js');
+    const { db } = await freshDb();
+    const clock = new FakeClock(ist('2026-10-15T14:00:00'));
+    const ctx = buildContext({ db, adapters: [], adminToken: 'x'.repeat(20), clock, sleep: clock.sleep, router: { random: () => 0.5 } });
+    const app = buildApp(ctx);
+    const onboard = (await app.inject({ method: 'POST', url: '/v1/merchants', headers: { authorization: `Bearer ${'x'.repeat(20)}` }, payload: { name: 'Shop' } })).json();
+    const key = onboard.apiKey as string;
+    const merchantId = onboard.merchant.id as string;
+    const conn = (await app.inject({ method: 'POST', url: '/v1/psp-connections', headers: { authorization: `Bearer ${key}` }, payload: { provider: 'mock' } })).json();
+    const psp = (await ctx.psps.get(conn.id)) as MockPsp;
+    const pay = (await app.inject({ method: 'POST', url: '/v1/payments', headers: { authorization: `Bearer ${key}` }, payload: { amountPaise: rs(2500), payerVpa: 'asha@okhdfc', idempotencyKey: 's1' } })).json();
+    psp.addSettlements({ pspEventId: 'e1', kind: 'PAYMENT', pspPaymentId: pay.pspTxnId, orderRef: null, amountPaise: rs(2500), feePaise: rs(10), taxPaise: rs(1.8), settledAmountPaise: rs(2488.2), settlementId: 's', utr: 'UTRX', settledAt: ist('2026-10-16T10:00:00') });
+    psp.addSettlements({ pspEventId: 'e2', kind: 'PAYMENT', pspPaymentId: 'outside', orderRef: null, amountPaise: rs(99), feePaise: 0, taxPaise: 0, settledAmountPaise: rs(99), settlementId: 's', utr: 'UTRX', settledAt: ist('2026-10-16T10:00:00') });
+    await ctx.reconciler.reconcile(merchantId, conn.id, '2026-10-16');
+
+    const list = (await app.inject({ method: 'GET', url: '/v1/settlements?from=2026-10-01T00:00:00%2B05:30&to=2026-10-31T00:00:00%2B05:30', headers: { authorization: `Bearer ${key}` } })).json();
+    expect(list.data).toHaveLength(2);
+    expect(list.data.find((s: { pspPaymentId: string }) => s.pspPaymentId === pay.pspTxnId).payment).toEqual({ type: 'COLLECT', id: pay.id });
+    const unmatched = (await app.inject({ method: 'GET', url: '/v1/settlements?match=unmatched&from=2026-10-01T00:00:00%2B05:30&to=2026-10-31T00:00:00%2B05:30', headers: { authorization: `Bearer ${key}` } })).json();
+    expect(unmatched.data.map((s: { pspPaymentId: string }) => s.pspPaymentId)).toEqual(['outside']);
+
+    // Dashboard: sign in as an admin created with the API key.
+    await app.inject({ method: 'POST', url: '/v1/dashboard-users', headers: { authorization: `Bearer ${key}` }, payload: { email: 'a@shop.example', name: 'A', password: 'long-enough-pass', role: 'ADMIN' } });
+    const login = await app.inject({ method: 'POST', url: '/dashboard/api/login', headers: { 'x-dashboard-request': '1' }, payload: { email: 'a@shop.example', password: 'long-enough-pass' } });
+    const cookie = { cookie: `rs_session=${login.cookies.find((c) => c.name === 'rs_session')!.value}` };
+    const detail = (await app.inject({ method: 'GET', url: `/dashboard/api/payments/collect/${pay.id}`, headers: cookie })).json();
+    expect(detail.money.settlement).toMatchObject({ code: 'SETTLED', label: 'Settled to your account', utr: 'UTRX', netAmountPaise: rs(2488.2), feePaise: rs(11.8) });
+    const summary = (await app.inject({ method: 'GET', url: '/dashboard/api/analytics/settlements?month=2026-10', headers: cookie })).json();
+    expect(summary).toMatchObject({ captured: { count: 1, amountPaise: rs(2500) }, settled: { count: 1, netPaise: rs(2488.2), feesPaise: rs(11.8) }, settledShare: 1, unmatchedLines: { count: 1, amountPaise: rs(99) } });
+    const csv = (await app.inject({ method: 'GET', url: '/dashboard/api/analytics/statement.csv?month=2026-10', headers: cookie })).body;
+    expect(csv).toContain('Settlement,Settled to your account (net),1,2488.20,248820,100.00%');
+  });
+});

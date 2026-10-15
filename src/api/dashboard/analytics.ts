@@ -34,6 +34,8 @@ export const analyticsRoutes = (ctx: AppContext) => async (app: FastifyInstance)
 
   app.get('/dashboard/api/analytics/issues', async (req) => ctx.analytics.issues.summary(userOf(req).merchantId, period(req)));
 
+  app.get('/dashboard/api/analytics/settlements', async (req) => ctx.analytics.settlements.summary(userOf(req).merchantId, period(req)));
+
   const sendCsv = async (req: FastifyRequest, reply: FastifyReply, kind: 'statement' | 'value-events') => {
     const merchantId = userOf(req).merchantId;
     const p = period(req);

@@ -1,0 +1,65 @@
+-- Adds settlement facts (Phase 3 reconciliation) to the unified read model. Columns are appended,
+-- so CREATE OR REPLACE keeps the existing ones.
+-- Presentation-only: the underlying payments/debits tables and state machines are unchanged.
+CREATE OR REPLACE VIEW "merchant_payments_v" AS
+SELECT
+  'COLLECT'::text                                   AS "subject_type",
+  p."id",
+  p."merchant_id",
+  p."order_id",
+  p."amount_paise",
+  p."state"                                         AS "raw_state",
+  p."state"                                         AS "domain_state",
+  COALESCE(t."psp_id", p."psp_id")                  AS "psp_id",
+  p."created_at",
+  GREATEST(p."updated_at", COALESCE(t."updated_at", p."updated_at")) AS "last_updated_at",
+  p."created_at"                                    AS "pending_since",
+  false                                             AS "awaiting_execution",
+  NULL::timestamptz                                 AS "scheduled_at",
+  t."id"                                            AS "tracking_id",
+  t."upi_rrn",
+  t."npci_txn_id",
+  t."customer_debit",
+  t."capture",
+  t."reversal_status",
+  t."reversal_initiated_at",
+  t."reversal_completed_at",
+  t."verification_status",
+  t."settlement_status",
+  t."settled_at",
+  t."settlement_utr",
+  t."settled_amount_paise",
+  t."settlement_fee_paise"
+FROM "payments" p
+LEFT JOIN "payment_tracking" t ON t."subject_type" = 'COLLECT' AND t."subject_id" = p."id"
+UNION ALL
+SELECT
+  'AUTOPAY'::text,
+  d."id",
+  d."merchant_id",
+  d."order_id",
+  d."amount_paise",
+  d."state",
+  CASE WHEN d."state" IN ('SUCCEEDED', 'FAILED') THEN d."state" ELSE 'PENDING' END,
+  COALESCE(t."psp_id", d."last_psp_id"),
+  d."created_at",
+  GREATEST(d."updated_at", COALESCE(t."updated_at", d."updated_at")),
+  COALESCE(d."executing_since", d."scheduled_at"),
+  d."state" = 'SCHEDULED',
+  d."scheduled_at",
+  t."id",
+  t."upi_rrn",
+  t."npci_txn_id",
+  t."customer_debit",
+  t."capture",
+  t."reversal_status",
+  t."reversal_initiated_at",
+  t."reversal_completed_at",
+  t."verification_status",
+  t."settlement_status",
+  t."settled_at",
+  t."settlement_utr",
+  t."settled_amount_paise",
+  t."settlement_fee_paise"
+FROM "debits" d
+LEFT JOIN "payment_tracking" t ON t."subject_type" = 'AUTOPAY' AND t."subject_id" = d."id";

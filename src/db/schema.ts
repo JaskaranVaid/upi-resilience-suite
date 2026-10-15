@@ -496,4 +496,9 @@ export const merchantPaymentsView = pgView('merchant_payments_v', {
   reversalInitiatedAt: ts('reversal_initiated_at'),
   reversalCompletedAt: ts('reversal_completed_at'),
   verificationStatus: text('verification_status').$type<VerificationStatus>(),
+  settlementStatus: text('settlement_status').$type<SettlementStatus>(),
+  settledAt: ts('settled_at'),
+  settlementUtr: text('settlement_utr'),
+  settledAmountPaise: money('settled_amount_paise'),
+  settlementFeePaise: money('settlement_fee_paise'),
 }).existing();

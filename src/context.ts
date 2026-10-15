@@ -1,6 +1,7 @@
 import { realSleep, systemClock, type Clock, type Sleep } from './clock.js';
 import { IssueAnalytics } from './analytics/issues.js';
 import { PspAnalytics } from './analytics/psps.js';
+import { SettlementAnalytics } from './analytics/settlements.js';
 import { StatementService } from './analytics/statement.js';
 import { ValueService } from './analytics/value.js';
 import { SessionService, type AuthConfig } from './auth/sessions.js';
@@ -57,7 +58,7 @@ export interface AppContext {
   secureCookies: boolean;
   /** HMAC key for payment-scoped customer status tokens. */
   customerTokenSecret: string;
-  analytics: { value: ValueService; psps: PspAnalytics; issues: IssueAnalytics; statement: StatementService };
+  analytics: { value: ValueService; psps: PspAnalytics; issues: IssueAnalytics; statement: StatementService; settlements: SettlementAnalytics };
   webhookIngest: PspWebhookIngest;
   /** Per-caller request limits; null disables them. */
   rateLimits: RateLimits | null;
@@ -111,6 +112,7 @@ export function buildContext(args: {
   const tracking = new TrackingService({ db: args.db, clock, psps, cfg: polling });
   const value = new ValueService({ db: args.db });
   const issues = new IssueAnalytics({ db: args.db });
+  const settlements = new SettlementAnalytics({ db: args.db });
   const webhookTargets = args.webhookTargets ?? 'any';
   const rateLimits = args.rateLimits === null ? null : { ...DEFAULT_RATE_LIMITS, ...args.rateLimits };
   // Production policy: connect only to public addresses, checked at connect time (no DNS rebinding).
@@ -140,7 +142,13 @@ export function buildContext(args: {
     queries: new PaymentQueryService({ db: args.db, clock, cfg: polling, psps }),
     secureCookies: args.secureCookies ?? false,
     customerTokenSecret: args.customerTokenSecret ?? 'dev-customer-token-secret-not-for-production',
-    analytics: { value, psps: new PspAnalytics({ db: args.db }), issues, statement: new StatementService({ db: args.db, value, issues }) },
+    analytics: {
+      value,
+      psps: new PspAnalytics({ db: args.db }),
+      issues,
+      statement: new StatementService({ db: args.db, value, issues, settlements }),
+      settlements,
+    },
     webhookIngest: new PspWebhookIngest({ db: args.db, clock, tracking }),
     rateLimits,
     authFailures: rateLimits ? new AuthFailureLimiter(rateLimits.authFailuresPerMinute) : null,

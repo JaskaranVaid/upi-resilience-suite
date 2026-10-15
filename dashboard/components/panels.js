@@ -1,5 +1,5 @@
 import { html } from '../lib/html.js';
-import { when } from '../lib/format.js';
+import { money as inr, when } from '../lib/format.js';
 
 /** "Was the customer charged? Did we capture it? Has it gone back?" — answered side by side. */
 export function moneyPanel(money) {
@@ -21,6 +21,14 @@ export function moneyPanel(money) {
         ${r.initiatedAt ? html`<div class="note">Initiated ${when(r.initiatedAt)}</div>` : ''}
         ${r.completedAt ? html`<div class="note">Completed ${when(r.completedAt)}</div>` : ''}
       </div>
+      ${money.settlement
+        ? html`<div class="cell">
+            <div class="q">Settled to your bank?</div>
+            <div class="a">${money.settlement.label}</div>
+            ${money.settlement.utr ? html`<div class="note">UTR ${money.settlement.utr}${money.settlement.settledAt ? html` · ${when(money.settlement.settledAt)}` : ''}</div>` : ''}
+            ${money.settlement.feePaise !== null && money.settlement.feePaise !== undefined ? html`<div class="note">PSP fees ${inr(money.settlement.feePaise)}</div>` : ''}
+          </div>`
+        : ''}
     </div>`;
 }
 

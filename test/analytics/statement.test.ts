@@ -1,3 +1,4 @@
+import { SettlementAnalytics } from '../../src/analytics/settlements.js';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { csvCell, slug, toCsv } from '../../src/analytics/csv.js';
 import { IssueAnalytics } from '../../src/analytics/issues.js';
@@ -65,7 +66,7 @@ describe('StatementService', () => {
   beforeEach(async () => {
     ({ db } = await freshDb());
     merchantId = (await seedMerchant(db)).id;
-    svc = new StatementService({ db, value: new ValueService({ db }), issues: new IssueAnalytics({ db }) });
+    svc = new StatementService({ db, value: new ValueService({ db }), issues: new IssueAnalytics({ db }), settlements: new SettlementAnalytics({ db }) });
   });
 
   const saving = (type: SavingsType, amountPaise: number, at: string, refId: string) =>

@@ -211,7 +211,7 @@ async function issuesTab(el, params) {
 }
 
 async function statementTab(el, params, me) {
-  const [v, s] = await Promise.all([api.analyticsValue(params), api.analyticsIssues(params)]);
+  const [v, s, st] = await Promise.all([api.analyticsValue(params), api.analyticsIssues(params), api.analyticsSettlements(params)]);
   const u = v.uplift;
   const month = v.period.month;
   const csv = (kind) => `/dashboard/api/analytics/${kind}.csv?month=${encodeURIComponent(month)}`;
@@ -251,6 +251,15 @@ async function statementTab(el, params, me) {
         <tr><td>Bank auto-reversals completed</td><td class="right num">${s.reversalsCompleted.count} · ${money(s.reversalsCompleted.amountPaise)}</td></tr>
         <tr><td>UDIR complaints raised</td><td class="right num">${s.complaints.live} live · ${s.complaints.simulated} simulated</td></tr>
       </tbody></table></div>
+      <h3>Settlement</h3>
+      <div class="table-wrap mb"><table><tbody>
+        <tr><td>Captured payments</td><td class="right num">${st.captured.count} · ${money(st.captured.amountPaise)}</td></tr>
+        <tr><td>Settled to your account (net of PSP fees)</td><td class="right num">${st.settled.count} · ${money(st.settled.netPaise)} (${pct(st.settledShare)})</td></tr>
+        <tr><td>PSP fees and taxes</td><td class="right num">${money(st.settled.feesPaise)}</td></tr>
+        <tr><td>Settled amount differs from captured</td><td class="right num">${st.mismatched}</td></tr>
+        <tr><td>Not yet settled</td><td class="right num">${st.unsettled}</td></tr>
+      </tbody></table></div>
+      <p class="method">${st.methodNote}</p>
       <p class="method">${u.methodNote}</p>
       <p class="method">All figures come from your own payments processed through the suite in this billing month (IST). Simulated UDIR complaints were made against a mock PSP and never sent to NPCI.</p>
     </article>`,

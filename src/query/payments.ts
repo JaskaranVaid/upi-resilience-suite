@@ -77,6 +77,11 @@ export const REVERSAL_LABELS: Record<string, string> = {
   COMPLETED: 'Reversed to customer',
   UNKNOWN: 'Not yet known',
 };
+export const SETTLEMENT_LABELS: Record<string, string> = {
+  UNSETTLED: 'Not yet settled',
+  SETTLED: 'Settled to your account',
+  MISMATCH: 'Settled amount differs from captured amount',
+};
 const VERIFICATION_LABELS: Record<string, string> = {
   NOT_REQUIRED: 'Not needed',
   IN_PROGRESS: 'Verification in progress',
@@ -199,6 +204,18 @@ export class PaymentQueryService {
           initiatedAt: row.reversalInitiatedAt,
           completedAt: row.reversalCompletedAt,
         },
+        // Only meaningful once captured; from the PSP's settlement report.
+        settlement:
+          base!.capture === 'CAPTURED'
+            ? {
+                code: row.settlementStatus ?? 'UNSETTLED',
+                label: SETTLEMENT_LABELS[row.settlementStatus ?? 'UNSETTLED'],
+                settledAt: row.settledAt,
+                utr: row.settlementUtr,
+                netAmountPaise: row.settledAmountPaise,
+                feePaise: row.settlementFeePaise,
+              }
+            : null,
       },
       resolution: {
         verification: { code: row.verificationStatus ?? 'NOT_REQUIRED', label: VERIFICATION_LABELS[row.verificationStatus ?? 'NOT_REQUIRED'] },

@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { rupees, toCsv } from './csv.js';
 import type { IssueAnalytics } from './issues.js';
+import type { SettlementAnalytics } from './settlements.js';
 import type { Period } from './period.js';
 import { VALUE_LINES, type ValueService } from './value.js';
 
@@ -15,13 +16,14 @@ type Rows<T> = { rows: T[] };
 
 /** The billing-cycle statement: value, success uplift and payment issues, plus line items. */
 export class StatementService {
-  constructor(private readonly deps: { db: Db; value: ValueService; issues: IssueAnalytics }) {}
+  constructor(private readonly deps: { db: Db; value: ValueService; issues: IssueAnalytics; settlements: SettlementAnalytics }) {}
 
   async summaryCsv(merchantId: string, period: Period): Promise<string> {
-    const [v, u, i] = await Promise.all([
+    const [v, u, i, s] = await Promise.all([
       this.deps.value.summary(merchantId, period),
       this.deps.value.successUplift(merchantId, period),
       this.deps.issues.summary(merchantId, period),
+      this.deps.settlements.summary(merchantId, period),
     ]);
     const rows: unknown[][] = [
       ...v.lines.map((l) => ['Value delivered', l.label, l.count, rupees(l.amountPaise), l.amountPaise, l.inTotal ? 'counted in total' : 'not counted in total', l.methodNote]),
@@ -35,6 +37,11 @@ export class StatementService {
       ['Payment issues', 'Median time to resolve', '', '', '', hours(i.resolved.medianTimeToResolutionMs), 'Opened to resolved, for issues resolved in the period.'],
       ['Payment issues', 'Bank auto-reversals completed', i.reversalsCompleted.count, rupees(i.reversalsCompleted.amountPaise), i.reversalsCompleted.amountPaise, '', ''],
       ['Payment issues', 'UDIR complaints raised', i.complaints.raised, '', '', `${i.complaints.live} live, ${i.complaints.simulated} simulated`, 'Simulated complaints were made against a mock PSP and never sent to NPCI.'],
+      ['Settlement', 'Captured payments', s.captured.count, rupees(s.captured.amountPaise), s.captured.amountPaise, '', s.methodNote],
+      ['Settlement', 'Settled to your account (net)', s.settled.count, rupees(s.settled.netPaise), s.settled.netPaise, pct(s.settledShare), ''],
+      ['Settlement', 'PSP fees and taxes', '', rupees(s.settled.feesPaise), s.settled.feesPaise, '', ''],
+      ['Settlement', 'Settled amount differs from captured', s.mismatched, '', '', '', ''],
+      ['Settlement', 'Not yet settled', s.unsettled, '', '', '', ''],
     ];
     return toCsv(STATEMENT_HEADER, rows);
   }
