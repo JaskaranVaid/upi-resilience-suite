@@ -183,20 +183,24 @@ describe('Router — collect failover (status check before failover)', () => {
     expect(pspB.calls).toHaveLength(1);
   });
 
-  it('fails over when the status check itself errors', async () => {
+  it('does not fail over when the status check itself errors: the outcome is unknown, so it is pending', async () => {
     const { run, pspA, pspB } = collectSetup({ script: [BANK_DOWN] }, { script: [OK('b1')] });
     pspA.status = async () => {
       throw new Error('connection reset');
     };
     const out = await run();
-    expect(out.result).toEqual(OK('b1'));
-    expect(pspB.calls).toHaveLength(1);
+    expect(out.result).toEqual({ kind: 'PENDING' });
+    expect(out.pspId).toBe('pspA');
+    expect(pspB.calls).toHaveLength(0);
+    // The failed lookup is still on record as a provider error.
+    expect(out.attempts.at(-1)).toMatchObject({ op: 'status', result: { kind: 'TECHNICAL_DECLINE', code: 'PSP_ERROR' } });
   });
 
   it('does not fail over a collect when the time budget is spent (cannot confirm safely)', async () => {
     const { run, pspA, pspB } = collectSetup({ script: [BANK_DOWN], latencyMs: 2000 }, { script: [OK()] }, 1000);
     const out = await run();
-    expect(out.result).toEqual(BANK_DOWN);
+    // Unconfirmed: the collect may be live at A, so it is pending (the poller resolves it), not failed.
+    expect(out.result).toEqual({ kind: 'PENDING' });
     expect(pspA.calls.map((c) => c.op)).toEqual(['collect']);
     expect(pspB.calls).toHaveLength(0);
   });
@@ -233,7 +237,29 @@ describe('Router — mandate failover (status check before failover)', () => {
     const pspB = new MockPsp('pspB', { script: [OK('b1')] });
     const router = new Router([slow, pspB], new HealthTracker({}, clock), clock, clock.sleep, { maxTotalMs: 30_000 });
     const out = await router.execute({ op: 'mandate', candidates: ['pspA', 'pspB'], amountPaise: 49900, mandateRef: 'UMN1', baseRef: 'dbt_1' });
-    expect(out.result).toEqual(BANK_DOWN);
+    // Pending, so the worker confirms this txnRef by status instead of retrying with a new one.
+    expect(out.result).toEqual({ kind: 'PENDING' });
+    expect(out.txnRef).toBe('dbt_1-1');
+    expect(pspB.calls).toHaveLength(0);
+  });
+
+  it('does not fail over a mandate execution when the status lookup errors', async () => {
+    const { run, pspA, pspB } = setup({ script: [BANK_DOWN] }, { script: [OK('b1')] });
+    pspA.status = async () => {
+      throw new Error('503 from status API');
+    };
+    const out = await run();
+    expect(out.result).toEqual({ kind: 'PENDING' });
+    expect(pspB.calls).toHaveLength(0);
+  });
+
+  it('treats a repeatedly timing-out PSP whose status lookups error as pending, never failing over', async () => {
+    const { run, pspA, pspB } = setup({ script: [TIMEOUT, TIMEOUT] }, { script: [OK('b1')] });
+    pspA.status = async () => {
+      throw new Error('status API down');
+    };
+    const out = await run();
+    expect(out.result).toEqual({ kind: 'PENDING' });
     expect(pspB.calls).toHaveLength(0);
   });
 });

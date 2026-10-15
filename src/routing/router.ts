@@ -44,6 +44,8 @@ export interface RouteOutcome {
 }
 
 const TIMEOUT: PspResult = { kind: 'TECHNICAL_DECLINE', code: 'TIMEOUT' };
+const PENDING: PspResult = { kind: 'PENDING' };
+const isTimeout = (r: PspResult) => r.kind === 'TECHNICAL_DECLINE' && r.code === 'TIMEOUT';
 
 /**
  * Cascading PSP router.
@@ -98,16 +100,15 @@ export class Router {
       const psp = this.adapter(pspId);
       const txnRef = `${req.baseRef}-${++seq}`;
 
+      // The request may have gone through at this PSP despite the error (e.g. a connection reset
+      // after the PSP accepted it). Sending it again — via another PSP, or later with a fresh
+      // reference — could debit the customer twice. So a technical decline only stands once the
+      // PSP itself confirms nothing is live; if we can't confirm (lookup fails, no time left), the
+      // outcome is unknown and is returned as PENDING, to be resolved by status checks.
       let r = await this.attempt(psp, req, txnRef, attempts);
-      if (r.kind === 'TECHNICAL_DECLINE' && r.code === 'TIMEOUT') {
-        if (!outOfTime()) r = await this.resolveTimeout(psp, req, txnRef, attempts);
-      } else if (r.kind === 'TECHNICAL_DECLINE') {
-        // The request may have gone through at this PSP despite the error (e.g. a connection reset
-        // after the PSP accepted it). Sending it again via another PSP could debit the customer
-        // twice, so only fail over once we've confirmed there's nothing live here — and if there's
-        // no time left to confirm, don't fail over.
-        if (outOfTime()) return this.outcome(r, pspId, txnRef, attempts, probe);
-        r = await this.confirmBeforeFailover(psp, txnRef, r, attempts, this.ctxOf(req));
+      if (isTimeout(r)) r = outOfTime() ? PENDING : await this.resolveTimeout(psp, req, txnRef, attempts);
+      if (r.kind === 'TECHNICAL_DECLINE' && !isTimeout(r)) {
+        r = outOfTime() ? PENDING : await this.confirmBeforeFailover(psp, txnRef, r, attempts, this.ctxOf(req));
       }
       last = this.outcome(r, pspId, txnRef, attempts, probe);
       if (r.kind !== 'TECHNICAL_DECLINE') return last;
@@ -116,22 +117,40 @@ export class Router {
     return last ?? { result: { kind: 'TECHNICAL_DECLINE', code: 'PSP_ERROR' }, attempts, hadTechnicalDecline: attempts.length > 0 };
   }
 
-  /** After a timeout: wait, ask the PSP what happened, and retry once only if it never saw the debit. */
+  /**
+   * After a timeout: wait, ask the PSP what happened, and retry once (same txnRef) only if it has
+   * no record. TIMEOUT comes back only when the PSP twice confirmed it has no record — safe to fail over.
+   */
   private async resolveTimeout(psp: PspAdapter, req: RouteRequest, txnRef: string, attempts: AttemptRecord[]): Promise<PspResult> {
     for (let retried = false; ; retried = true) {
       await this.waitBeforeStatus();
-      const s = await this.track(psp.id, txnRef, 'status', attempts, () => psp.status(txnRef, this.ctxOf(req)));
+      const s = await this.lookup(psp, txnRef, this.ctxOf(req), attempts);
+      if (s.kind === 'UNKNOWN') return PENDING;
       if (s.kind === 'SUCCESS' || s.kind === 'PENDING' || s.kind === 'BUSINESS_DECLINE') return s;
       if (retried) return TIMEOUT;
       const r = await this.attempt(psp, req, txnRef, attempts);
-      if (!(r.kind === 'TECHNICAL_DECLINE' && r.code === 'TIMEOUT')) return r;
+      if (!isTimeout(r)) return r;
     }
   }
 
-  /** Returns the live/terminal status if the PSP has one, else the original decline (safe to fail over). */
+  /** The live/terminal status if the PSP has one; the original decline only if the PSP confirms nothing is live. */
   private async confirmBeforeFailover(psp: PspAdapter, txnRef: string, decline: PspResult, attempts: AttemptRecord[], ctx: TxnContext): Promise<PspResult> {
-    const s = await this.track(psp.id, txnRef, 'status', attempts, () => psp.status(txnRef, ctx));
+    const s = await this.lookup(psp, txnRef, ctx, attempts);
+    if (s.kind === 'UNKNOWN') return PENDING;
     return s.kind === 'SUCCESS' || s.kind === 'PENDING' || s.kind === 'BUSINESS_DECLINE' ? s : decline;
+  }
+
+  /** A status lookup; UNKNOWN when the lookup itself fails (recorded as a provider error). */
+  private async lookup(psp: PspAdapter, txnRef: string, ctx: TxnContext, attempts: AttemptRecord[]): Promise<PspResult | { kind: 'UNKNOWN' }> {
+    const t0 = this.clock.now().getTime();
+    try {
+      const s = await psp.status(txnRef, ctx);
+      attempts.push({ pspId: psp.id, txnRef, op: 'status', result: s, latencyMs: this.clock.now().getTime() - t0 });
+      return s;
+    } catch {
+      attempts.push({ pspId: psp.id, txnRef, op: 'status', result: { kind: 'TECHNICAL_DECLINE', code: 'PSP_ERROR' }, latencyMs: this.clock.now().getTime() - t0 });
+      return { kind: 'UNKNOWN' };
+    }
   }
 
   private attempt(psp: PspAdapter, req: RouteRequest, txnRef: string, attempts: AttemptRecord[]): Promise<PspResult> {
