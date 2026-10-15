@@ -5,9 +5,10 @@ import { configureMdrEffectiveFrom, mdrStatus } from './config/rules.js';
 import { buildContext } from './context.js';
 import { createDb } from './db/client.js';
 import { assertSchemaCurrent, schemaStatus } from './db/migrate.js';
-import { DEFAULT_HEARTBEAT_FILE, writeHeartbeat } from './ops/lifecycle.js';
+import { DEFAULT_HEARTBEAT_FILE } from './ops/lifecycle.js';
 import { jsonLogger } from './ops/log.js';
 import { emitOpsMetrics } from './ops/metrics.js';
+import { startWorkerLoop } from './ops/worker-loop.js';
 import { buildAdapters } from './psp/factory.js';
 import { connectionAdapterFactory } from './psp/connections.js';
 import { SecretBox } from './security/secrets.js';
@@ -58,28 +59,18 @@ async function main() {
   }
 
   if (env.ROLE !== 'api') {
-    const heartbeatFile = env.HEARTBEAT_FILE ?? DEFAULT_HEARTBEAT_FILE;
-    let running = true;
-    let wake: () => void = () => {};
-    const loop = (async () => {
-      while (running) {
-        try {
-          await ctx.worker.runOnce();
-          await ctx.poller.runOnce();
-          await ctx.reconciler.runDue(); // throttled internally (daily settlement reports)
-          await ctx.dispatcher.runOnce();
-        } catch (e) {
-          log.error('worker tick failed', e);
-        }
-        await writeHeartbeat(heartbeatFile).catch((e) => log.warn('heartbeat write failed', { file: heartbeatFile, error: String(e) }));
-        if (running) await new Promise<void>((r) => ((wake = r), setTimeout(r, env.WORKER_POLL_MS)));
-      }
-    })();
-    stops.push(async () => {
-      running = false;
-      wake(); // skip the idle wait; a tick in progress finishes (claimed debits are never abandoned mid-call)
-      await loop;
+    const worker = startWorkerLoop({
+      tick: async () => {
+        await ctx.worker.runOnce();
+        await ctx.poller.runOnce();
+        await ctx.reconciler.runDue(); // throttled internally (daily settlement reports)
+        await ctx.dispatcher.runOnce();
+      },
+      heartbeatFile: env.HEARTBEAT_FILE ?? DEFAULT_HEARTBEAT_FILE,
+      pollMs: env.WORKER_POLL_MS,
+      log,
     });
+    stops.push(() => worker.stop());
     log.info(`worker polling every ${env.WORKER_POLL_MS}ms`);
 
     if (env.OPS_METRICS_INTERVAL_MS > 0) {
