@@ -56,7 +56,15 @@ export const mandateRoutes = (ctx: AppContext) => async (app: FastifyInstance) =
     const [m] = await ctx.db
       .insert(mandates)
       .values({ id: newId('mdt'), merchantId: merchant.id, ...body, eligiblePsps, createdAt: ctx.clock.now() })
+      .onConflictDoNothing({ target: [mandates.merchantId, mandates.mandateRef] })
       .returning();
+    if (!m) {
+      const [existing] = await ctx.db
+        .select({ id: mandates.id })
+        .from(mandates)
+        .where(and(eq(mandates.merchantId, merchant.id), eq(mandates.mandateRef, body.mandateRef)));
+      throw new AppError('CONFLICT', `Mandate ${body.mandateRef} is already registered as ${existing?.id}`);
+    }
     return reply.status(201).send(m);
   });
 

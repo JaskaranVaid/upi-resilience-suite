@@ -91,8 +91,9 @@ describe('Scheduler honours the provider notice window', () => {
     const app = buildApp(ctx);
     const m = await app.inject({ method: 'POST', url: '/v1/merchants', headers: { authorization: `Bearer ${'x'.repeat(20)}` }, payload: { name: 'M' } });
     const auth = { authorization: `Bearer ${m.json().apiKey}` };
+    let n = 0;
     const mandate = (eligiblePsps?: string[]) =>
-      app.inject({ method: 'POST', url: '/v1/mandates', headers: auth, payload: { mandateRef: 'sub_1', customerVpa: 'ab@okaxis', maxAmountPaise: 1000, ...(eligiblePsps ? { eligiblePsps } : {}) } });
+      app.inject({ method: 'POST', url: '/v1/mandates', headers: auth, payload: { mandateRef: `sub_${++n}`, customerVpa: 'ab@okaxis', maxAmountPaise: 1000, ...(eligiblePsps ? { eligiblePsps } : {}) } });
 
     const mixed = await mandate(['strict', 'loose']);
     expect(mixed.statusCode).toBe(400);

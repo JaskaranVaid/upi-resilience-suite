@@ -60,8 +60,10 @@ export class MandateImporter {
         const mandate = createMandate.parse(raw);
         const dup = firstRowOf.get(mandate.mandateRef);
         if (dup) throw new Error(`Duplicate of row ${dup}`);
+        const eligiblePsps = resolveEligiblePsps(available, mandate.eligiblePsps);
+        // Remember only valid rows, so a corrected repeat of a rejected row is still imported.
         firstRowOf.set(mandate.mandateRef, row);
-        valid.push({ row, mandate, eligiblePsps: resolveEligiblePsps(available, mandate.eligiblePsps) });
+        valid.push({ row, mandate, eligiblePsps });
       } catch (e) {
         result.rejected.push({ row, mandateRef: ref, reason: reasonOf(e) });
       }
@@ -80,15 +82,19 @@ export class MandateImporter {
     // Optionally confirm each mandate is live at its PSP before accepting it.
     const accepted = opts.verify ? await this.verify(fresh, available, result) : fresh;
 
+    // The unique (merchant, mandateRef) index makes concurrent or retried imports safe: a row that
+    // another request inserted meanwhile is simply counted as existing.
     const now = clock.now();
     for (let i = 0; i < accepted.length; i += 500) {
       const chunk = accepted.slice(i, i + 500);
-      if (chunk.length === 0) continue;
-      await db.insert(mandates).values(
-        chunk.map((v) => ({ id: newId('mdt'), merchantId, ...v.mandate, eligiblePsps: v.eligiblePsps, createdAt: now })),
-      );
+      const inserted = await db
+        .insert(mandates)
+        .values(chunk.map((v) => ({ id: newId('mdt'), merchantId, ...v.mandate, eligiblePsps: v.eligiblePsps, createdAt: now })))
+        .onConflictDoNothing({ target: [mandates.merchantId, mandates.mandateRef] })
+        .returning({ id: mandates.id });
+      result.created += inserted.length;
+      result.existing += chunk.length - inserted.length;
     }
-    result.created = accepted.length;
     result.rejected.sort((a, b) => a.row - b.row);
     return result;
   }

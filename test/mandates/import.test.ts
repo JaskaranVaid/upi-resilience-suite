@@ -105,3 +105,45 @@ describe('bulk mandate import', () => {
     expect((await importJson({ mandates: many })).json().error.message).toMatch(/At most 5000/);
   });
 });
+
+describe('mandate uniqueness', () => {
+  it('concurrent imports of the same file create each mandate once', async () => {
+    const { db } = await freshDb();
+    const clock = new FakeClock(ist('2026-10-15T14:00:00'));
+    const ctx = buildContext({ db, adapters: [new MockPsp('pspA')], adminToken: ADMIN, clock, sleep: clock.sleep });
+    const app = buildApp(ctx);
+    const key = (await app.inject({ method: 'POST', url: '/v1/merchants', headers: { authorization: `Bearer ${ADMIN}` }, payload: { name: 'M' } })).json().apiKey;
+    const rows = Array.from({ length: 40 }, (_, i) => ({ mandateRef: `UMN-${i}`, customerVpa: 'asha@okhdfc', maxAmountPaise: 100 }));
+    const send = () => app.inject({ method: 'POST', url: '/v1/mandates/import', headers: { authorization: `Bearer ${key}` }, payload: { mandates: rows } });
+    const [a, b] = (await Promise.all([send(), send()])).map((r) => r.json());
+    expect(a.created + b.created).toBe(40);
+    expect(a.existing + b.existing).toBe(40);
+    expect(await db.select().from(mandates)).toHaveLength(40);
+  });
+
+  it('registering the same mandate twice is a 409 naming the existing record', async () => {
+    const { db } = await freshDb();
+    const clock = new FakeClock(ist('2026-10-15T14:00:00'));
+    const app = buildApp(buildContext({ db, adapters: [new MockPsp('pspA')], adminToken: ADMIN, clock, sleep: clock.sleep }));
+    const key = (await app.inject({ method: 'POST', url: '/v1/merchants', headers: { authorization: `Bearer ${ADMIN}` }, payload: { name: 'M' } })).json().apiKey;
+    const create = () => app.inject({ method: 'POST', url: '/v1/mandates', headers: { authorization: `Bearer ${key}` }, payload: { mandateRef: 'UMN-9', customerVpa: 'asha@okhdfc', maxAmountPaise: 100 } });
+    const first = (await create()).json();
+    const again = await create();
+    expect(again.statusCode).toBe(409);
+    expect(again.json().error.message).toContain(first.id);
+  });
+
+  it('imports a corrected repeat of a rejected row', async () => {
+    const { db } = await freshDb();
+    const clock = new FakeClock(ist('2026-10-15T14:00:00'));
+    const app = buildApp(buildContext({ db, adapters: [new MockPsp('pspA')], adminToken: ADMIN, clock, sleep: clock.sleep }));
+    const key = (await app.inject({ method: 'POST', url: '/v1/merchants', headers: { authorization: `Bearer ${ADMIN}` }, payload: { name: 'M' } })).json().apiKey;
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/mandates/import',
+      headers: { authorization: `Bearer ${key}` },
+      payload: { mandates: [{ mandateRef: 'UMN-7', customerVpa: 'asha@okhdfc', maxAmountPaise: 100, eligiblePsps: ['nope'] }, { mandateRef: 'UMN-7', customerVpa: 'asha@okhdfc', maxAmountPaise: 100 }] },
+    });
+    expect(res.json()).toMatchObject({ created: 1, rejected: [{ row: 1 }] });
+  });
+});

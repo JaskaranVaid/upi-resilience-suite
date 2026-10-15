@@ -45,13 +45,16 @@ export async function seedMerchant(db: Db, overrides: Partial<typeof merchants.$
   return m!;
 }
 
+let mandateSeq = 0;
+
 export async function seedMandate(db: Db, merchantId: string, overrides: Partial<typeof mandates.$inferInsert> = {}) {
   const [m] = await db
     .insert(mandates)
     .values({
       id: newId('mdt'),
       merchantId,
-      mandateRef: 'UMN-123@psp',
+      // Unique per call: a merchant can register each mandate reference only once.
+      mandateRef: `UMN-${++mandateSeq}@psp`,
       customerVpa: 'customer@okbank',
       maxAmountPaise: rs(15000),
       eligiblePsps: ['pspA', 'pspB'],

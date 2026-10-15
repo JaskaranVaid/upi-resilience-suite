@@ -85,6 +85,13 @@
       "when": 1792057284865,
       "tag": "0011_drop_merchant_key_hash",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792058890514,
+      "tag": "0012_mandate_ref_unique",
+      "breakpoints": true
     }
   ]
 }

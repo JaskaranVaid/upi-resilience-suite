@@ -85,7 +85,9 @@ export const vendors = pgTable(
 
 export type MandateStatus = 'ACTIVE' | 'PAUSED' | 'REVOKED';
 
-export const mandates = pgTable('mandates', {
+export const mandates = pgTable(
+  'mandates',
+  {
   id: text('id').primaryKey(),
   merchantId: text('merchant_id').notNull().references(() => merchants.id),
   /** UMN / mandate reference at the PSP. */
@@ -98,7 +100,10 @@ export const mandates = pgTable('mandates', {
   noAfaLimitPaise: money('no_afa_limit_paise'),
   status: text('status').$type<MandateStatus>().notNull().default('ACTIVE'),
   createdAt: createdAt(),
-});
+  },
+  // One record per mandate per merchant: two records for one UMN could each be debited.
+  (t) => [uniqueIndex('mandates_merchant_ref').on(t.merchantId, t.mandateRef)],
+);
 
 export type DebitState = 'SCHEDULED' | 'EXECUTING' | 'PENDING_CONFIRMATION' | 'SUCCEEDED' | 'FAILED';
 

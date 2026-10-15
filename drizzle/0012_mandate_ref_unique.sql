@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "mandates_merchant_ref" ON "mandates" USING btree ("merchant_id","mandate_ref");

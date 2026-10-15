@@ -28,6 +28,7 @@ describe('Engine A — peak-aware AutoPay scheduler', () => {
   let worker: DebitWorker;
   let merchantId: string;
   let mandateId: string;
+  let mandateRef: string;
 
   async function setup(a: MockPspOptions = {}, b: MockPspOptions = {}, eligible = ['pspA', 'pspB']) {
     h = await freshDb();
@@ -38,7 +39,9 @@ describe('Engine A — peak-aware AutoPay scheduler', () => {
     service = new SchedulerService({ db: h.db, clock, router });
     worker = new DebitWorker({ db: h.db, clock, router });
     merchantId = (await seedMerchant(h.db)).id;
-    mandateId = (await seedMandate(h.db, merchantId, { eligiblePsps: eligible })).id;
+    const mandate = await seedMandate(h.db, merchantId, { eligiblePsps: eligible });
+    mandateId = mandate.id;
+    mandateRef = mandate.mandateRef;
   }
 
   afterEach(async () => h?.close());
@@ -64,7 +67,7 @@ describe('Engine A — peak-aware AutoPay scheduler', () => {
       expect(debit.scheduledAt.getTime()).toBeLessThan(ist('2026-10-16T17:00:00').getTime());
       expect(debit.scheduledAt.getTime() - clock.now().getTime()).toBeGreaterThanOrEqual(24 * 3600_000);
       expect(pspA.notices).toEqual([
-        { noticeRef: debit.id, mandateRef: 'UMN-123@psp', amountPaise: rs(499), executionDate: '2026-10-16' },
+        { noticeRef: debit.id, mandateRef: mandateRef, amountPaise: rs(499), executionDate: '2026-10-16' },
       ]);
       const hooks = await h.db.select().from(webhookOutbox);
       expect(hooks.map((w) => w.event)).toEqual(['debit.scheduled']);
@@ -259,7 +262,7 @@ describe('Engine A — peak-aware AutoPay scheduler', () => {
       // Simulate: worker claimed, sent to PSP (which succeeded), then crashed before saving.
       clock.set(debit.scheduledAt);
       const base = `${debit.id}-a1`;
-      await pspA.executeMandate({ txnRef: `${base}-1`, mandateRef: 'UMN-123@psp', amountPaise: rs(499), noticeRef: debit.id });
+      await pspA.executeMandate({ txnRef: `${base}-1`, mandateRef, amountPaise: rs(499), noticeRef: debit.id });
       await h.db.update(debits).set({ state: 'EXECUTING', attempts: 1, lastTxnRef: base, executingSince: clock.now() }).where(eq(debits.id, debit.id));
       clock.advance(10 * 60_000);
       await worker.runOnce();
