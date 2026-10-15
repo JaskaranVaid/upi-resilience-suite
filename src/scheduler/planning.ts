@@ -3,7 +3,7 @@ import type { mandates } from '../db/schema.js';
 import { AppError } from '../errors.js';
 import type { Router } from '../routing/router.js';
 import { chooseSlot } from '../rules/slots.js';
-import { HOUR_MS, istDateString } from '../rules/time.js';
+import { addIstDays, HOUR_MS, istDateString, istMidnight } from '../rules/time.js';
 
 type Mandate = typeof mandates.$inferSelect;
 
@@ -69,12 +69,17 @@ export function noticeWindow(router: Router, mandate: Mandate): NoticeWindow {
 
 /**
  * If the planned execution is further ahead than the provider accepts notices for, return when
- * to send the notice instead (an off-peak moment just inside the provider's window); else null.
+ * to send the notice instead (an off-peak moment inside the provider's window); else null.
+ *
+ * When the notice is sent, the execution is re-planned and may land at any off-peak time on the
+ * same date, so the notice is timed against the *end* of the execution date: every slot on that
+ * date is then within the provider's lead limit, and the notice is never deferred twice.
  */
 export function deferredNoticeAt(slot: Date, now: Date, win: NoticeWindow, seed: string): Date | null {
   if (win.maxNoticeLeadMs === null || slot.getTime() - now.getTime() <= win.maxNoticeLeadMs) return null;
   const rules = getRuleSet(now);
-  return chooseSlot({ earliest: new Date(slot.getTime() - win.maxNoticeLeadMs + HOUR_MS), seed: `${seed}:notice`, cfg: rules.windows });
+  const dateEnd = istMidnight(addIstDays(istDateString(slot), 1)).getTime();
+  return chooseSlot({ earliest: new Date(dateEnd - win.maxNoticeLeadMs + HOUR_MS), seed: `${seed}:notice`, cfg: rules.windows });
 }
 
 /** Pre-debit notices go via the mandate's primary PSP (the one the customer registered with). */

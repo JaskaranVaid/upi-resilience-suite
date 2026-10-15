@@ -116,6 +116,21 @@ describe('Scheduler honours the provider notice window', () => {
     expect(clock.now().getTime() - ist('2026-11-04T00:00:00').getTime()).toBeLessThan(49 * H);
   }, 120_000); // simulates hundreds of 15-minute retry cycles
 
+  it('times a deferred notice so that any slot on the execution date is inside the provider lead limit', async () => {
+    const { deferredNoticeAt } = await import('../../src/scheduler/planning.js');
+    const now = ist('2026-10-15T14:00:00');
+    const win = { minNoticeMs: 25 * H, maxNoticeLeadMs: 6 * DAY };
+    // Whatever slot was planned on 4 Nov, a re-plan may pick any other off-peak slot that day.
+    for (const planned of ['13:00:00', '14:37:12', '16:58:59']) {
+      for (const seed of ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']) {
+        const noticeAt = deferredNoticeAt(ist(`2026-11-04T${planned}`), now, win, seed)!;
+        expect(isRestricted(noticeAt, DEFAULT_WINDOWS)).toBe(false);
+        expect(ist('2026-11-04T16:59:00').getTime() - noticeAt.getTime()).toBeLessThanOrEqual(6 * DAY);
+        expect(ist('2026-11-04T13:00:00').getTime() - noticeAt.getTime()).toBeGreaterThanOrEqual(25 * H + 30 * 60_000);
+      }
+    }
+  });
+
   it('shows a pending notice in the debit view', async () => {
     const { debitView } = await import('../../src/scheduler/service.js');
     const d = await create('strict', { dueDate: '2026-11-04' });
