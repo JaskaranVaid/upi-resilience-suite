@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { bigint, boolean, index, integer, jsonb, pgTable, pgView, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+import { bigint, bigserial, boolean, index, integer, jsonb, pgTable, pgView, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 import type { Capture, ComplaintReason, ComplaintStatus, CustomerAction, CustomerDebit, PaymentChannel, PspMode, ReversalStatus } from '../psp/types.js';
 import type { CaseReason, CaseResolution, CaseStatus, EventType, SettlementStatus, SubjectType, VerificationStatus } from '../tracking/types.js';
 import type { MerchantCategory } from '../rules/mdr.js';
@@ -507,6 +507,62 @@ export const dashboardSessions = pgTable(
     revokedAt: ts('revoked_at'),
   },
   (t) => [index('sessions_user').on(t.userId)],
+);
+
+// ─── Phase 6: Merchantflo operators (ops console), audit, kill switch ────────────────────
+
+/** OWNER manages operators; OPERATOR can pause/lift and erase; VIEWER reads. */
+export type OperatorRole = 'OWNER' | 'OPERATOR' | 'VIEWER';
+
+/** Merchantflo staff. Separate from merchants' dashboard users; sign-in always needs a TOTP code. */
+export const operators = pgTable('operators', {
+  id: text('id').primaryKey(),
+  /** Stored lower-cased. */
+  email: text('email').notNull().unique(),
+  name: text('name').notNull(),
+  passwordHash: text('password_hash').notNull(),
+  /** TOTP secret, sealed with the credentials key ring. */
+  totpSecret: text('totp_secret').notNull(),
+  /** Last TOTP time step accepted: a code is never accepted twice. */
+  totpLastStep: integer('totp_last_step'),
+  role: text('role').$type<OperatorRole>().notNull(),
+  disabled: boolean('disabled').notNull().default(false),
+  failedLogins: integer('failed_logins').notNull().default(0),
+  lockedUntil: ts('locked_until'),
+  lastLoginAt: ts('last_login_at'),
+  createdAt: createdAt(),
+  updatedAt: ts('updated_at').notNull().defaultNow(),
+});
+
+export const operatorSessions = pgTable(
+  'operator_sessions',
+  {
+    id: text('id').primaryKey(),
+    operatorId: text('operator_id').notNull().references(() => operators.id),
+    tokenHash: text('token_hash').notNull().unique(),
+    createdAt: ts('created_at').notNull(),
+    lastSeenAt: ts('last_seen_at').notNull(),
+    expiresAt: ts('expires_at').notNull(),
+    revokedAt: ts('revoked_at'),
+  },
+  (t) => [index('operator_sessions_operator').on(t.operatorId)],
+);
+
+/** Every operator action and sign-in (who, what, on what, when). Append-only. */
+export const operatorAudit = pgTable(
+  'operator_audit',
+  {
+    id: text('id').primaryKey(),
+    /** Insertion order (several entries can share a timestamp). */
+    seq: bigserial('seq', { mode: 'number' }).notNull(),
+    /** Null for actions from the command line or the system. */
+    operatorId: text('operator_id'),
+    action: text('action').notNull(),
+    target: text('target'),
+    details: jsonb('details').$type<Record<string, unknown>>(),
+    createdAt: createdAt(),
+  },
+  (t) => [index('operator_audit_time').on(t.createdAt), index('operator_audit_seq').on(t.seq)],
 );
 
 /**

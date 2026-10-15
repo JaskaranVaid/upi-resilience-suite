@@ -34,6 +34,7 @@ import { AuthFailureLimiter } from './api/auth-failures.js';
 import { SecretBox } from './security/secrets.js';
 import { connectionAdapterFactory } from './psp/connections.js';
 import { Lifecycle } from './ops/lifecycle.js';
+import { OperatorService } from './ops-console/operators.js';
 import type { Logger } from './ops/log.js';
 import type { ConnectionAdapterFactory } from './psp/registry.js';
 
@@ -80,6 +81,8 @@ export interface AppContext {
   publicBaseUrl: string | null;
   /** Draining state: /readyz fails once shutdown begins. */
   lifecycle: Lifecycle;
+  /** Merchantflo staff accounts (ops console). */
+  operators: OperatorService;
 }
 
 export function buildContext(args: {
@@ -174,5 +177,6 @@ export function buildContext(args: {
     connectionAdapters,
     publicBaseUrl: args.publicBaseUrl ?? null,
     lifecycle: new Lifecycle(),
+    operators: new OperatorService({ db: args.db, clock, secrets }),
   };
 }

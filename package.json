@@ -19,6 +19,7 @@
     "db:migrate": "tsx src/main.ts --migrate",
     "check:migrations": "tsx scripts/check-migrations.ts",
     "db:verify": "tsx src/ops/verify-cli.ts",
+    "ops:operator": "tsx scripts/ops-operator.ts",
     "demo": "tsx scripts/demo.ts",
     "demo:dashboard": "tsx scripts/demo-dashboard.ts",
     "smoke:cashfree": "tsx scripts/cashfree-sandbox-smoke.ts",
