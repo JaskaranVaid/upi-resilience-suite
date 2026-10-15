@@ -13,8 +13,11 @@ export function paymentView(p: Payment) {
     id: p.id,
     orderId: p.orderId,
     amountPaise: p.amountPaise,
+    channel: p.channel,
     payerVpa: p.payerVpa,
     state: p.state,
+    /** What the customer must do to pay; present while the payment is pending. */
+    customerAction: p.state === 'PENDING' ? p.customerAction : null,
     pspId: p.pspId,
     pspTxnId: p.pspTxnId,
     lastErrorCode: p.lastErrorCode,

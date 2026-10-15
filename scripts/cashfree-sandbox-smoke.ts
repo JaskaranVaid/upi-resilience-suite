@@ -134,7 +134,7 @@ async function main() {
   if (env.SMOKE_UPI_ID && env.SMOKE_PHONE) {
     console.log('2. UPI collect (₹1)');
     const txnRef = `${run}-collect`;
-    const res = await cf.collect({ txnRef, payerVpa: env.SMOKE_UPI_ID, amountPaise: 100, customerPhone: env.SMOKE_PHONE });
+    const res = await cf.collect({ txnRef, channel: 'UPI_COLLECT', payerVpa: env.SMOKE_UPI_ID, amountPaise: 100, customerPhone: env.SMOKE_PHONE });
     res.kind === 'PENDING' ? ok(`collect request sent (order ${txnRef})`) : fail(`collect returned ${JSON.stringify(res)} — check the x-client-* headers assumption`);
     for (let i = 0; i < 12 && res.kind === 'PENDING'; i++) {
       await new Promise((r) => setTimeout(r, 10_000));

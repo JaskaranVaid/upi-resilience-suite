@@ -1,5 +1,5 @@
 import type { Clock, Sleep } from '../clock.js';
-import type { PspAdapter, PspResult, TxnContext } from '../psp/types.js';
+import type { PaymentChannel, PspAdapter, PspResult, TxnContext } from '../psp/types.js';
 import { PspRegistry } from '../psp/registry.js';
 import type { HealthTracker } from './health.js';
 
@@ -19,8 +19,11 @@ export interface RouteRequest {
   mandateRef?: string;
   /** Base payment the pre-debit notice was sent for (mandate executions); defaults to baseRef. */
   noticeRef?: string;
+  /** One-off payments: how the customer pays (default UPI_COLLECT). Only PSPs supporting it are tried. */
+  channel?: PaymentChannel;
   payerVpa?: string;
   customerPhone?: string;
+  netbankingBankCode?: string;
   /** Stable prefix for txnRefs (e.g. the debit id) so attempts are traceable. */
   baseRef: string;
 }
@@ -95,9 +98,12 @@ export class Router {
 
     // Candidates the registry can't resolve (e.g. a connection since deleted) are skipped.
     const resolved = new Map<string, PspAdapter>();
+    const channel = req.channel ?? 'UPI_COLLECT';
     for (const id of req.candidates) {
       try {
-        resolved.set(id, await this.psps.get(id));
+        const psp = await this.psps.get(id);
+        if (req.op === 'collect' && !psp.capabilities.channels.includes(channel)) continue;
+        resolved.set(id, psp);
       } catch {
         // not routable
       }
@@ -169,11 +175,18 @@ export class Router {
         psp.executeMandate({ txnRef, mandateRef, amountPaise: req.amountPaise, noticeRef: req.noticeRef ?? req.baseRef }),
       );
     }
-    if (!req.payerVpa) throw new Error('payerVpa required for collect');
-    const payerVpa = req.payerVpa;
-    const customerPhone = req.customerPhone;
+    const channel = req.channel ?? 'UPI_COLLECT';
+    if (channel === 'UPI_COLLECT' && !req.payerVpa) throw new Error('payerVpa required for a UPI collect');
+    const { payerVpa, customerPhone, netbankingBankCode } = req;
     return this.track(psp.id, txnRef, 'collect', attempts, () =>
-      psp.collect({ txnRef, payerVpa, amountPaise: req.amountPaise, ...(customerPhone ? { customerPhone } : {}) }),
+      psp.collect({
+        txnRef,
+        channel,
+        amountPaise: req.amountPaise,
+        ...(payerVpa ? { payerVpa } : {}),
+        ...(customerPhone ? { customerPhone } : {}),
+        ...(netbankingBankCode ? { netbankingBankCode } : {}),
+      }),
     );
   }
 

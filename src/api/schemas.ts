@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { AUTOPAY_NO_AFA_MAX_PAISE } from '../config/rules.js';
 import { PAYMENT_METHODS } from '../rules/steering.js';
+import { PAYMENT_CHANNELS } from '../psp/types.js';
 
 export const paise = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 export const positivePaise = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
@@ -93,7 +94,12 @@ export const splitRequest = z.object({
 
 export const createPayment = z.object({
   amountPaise: positivePaise,
-  payerVpa: vpa,
+  /** How the customer pays. Default: UPI_COLLECT when payerVpa is given, else UPI_INTENT. */
+  channel: z.enum(PAYMENT_CHANNELS).optional(),
+  /** Required for UPI_COLLECT. */
+  payerVpa: vpa.optional(),
+  /** NETBANKING directly to this bank (the PSP's bank code). */
+  netbankingBankCode: z.string().min(1).max(20).optional(),
   idempotencyKey,
   orderId: orderId.optional(),
   quoteId: z.string().optional(),

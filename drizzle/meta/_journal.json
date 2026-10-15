@@ -92,6 +92,13 @@
       "when": 1792058890514,
       "tag": "0012_mandate_ref_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1792059484495,
+      "tag": "0013_payment_channels",
+      "breakpoints": true
     }
   ]
 }

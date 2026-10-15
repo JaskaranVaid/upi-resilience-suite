@@ -5,7 +5,7 @@ import { paymentAttempts, payments } from '../db/schema.js';
 import { AppError } from '../errors.js';
 import { recordEvents, SYSTEM } from '../events/record.js';
 import { newId } from '../ids.js';
-import type { PspResult } from '../psp/types.js';
+import type { PaymentChannel, PspResult } from '../psp/types.js';
 import type { AttemptRecord, Router } from '../routing/router.js';
 import type { InitialOutcome, TrackingService } from '../tracking/service.js';
 import { applyPaymentOutcome, paymentView, type Payment } from './outcome.js';
@@ -14,7 +14,11 @@ export { paymentView, type Payment };
 
 export interface CreatePaymentInput {
   amountPaise: number;
-  payerVpa: string;
+  /** Default: UPI_COLLECT when payerVpa is given, else UPI_INTENT. */
+  channel?: PaymentChannel;
+  /** Required for UPI_COLLECT. */
+  payerVpa?: string;
+  netbankingBankCode?: string;
   idempotencyKey: string;
   orderId?: string;
   quoteId?: string;
@@ -46,7 +50,10 @@ export class PaymentService {
     const existing = await this.findByKey(merchantId, input.idempotencyKey);
     if (existing) return this.replay(existing, input);
 
-    const adapters = await router.psps.requireForMerchant(merchantId);
+    const channel: PaymentChannel = input.channel ?? (input.payerVpa ? 'UPI_COLLECT' : 'UPI_INTENT');
+    if (channel === 'UPI_COLLECT' && !input.payerVpa) throw new AppError('VALIDATION', 'payerVpa is required for a UPI collect');
+    const adapters = (await router.psps.requireForMerchant(merchantId)).filter((a) => a.capabilities.channels.includes(channel));
+    if (adapters.length === 0) throw new AppError('NO_PSP_CONNECTED', `None of this merchant's payment providers accepts ${channel} payments`);
     const pspIds = adapters.map((a) => a.id);
     const needsPhone = adapters.filter((a) => a.capabilities.collectRequires.includes('customerPhone')).map((a) => a.id);
     if (needsPhone.length > 0 && !input.customerPhone) {
@@ -61,7 +68,8 @@ export class PaymentService {
           id,
           merchantId,
           amountPaise: input.amountPaise,
-          payerVpa: input.payerVpa,
+          channel,
+          payerVpa: input.payerVpa ?? null,
           idempotencyKey: input.idempotencyKey,
           orderId: input.orderId ?? null,
           quoteId: input.quoteId ?? null,
@@ -81,7 +89,9 @@ export class PaymentService {
       op: 'collect',
       candidates: pspIds,
       amountPaise: input.amountPaise,
-      payerVpa: input.payerVpa,
+      channel,
+      ...(input.payerVpa ? { payerVpa: input.payerVpa } : {}),
+      ...(input.netbankingBankCode ? { netbankingBankCode: input.netbankingBankCode } : {}),
       ...(input.customerPhone ? { customerPhone: input.customerPhone } : {}),
       baseRef: id,
     });
@@ -92,7 +102,12 @@ export class PaymentService {
       await recordEvents(tx, { merchantId, subjectType: 'COLLECT', subjectId: id, actor: SYSTEM, now: doneAt }, [
         { type: 'PAYMENT_SUBMITTED', data: { pspId, attempts: outcome.attempts.length } },
       ]);
-      const p = await applyPaymentOutcome(tx, { id, result: outcome.result, pspId, hadTechnicalDecline: outcome.hadTechnicalDecline, now: doneAt });
+      let p = await applyPaymentOutcome(tx, { id, result: outcome.result, pspId, hadTechnicalDecline: outcome.hadTechnicalDecline, now: doneAt });
+      if (outcome.result.kind === 'PENDING' && outcome.result.action) {
+        // Kept on the payment so an idempotent replay hands back the same deeplink/QR/redirect.
+        const [withAction] = await tx.update(payments).set({ customerAction: outcome.result.action }).where(eq(payments.id, id)).returning();
+        p = withAction!;
+      }
       await tracking.recordOutcome(tx, {
         merchantId,
         subjectType: 'COLLECT',
@@ -123,7 +138,7 @@ export class PaymentService {
   }
 
   private replay(existing: Payment, input: CreatePaymentInput) {
-    if (existing.amountPaise !== input.amountPaise || existing.payerVpa !== input.payerVpa) {
+    if (existing.amountPaise !== input.amountPaise || (existing.payerVpa ?? undefined) !== input.payerVpa) {
       throw new AppError('IDEMPOTENCY_CONFLICT', 'Idempotency key was already used for a different payment');
     }
     return { payment: existing, created: false };

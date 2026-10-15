@@ -3,7 +3,7 @@ import { MockPsp, mockRrn } from '../../src/psp/mock.js';
 import { PspRegistry } from '../../src/psp/registry.js';
 import type { TransactionInquiry } from '../../src/psp/types.js';
 
-const collect = (psp: MockPsp, txnRef: string) => psp.collect({ txnRef, payerVpa: 'a@ok', amountPaise: 100 });
+const collect = (psp: MockPsp, txnRef: string) => psp.collect({ txnRef, channel: 'UPI_COLLECT', payerVpa: 'a@ok', amountPaise: 100 });
 
 describe('MockPsp — Phase 3 capabilities', () => {
   it('identifies itself as MOCK', () => {

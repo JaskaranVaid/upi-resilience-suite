@@ -11,11 +11,31 @@ export type BusinessDeclineCode =
   | 'LIMIT_EXCEEDED'
   | 'OTHER';
 
+/** How the customer pays for a one-off payment. */
+export const PAYMENT_CHANNELS = ['UPI_COLLECT', 'UPI_INTENT', 'UPI_QR', 'NETBANKING', 'CARD'] as const;
+export type PaymentChannel = (typeof PAYMENT_CHANNELS)[number];
+
+/**
+ * What the customer must do to complete a payment, as the PSP returned it. Deeplinks and QR data
+ * are passed through unmodified. Card details never reach us: cards use the PSP's own checkout.
+ */
+export type CustomerAction =
+  /** A collect request was sent to this VPA: the customer approves it in their UPI app. */
+  | { type: 'UPI_COLLECT'; vpa: string }
+  /** Open `url` (upi://pay…) on the customer's phone; `appUrls` target specific apps when given. */
+  | { type: 'UPI_INTENT'; url: string; appUrls: Record<string, string> }
+  /** Render `qrData` (a upi://pay… string) as a QR code, or show `qrImage` (base64 PNG) when given. */
+  | { type: 'UPI_QR'; qrData?: string; qrImage?: string }
+  /** Send the customer's browser to `url` (e.g. their bank's netbanking page). */
+  | { type: 'REDIRECT'; url: string }
+  /** Open the PSP's own checkout (its JS SDK) with these parameters. */
+  | { type: 'PSP_CHECKOUT'; provider: string; environment: 'sandbox' | 'production'; params: Record<string, string> };
+
 export type PspResult =
   /** upiRrn: the 12-digit UPI reference, when the PSP returns it inline. */
   | { kind: 'SUCCESS'; pspTxnId: string; upiRrn?: string }
-  /** Accepted but outcome not yet known — must not be retried. */
-  | { kind: 'PENDING' }
+  /** Accepted but outcome not yet known — must not be retried. `action`: what the customer must do. */
+  | { kind: 'PENDING'; action?: CustomerAction }
   /** Infrastructure failure (bank/switch/PSP). Safe to retry/fail over after a status check. */
   | { kind: 'TECHNICAL_DECLINE'; code: TechnicalDeclineCode }
   /** Customer-side failure. Never retried. */
@@ -88,6 +108,8 @@ export interface PspCapabilities {
   portableMandates: boolean;
   /** Fields a collect request must carry for this provider. */
   collectRequires: Array<'customerPhone'>;
+  /** Payment channels this provider can take one-off payments through. */
+  channels: PaymentChannel[];
 }
 
 /** Identifies what a txnRef belongs to, for providers that need more than the reference. */
@@ -106,9 +128,13 @@ export interface ExecuteMandateRequest {
 
 export interface CollectRequest {
   txnRef: string;
-  payerVpa: string;
+  channel: PaymentChannel;
+  /** Required for UPI_COLLECT. */
+  payerVpa?: string;
   amountPaise: number;
   customerPhone?: string;
+  /** NETBANKING straight to this bank (PSP bank code); otherwise the PSP's checkout lets the customer choose. */
+  netbankingBankCode?: string;
 }
 
 export type WebhookVerification = { ok: true; refs: string[] } | { ok: false; reason: string };

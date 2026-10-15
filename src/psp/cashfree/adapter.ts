@@ -75,6 +75,7 @@ export class CashfreeAdapter implements PspAdapter {
     udirComplaints: false, // no merchant-raised UDIR API; customers raise from their UPI app
     portableMandates: false, // a Cashfree subscription is executed through Cashfree only
     collectRequires: ['customerPhone'],
+    channels: ['UPI_COLLECT'],
   };
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
@@ -133,7 +134,7 @@ export class CashfreeAdapter implements PspAdapter {
             order_id: req.txnRef,
             order_amount: toRupees(req.amountPaise),
             order_currency: 'INR',
-            customer_details: { customer_id: customerIdFor(req.payerVpa), customer_phone: req.customerPhone },
+            customer_details: { customer_id: customerIdFor(req.payerVpa ?? req.customerPhone ?? req.txnRef), customer_phone: req.customerPhone },
           },
           idempotencyKey('order', req.txnRef),
         );

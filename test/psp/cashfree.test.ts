@@ -55,6 +55,7 @@ describe('CashfreeAdapter — configuration', () => {
       udirComplaints: false,
       portableMandates: false,
       collectRequires: ['customerPhone'],
+      channels: ['UPI_COLLECT'],
     });
   });
 
@@ -165,7 +166,7 @@ describe('CashfreeAdapter — UPI collect', () => {
       'POST /orders': () => ORDER,
       'POST /orders/sessions': () => ({ status: 200, body: { cf_payment_id: 1, payment_method: 'upi', channel: 'collect', action: 'custom' } }),
     });
-    const res = await adapter.collect({ txnRef: 'pay_1-1', payerVpa: 'asha@okhdfc', amountPaise: 250_000, customerPhone: '9876543210' });
+    const res = await adapter.collect({ channel: 'UPI_COLLECT', txnRef: 'pay_1-1', payerVpa: 'asha@okhdfc', amountPaise: 250_000, customerPhone: '9876543210' });
     expect(res).toEqual({ kind: 'PENDING' }); // the customer approves in their UPI app
     expect(requests.map((r) => `${r.method} ${r.path}`)).toEqual(['POST /orders', 'POST /orders/sessions']);
     expect(requests[0]!.body).toEqual({
@@ -185,13 +186,13 @@ describe('CashfreeAdapter — UPI collect', () => {
       'GET /orders/pay_1-1': () => ORDER,
       'POST /orders/sessions': () => ({ status: 200, body: {} }),
     });
-    expect(await adapter.collect({ txnRef: 'pay_1-1', payerVpa: 'ab@ok', amountPaise: 100, customerPhone: '9876543210' })).toEqual({ kind: 'PENDING' });
+    expect(await adapter.collect({ channel: 'UPI_COLLECT', txnRef: 'pay_1-1', payerVpa: 'ab@ok', amountPaise: 100, customerPhone: '9876543210' })).toEqual({ kind: 'PENDING' });
     expect(requests.map((r) => `${r.method} ${r.path}`)).toEqual(['POST /orders', 'GET /orders/pay_1-1', 'POST /orders/sessions']);
   });
 
   it('declines locally when the customer phone Cashfree requires is missing', async () => {
     const { adapter, requests } = fakeCashfree({});
-    expect(await adapter.collect({ txnRef: 'p', payerVpa: 'ab@ok', amountPaise: 100 })).toEqual({ kind: 'BUSINESS_DECLINE', code: 'OTHER' });
+    expect(await adapter.collect({ channel: 'UPI_COLLECT', txnRef: 'p', payerVpa: 'ab@ok', amountPaise: 100 })).toEqual({ kind: 'BUSINESS_DECLINE', code: 'OTHER' });
     expect(requests).toHaveLength(0);
   });
 

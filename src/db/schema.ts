@@ -1,5 +1,5 @@
 import { bigint, boolean, index, integer, jsonb, pgTable, pgView, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
-import type { Capture, ComplaintReason, ComplaintStatus, CustomerDebit, PspMode, ReversalStatus } from '../psp/types.js';
+import type { Capture, ComplaintReason, ComplaintStatus, CustomerAction, CustomerDebit, PaymentChannel, PspMode, ReversalStatus } from '../psp/types.js';
 import type { CaseReason, CaseResolution, CaseStatus, EventType, SubjectType, VerificationStatus } from '../tracking/types.js';
 import type { MerchantCategory } from '../rules/mdr.js';
 import type { MethodCosts, SteeringConfig } from '../rules/steering.js';
@@ -155,7 +155,12 @@ export const payments = pgTable(
     id: text('id').primaryKey(),
     merchantId: text('merchant_id').notNull().references(() => merchants.id),
     amountPaise: money('amount_paise').notNull(),
-    payerVpa: text('payer_vpa').notNull(),
+    /** How the customer pays. */
+    channel: text('channel').$type<PaymentChannel>().notNull().default('UPI_COLLECT'),
+    /** The payer's VPA (UPI collect only). */
+    payerVpa: text('payer_vpa'),
+    /** What the customer must do to pay, as the PSP returned it (deeplinks, QR, redirect, checkout). */
+    customerAction: jsonb('customer_action').$type<CustomerAction>(),
     idempotencyKey: text('idempotency_key').notNull(),
     /** Merchant's own order reference, optional. */
     orderId: text('order_id'),

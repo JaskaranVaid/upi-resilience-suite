@@ -6,6 +6,7 @@ import type {
   ComplaintStatus,
   ComplaintStatusResult,
   CollectRequest,
+  CustomerAction,
   ExecuteMandateRequest,
   MandateLookup,
   NoticeResult,
@@ -23,7 +24,25 @@ export const MOCK_CAPABILITIES: PspCapabilities = {
   udirComplaints: true,
   portableMandates: true,
   collectRequires: [],
+  channels: ['UPI_COLLECT', 'UPI_INTENT', 'UPI_QR', 'NETBANKING', 'CARD'],
 };
+
+/** A plausible customer action for a simulated payment (never a real PSP or bank URL). */
+function mockAction(req: CollectRequest, pspId: string): CustomerAction {
+  const upi = `upi://pay?pa=merchant.mock@${pspId}&pn=Mock%20Merchant&tr=${encodeURIComponent(req.txnRef)}&am=${(req.amountPaise / 100).toFixed(2)}&cu=INR`;
+  switch (req.channel) {
+    case 'UPI_INTENT':
+      return { type: 'UPI_INTENT', url: upi, appUrls: {} };
+    case 'UPI_QR':
+      return { type: 'UPI_QR', qrData: upi };
+    case 'NETBANKING':
+      return req.netbankingBankCode
+        ? { type: 'REDIRECT', url: `https://mock-bank.invalid/netbanking/${encodeURIComponent(req.netbankingBankCode)}?ref=${encodeURIComponent(req.txnRef)}` }
+        : { type: 'PSP_CHECKOUT', provider: 'mock', environment: 'sandbox', params: { reference: req.txnRef } };
+    default:
+      return { type: 'PSP_CHECKOUT', provider: 'mock', environment: 'sandbox', params: { reference: req.txnRef } };
+  }
+}
 
 /** Deterministic fake 12-digit UPI reference for a PSP + txnRef. */
 export function mockRrn(pspId: string, txnRef: string): string {
@@ -144,7 +163,11 @@ export class MockPsp implements PspAdapter {
 
   async collect(req: CollectRequest): Promise<PspResult> {
     this.calls.push({ op: 'collect', txnRef: req.txnRef, amountPaise: req.amountPaise });
-    return this.respond(req.txnRef);
+    const result = await this.respond(req.txnRef);
+    if (req.channel === 'UPI_COLLECT' || result.kind !== 'SUCCESS') return result;
+    // Intent/QR/redirect/checkout payments need the customer to act first: report PENDING with the
+    // action, while the ledger keeps the success a later status check will find (customer paid).
+    return { kind: 'PENDING', action: mockAction(req, this.id) };
   }
 
   async status(txnRef: string, ctx?: TxnContext): Promise<PspResult> {
