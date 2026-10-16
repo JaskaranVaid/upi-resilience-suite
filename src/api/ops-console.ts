@@ -1,4 +1,4 @@
-import { asc, desc, ilike } from 'drizzle-orm';
+import { asc, desc, eq, ilike } from 'drizzle-orm';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { AppContext } from '../context.js';
@@ -7,6 +7,7 @@ import { AppError } from '../errors.js';
 import { collectOpsMetrics } from '../ops/metrics.js';
 import { operatorView, type Operator } from '../ops-console/operators.js';
 import { pauseView } from '../ops-console/pauses.js';
+import { erasureFields, needsIdentifier } from './routes/privacy.js';
 
 export const OPS_COOKIE = 'mf_ops';
 export const OPS_CSRF_HEADER = 'x-ops-request';
@@ -33,6 +34,10 @@ const CAN_ACT: OperatorRole[] = ['OWNER', 'OPERATOR'];
 
 const loginBody = z.object({ email: z.string().min(3).max(320), password: z.string().min(1).max(1024), code: z.string().max(20) });
 const passwordBody = z.object({ current: z.string().min(1).max(1024), next: z.string().min(MIN_OPERATOR_PASSWORD, `at least ${MIN_OPERATOR_PASSWORD} characters`).max(1024) });
+const opsErasureBody = z
+  .object({ merchantId: z.string().min(1).max(100), reason: z.string().min(1).max(500), ...erasureFields })
+  .strict()
+  .refine(needsIdentifier, 'give vpa, phone or both');
 const pauseBody = z.object({ scope: z.enum(['GLOBAL', 'MERCHANT', 'PSP']), target: z.string().max(200).optional(), reason: z.string().min(1).max(500) });
 
 /**
@@ -125,6 +130,16 @@ export const opsConsoleApi = (ctx: AppContext) => async (app: FastifyInstance) =
     const body = pauseBody.parse(req.body);
     const p = await ctx.pauses.pause({ scope: body.scope, target: body.target ?? null, reason: body.reason }, o.id);
     return reply.status(201).send(pauseView(p));
+  });
+
+  app.post('/ops/api/privacy/erasure', async (req) => {
+    const o = requireOperatorRole(req, CAN_ACT);
+    const { merchantId, reason, ...who } = opsErasureBody.parse(req.body);
+    const [m] = await ctx.db.select({ id: merchants.id }).from(merchants).where(eq(merchants.id, merchantId));
+    if (!m) throw new AppError('NOT_FOUND', `Merchant ${merchantId} not found`);
+    const counts = await ctx.privacy.erase(merchantId, who, { type: 'SYSTEM' });
+    await ctx.operators.audit(ctx.db, o.id, 'DATA_ERASED', merchantId, { reason, ...counts });
+    return counts;
   });
 
   app.post('/ops/api/pauses/:id/lift', async (req) => {

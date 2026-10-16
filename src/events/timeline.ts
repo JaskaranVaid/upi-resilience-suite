@@ -65,6 +65,7 @@ const AUDIT_ONLY: ReadonlySet<EventType> = new Set([
   'LOGIN_FAILED',
   'TWO_FACTOR_ENABLED',
   'TWO_FACTOR_DISABLED',
+  'DATA_ERASED',
 ]);
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);

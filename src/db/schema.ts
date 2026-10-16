@@ -338,7 +338,8 @@ export const webhookOutbox = pgTable(
     id: text('id').primaryKey(),
     merchantId: text('merchant_id').notNull().references(() => merchants.id),
     event: text('event').notNull(),
-    payload: jsonb('payload').notNull(),
+    /** May carry a customer's VPA (payment events): sealed at rest like the payment's own fields. */
+    payload: personalJson('payload').notNull(),
     attempts: integer('attempts').notNull().default(0),
     nextAttemptAt: ts('next_attempt_at').notNull(),
     deliveredAt: ts('delivered_at'),

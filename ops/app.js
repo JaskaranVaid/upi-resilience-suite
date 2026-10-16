@@ -40,6 +40,7 @@ const api = {
   pause: (p) => request('POST', '/pauses', p),
   lift: (id) => request('POST', `/pauses/${encodeURIComponent(id)}/lift`),
   changePassword: (current, next) => request('POST', '/me/password', { current, next }),
+  erase: (body) => request('POST', '/privacy/erasure', body),
 };
 
 const root = document.getElementById('app');
@@ -101,6 +102,7 @@ const VIEWS = {
   pauses: { label: 'Kill switch', render: renderPauses },
   metrics: { label: 'Metrics', render: renderMetrics },
   audit: { label: 'Audit log', render: renderAudit },
+  privacy: { label: 'Data erasure', render: renderPrivacy },
   account: { label: 'Account', render: renderAccount },
 };
 
@@ -282,6 +284,56 @@ async function renderAudit(el) {
           </table></div>`
         : html`<p class="empty">Nothing yet.</p>`}`,
   );
+}
+
+async function renderPrivacy(el) {
+  mount(
+    el,
+    html`<div class="page-head"><h2 class="m0">Data erasure</h2></div>
+      <p class="muted">For a customer's erasure request under the DPDP Act, when the merchant asks us to act for them (merchants can also call
+        <span class="mono">POST /v1/privacy/erasure</span>). Removes the VPA and/or phone number from that merchant's mandates, payments,
+        checkout sessions and webhook log; amounts and references stay. The audit log keeps the counts and your reason, never the identifiers.</p>
+      ${canAct()
+        ? html`<form class="card grid mt" id="erase-form">
+            <div class="grid grid-2">
+              <label class="field">Merchant<input name="merchantId" list="erase-merchants" required autocomplete="off" placeholder="Merchant id" /></label>
+              <datalist id="erase-merchants"></datalist>
+              <label class="field">Reason / ticket<input name="reason" required maxlength="500" placeholder="DPDP request #…" /></label>
+              <label class="field">Customer VPA<input name="vpa" autocomplete="off" placeholder="name@bank" /></label>
+              <label class="field">Customer phone<input name="phone" inputmode="tel" autocomplete="off" placeholder="98765 43210" /></label>
+            </div>
+            <div class="btn-row"><button class="btn btn-danger" type="submit">Erase</button></div>
+            <p id="erase-result" role="status"></p>
+          </form>`
+        : html`<div class="callout info mt">Your role cannot erase data.</div>`}`,
+  );
+  const form = el.querySelector('#erase-form');
+  if (!form) return;
+  form.merchantId.addEventListener('input', async () => {
+    if (form.merchantId.value.length < 2) return;
+    const { data } = await api.merchants(form.merchantId.value).catch(() => ({ data: [] }));
+    mount(el.querySelector('#erase-merchants'), html`${data.map((m) => html`<option value="${m.id}">${m.name} (${m.mode})</option>`)}`);
+  });
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const vpa = form.vpa.value.trim();
+    const phone = form.phone.value.trim();
+    if (!vpa && !phone) return toast('Give a VPA, a phone number or both', { error: true });
+    if (!confirm(`Erase this customer's identifiers from merchant ${form.merchantId.value}? This cannot be undone.`)) return;
+    const btn = form.querySelector('button');
+    btn.disabled = true;
+    try {
+      const c = await api.erase({ merchantId: form.merchantId.value.trim(), reason: form.reason.value.trim(), ...(vpa ? { vpa } : {}), ...(phone ? { phone } : {}) });
+      form.vpa.value = '';
+      form.phone.value = '';
+      el.querySelector('#erase-result').textContent =
+        `Erased from ${c.mandates} mandates, ${c.payments} payments, ${c.checkoutSessions} checkout sessions and ${c.webhookDeliveries} webhook log rows.`;
+    } catch (err) {
+      toast(err.message, { error: true });
+    } finally {
+      btn.disabled = false;
+    }
+  });
 }
 
 async function renderAccount(el) {

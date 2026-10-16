@@ -86,7 +86,7 @@ describe('personal field encryption', () => {
       expect(String(row!.action)).not.toContain('upi://');
       expect((await call('GET', `/v1/payments/${p.id}`)).json()).toMatchObject({ payerVpa: 'legacy@okicici', customerAction: { qrData: 'upi://pay?pa=x' } });
       // Nothing left to do on a second run.
-      expect(await privacyBackfill(ctx.db, { batchSize: 1 })).toEqual({ mandates: 0, payments: 0, checkoutSessions: 0 });
+      expect(await privacyBackfill(ctx.db, { batchSize: 1 })).toEqual({ mandates: 0, payments: 0, checkoutSessions: 0, webhookDeliveries: 0 });
     });
   });
 

@@ -23,7 +23,7 @@ async function main() {
   const { db, close } = await createDb(env.DATABASE_URL, { migrate: env.MIGRATE_ON_START, poolMax: 2 });
   try {
     const counts = await privacyBackfill(db, { batchSize: Number(values.batch) });
-    console.log(`sealed or re-sealed: ${counts.mandates} mandates, ${counts.payments} payments, ${counts.checkoutSessions} checkout sessions`);
+    console.log(`sealed or re-sealed: ${counts.mandates} mandates, ${counts.payments} payments, ${counts.checkoutSessions} checkout sessions, ${counts.webhookDeliveries} webhook log rows`);
   } finally {
     await close();
   }

@@ -1,13 +1,14 @@
 import { asc, eq, gt, inArray, sql, type SQL } from 'drizzle-orm';
 import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
 import type { Db } from '../db/client.js';
-import { checkoutSessions, mandates, payments } from '../db/schema.js';
+import { checkoutSessions, mandates, payments, webhookOutbox } from '../db/schema.js';
 import { needsSealing } from '../security/fields.js';
 
 export interface BackfillCounts {
   mandates: number;
   payments: number;
   checkoutSessions: number;
+  webhookDeliveries: number;
 }
 
 interface Target {
@@ -22,6 +23,7 @@ const TARGETS: Target[] = [
   { name: 'mandates', table: mandates, id: mandates.id, fields: { customerVpa: mandates.customerVpa } },
   { name: 'payments', table: payments, id: payments.id, fields: { payerVpa: payments.payerVpa, customerAction: payments.customerAction } },
   { name: 'checkoutSessions', table: checkoutSessions, id: checkoutSessions.id, fields: { customerPhone: checkoutSessions.customerPhone, customerVpa: checkoutSessions.customerVpa } },
+  { name: 'webhookDeliveries', table: webhookOutbox, id: webhookOutbox.id, fields: { payload: webhookOutbox.payload } },
 ];
 
 /** The stored form of a column value, bypassing decryption: text as-is, a jsonb string's text, or the jsonb object's JSON. */
@@ -34,7 +36,7 @@ const storedForm = (v: unknown): string | null => (v === null || v === undefined
  */
 export async function privacyBackfill(db: Db, opts: { batchSize?: number } = {}): Promise<BackfillCounts> {
   const batchSize = opts.batchSize ?? 500;
-  const counts: BackfillCounts = { mandates: 0, payments: 0, checkoutSessions: 0 };
+  const counts: BackfillCounts = { mandates: 0, payments: 0, checkoutSessions: 0, webhookDeliveries: 0 };
   for (const t of TARGETS) {
     let after = '';
     for (;;) {

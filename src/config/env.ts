@@ -33,6 +33,10 @@ const schema = z.object({
   HEARTBEAT_FILE: z.string().optional(),
   /** How often the worker logs an `ops.metrics` line (the alarms' source). 0 turns it off. */
   OPS_METRICS_INTERVAL_MS: z.coerce.number().int().min(0).default(60_000),
+  /** Days before personal fields of finished payments, sessions and idle revoked mandates are redacted. */
+  PERSONAL_DATA_RETENTION_DAYS: z.coerce.number().int().min(1).default(180),
+  /** Days delivered or dead merchant-webhook log rows are kept. */
+  WEBHOOK_LOG_RETENTION_DAYS: z.coerce.number().int().min(1).default(30),
   /** The health check fails when the worker's last completed tick is older than this. */
   WORKER_STALL_MS: z.coerce.number().int().min(10_000).default(600_000),
   /** Comma-separated mock PSP ids (may be empty). Mocks never reach a real PSP. */

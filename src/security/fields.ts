@@ -41,10 +41,16 @@ function current(): FieldEncryption {
 
 export const isSealedField = (stored: string): boolean => stored.startsWith(PREFIX);
 
+/**
+ * What an erased NOT NULL personal field holds (src/privacy/service.ts). Written as plaintext on
+ * purpose, so SQL can tell a redacted row from a live one; it is never sealed.
+ */
+export const REDACTED = '[erased]';
+
 /** True when a stored value should be (re)written: plaintext, or sealed under an older key. Always false while encryption is off. */
 export function needsSealing(stored: string | null): boolean {
   const { box, enabled } = current();
-  return enabled && stored !== null && !stored.startsWith(`${PREFIX}${box.activeKeyId}.`);
+  return enabled && stored !== null && stored !== REDACTED && !stored.startsWith(`${PREFIX}${box.activeKeyId}.`);
 }
 
 function seal(value: unknown): string {

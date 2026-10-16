@@ -72,7 +72,8 @@ export type EventType =
   | 'LOGIN_SUCCEEDED'
   | 'LOGIN_FAILED'
   | 'TWO_FACTOR_ENABLED'
-  | 'TWO_FACTOR_DISABLED';
+  | 'TWO_FACTOR_DISABLED'
+  | 'DATA_ERASED';
 
 export interface NewEvent {
   type: EventType;

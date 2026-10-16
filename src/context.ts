@@ -37,6 +37,7 @@ import { connectionAdapterFactory } from './psp/connections.js';
 import { Lifecycle } from './ops/lifecycle.js';
 import { OperatorService } from './ops-console/operators.js';
 import { ExecutionControl } from './ops-console/pauses.js';
+import { PrivacyService, type RetentionConfig } from './privacy/service.js';
 import type { Logger } from './ops/log.js';
 import type { ConnectionAdapterFactory } from './psp/registry.js';
 
@@ -87,6 +88,7 @@ export interface AppContext {
   operators: OperatorService;
   /** The kill switch. */
   pauses: ExecutionControl;
+  privacy: PrivacyService;
 }
 
 export function buildContext(args: {
@@ -117,6 +119,8 @@ export function buildContext(args: {
   /** Resolves a webhook hostname to IP addresses (DNS by default; stubbed in tests). */
   resolveHost?: ResolveHost;
   recon?: Partial<ReconOptions>;
+  /** Retention periods (docs/legal/retention-policy.md). */
+  retention?: Partial<RetentionConfig>;
   /** Structured logger for background failures (console.error when omitted). */
   log?: Logger;
 }): AppContext {
@@ -188,5 +192,6 @@ export function buildContext(args: {
     lifecycle: new Lifecycle(),
     operators,
     pauses,
+    privacy: new PrivacyService({ db: args.db, clock, operators, ...(args.retention ? { cfg: args.retention } : {}) }),
   };
 }

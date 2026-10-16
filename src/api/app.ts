@@ -18,6 +18,7 @@ import { merchantRoutes } from './routes/merchants.js';
 import { opsRoutes } from './routes/ops.js';
 import { paymentRoutes } from './routes/payments.js';
 import { publicRoutes } from './routes/public.js';
+import { privacyRoutes } from './routes/privacy.js';
 import { pspWebhookRoutes } from './routes/psp-webhooks.js';
 import { connectionRoutes } from './routes/connections.js';
 import { settlementRoutes } from './routes/settlements.js';
@@ -170,6 +171,7 @@ export function buildApp(ctx: AppContext, opts: { logger?: boolean; trustProxy?:
   app.register(settlementRoutes(ctx));
   app.register(publicCheckoutRoutes(ctx));
   app.register(webhookDeliveryRoutes(ctx));
+  app.register(privacyRoutes(ctx));
   app.register(docsRoutes());
   return app;
 }
