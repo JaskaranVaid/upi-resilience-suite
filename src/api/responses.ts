@@ -155,3 +155,19 @@ export const publicPaymentStatus = z
   .object({ paymentId: z.string(), status: customerStatus, message: z.string(), amountPaise: z.number().int(), updatedAt: timestamp })
   .strict()
   .meta({ id: 'PublicPaymentStatus' });
+
+export const rolloutStage = z.enum(['SHADOW', 'CANARY', 'FULL']).meta({
+  id: 'RolloutStage',
+  description: 'SHADOW: your system executes every debit, Merchantflo only plans. CANARY: Merchantflo executes a fixed share of mandates. FULL: Merchantflo executes all.',
+});
+
+export const pilotResponse = z
+  .object({
+    stage: rolloutStage,
+    /** Share of mandates Merchantflo executes while CANARY; null otherwise. */
+    canaryPercent: z.number().int().min(1).max(99).nullable(),
+    /** When the stage last changed; null if it never has. */
+    since: timestamp.nullable(),
+  })
+  .strict()
+  .meta({ id: 'Pilot' });

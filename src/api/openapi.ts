@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { createUserBody } from './dashboard/plugin.js';
-import { checkoutPayment, checkoutSessionResponse, debitResponse, mandateResponse, paymentResponse, publicPaymentStatus, webhookDeliveryResponse } from './responses.js';
+import { checkoutPayment, checkoutSessionResponse, debitResponse, mandateResponse, paymentResponse, pilotResponse, publicPaymentStatus, webhookDeliveryResponse } from './responses.js';
 import { createConnectionBody, updateConnectionBody } from './routes/connections.js';
 import { importMandatesBody, listDebitsQuery, movePspBody, updateMandateBody } from './routes/mandates.js';
 import { changeModeBody, createApiKeyBody } from './routes/merchants.js';
@@ -83,6 +83,12 @@ export const ROUTE_DOCS: RouteDoc[] = [
   { method: 'get', path: '/v1/debits/:id', tag: 'AutoPay', auth: 'apiKey', response: debitResponse, summary: 'Retrieve a debit' },
   { method: 'get', path: '/v1/debits', tag: 'AutoPay', auth: 'apiKey', query: listDebitsQuery, response: list(debitResponse), summary: 'List debits' },
 
+  // Pilot
+  {
+    method: 'get', path: '/v1/pilot', tag: 'Pilot', auth: 'apiKey', response: pilotResponse, summary: 'Your pilot rollout stage',
+    description: 'Who executes your AutoPay debits during a pilot. Every debit response also says so in `executedBy`, so your integration never needs to read this.',
+  },
+
   // Merchant account
   { method: 'post', path: '/v1/merchants', tag: 'Account', auth: 'admin', body: createMerchant, status: 201, summary: 'Onboard a merchant (operator)', description: 'Returns the first API key and the webhook signing secret, once.' },
   { method: 'patch', path: '/v1/admin/merchants/:id', tag: 'Account', auth: 'admin', body: changeModeBody, summary: "Change a merchant's mode (operator)" },
@@ -150,6 +156,7 @@ const TAGS: Record<string, string> = {
   'PSP connections': 'Your own PSP accounts (Cashfree, Razorpay; `mock` in test mode).',
   Webhooks: 'Signed event notifications to your webhook URL: the delivery log and redelivery.',
   Reporting: 'Value delivered, settlements and the rules in force.',
+  Pilot: 'Shadow mode and canary: Merchantflo plans every debit and executes the share of mandates your pilot stage gives it; your system executes the rest and reports what happened.',
   Operations: 'Service health.',
 };
 

@@ -24,6 +24,7 @@ import { connectionRoutes } from './routes/connections.js';
 import { settlementRoutes } from './routes/settlements.js';
 import { publicCheckoutRoutes } from './routes/public-checkout.js';
 import { webhookDeliveryRoutes } from './routes/webhook-deliveries.js';
+import { pilotRoutes } from './routes/pilot.js';
 
 export type Merchant = typeof merchants.$inferSelect;
 
@@ -169,6 +170,7 @@ export function buildApp(ctx: AppContext, opts: { logger?: boolean; trustProxy?:
   app.register(publicCheckoutRoutes(ctx));
   app.register(webhookDeliveryRoutes(ctx));
   app.register(privacyRoutes(ctx));
+  app.register(pilotRoutes(ctx));
   app.register(docsRoutes());
   return app;
 }
