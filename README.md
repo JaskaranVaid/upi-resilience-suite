@@ -109,7 +109,8 @@ See [`.env.example`](.env.example).
 
 - **Ops console** (`/ops/`) for Merchantflo staff: password + authenticator code at every sign-in,
   OWNER/OPERATOR/VIEWER roles, every action audited. Accounts come from a shell:
-  `npm run ops:operator -- create --email … --name … --role OWNER` ([operators runbook](docs/runbooks/operators.md)).
+  `npm run ops:operator -- create --email … --name … --role OWNER --recipient-key op.pub`; new credentials are
+  only ever printed encrypted to the operator's public key ([operators runbook](docs/runbooks/operators.md)).
 - **Kill switch**: pause new money movement globally, per merchant or per PSP in seconds; nothing is
   cancelled and status checks, reconciliation and webhooks carry on ([runbook](docs/runbooks/kill-switch.md)).
 - **Dashboard two-factor sign-in**, optional per user (Security page); admins can reset a member's.

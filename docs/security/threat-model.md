@@ -73,7 +73,7 @@ The ops console can stop every merchant's payments and erase data, so it is held
 | **S** Stolen operator password | TOTP required at every sign-in, single-use codes, lockout, 15-minute idle and 8-hour absolute sessions | Console is reachable from the internet; restricting `/ops/*` to office/VPN IPs in the WAF is founder action #24 |
 | **R** Operator denies pausing or erasing | `operator_audit` records who, when, what and why for every sign-in, pause, lift and erasure | Audit rows are in the same database an attacker with DB access could edit |
 | **E** Viewer pausing payments | OWNER/OPERATOR/VIEWER roles enforced server-side | — |
-| **I** Enrolment secrets in logs | Operator CLI prints a one-time password and authenticator URI; in AWS they land in the migrate log stream | The runbook deletes that log stream right after reading; anyone with CloudWatch read access in that window could copy them ([operators runbook](../runbooks/operators.md)) |
+| **I** Enrolment secrets in logs | The operator CLI never prints a new password or authenticator URI in the clear: it encrypts them to the new operator's RSA public key (RSA-OAEP + AES-256-GCM), so logs hold only ciphertext ([operators runbook](../runbooks/operators.md)) | Whoever holds the operator's private key can open them; the key stays on their machine |
 
 ## 5. PSPs → inbound webhooks (`/webhooks/psp/*`)
 

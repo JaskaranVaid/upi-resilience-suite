@@ -15,47 +15,61 @@ cannot create more accounts.
 
 ## Create an operator
 
-**Locally / against a reachable database:**
+New credentials (a one-time password and the authenticator `otpauth://` URI) are **never printed
+in the clear**: the CLI's output ends up in logs. They are encrypted to the new operator's own
+public key, and only their private key opens them.
+
+**1. The new operator makes a key pair on their own machine** and sends you `op.pub` (it is not
+secret; `op.key` never leaves their machine):
 
 ```bash
-npm run ops:operator -- create --email asha@merchantflo.in --name "Asha" --role OWNER
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out op.key
+openssl pkey -in op.key -pubout -out op.pub
 ```
 
-**In AWS** (no shell into the VPC): run the CLI as a one-off task on the migrate task definition,
-which has the database URL and `CREDENTIALS_KEYS`:
+**2. You create the account.** Locally / against a reachable database:
+
+```bash
+npm run ops:operator -- create --email asha@merchantflo.in --name "Asha" --role OWNER --recipient-key op.pub
+```
+
+In AWS (no shell into the VPC), run the CLI as a one-off task on the migrate task definition, which
+has the database URL and `CREDENTIALS_KEYS`. The public key goes inline (needs `jq`):
 
 ```bash
 env=staging; name=merchantflo-$env
 network=$(aws ecs describe-services --cluster $name --services $name-api --query 'services[0].networkConfiguration' --output json)
+overrides=$(jq -n --arg pem "$(cat op.pub)" '{containerOverrides:[{name:"app",command:["node","dist/cli/ops-operator.js","create","--email","asha@merchantflo.in","--name","Asha","--role","OWNER","--recipient-key",$pem]}]}')
 task=$(aws ecs run-task --cluster $name --task-definition $name-migrate --launch-type FARGATE \
-  --network-configuration "$network" --started-by ops-operator \
-  --overrides '{"containerOverrides":[{"name":"app","command":["node","dist/cli/ops-operator.js","create","--email","asha@merchantflo.in","--name","Asha","--role","OWNER"]}]}' \
+  --network-configuration "$network" --overrides "$overrides" --started-by ops-operator \
   --query 'tasks[0].taskArn' --output text)
 aws ecs wait tasks-stopped --cluster $name --tasks $task
-stream="migrate/app/${task##*/}"
-aws logs get-log-events --log-group-name /merchantflo/$env/migrate --log-stream-name "$stream" --query 'events[].message' --output text
-aws logs delete-log-stream --log-group-name /merchantflo/$env/migrate --log-stream-name "$stream"   # it holds the secrets
+aws logs get-log-events --log-group-name /merchantflo/$env/migrate --log-stream-name "migrate/app/${task##*/}" --query 'events[].message' --output text
 ```
 
-The output has a **one-time password** and an `otpauth://` URI. Give both to the person over a
-channel other than the one you used to tell them their e-mail (e.g. password by phone, URI in a
-password manager share). They:
+The output is a `created OWNER …` line and one `mfh1.…` line. Send the `mfh1.…` line to the new
+operator (any channel: it is encrypted).
+
+**3. The new operator opens it** on their machine and signs in:
+
+```bash
+npm run ops:operator -- decrypt --key op.key 'mfh1.…'   # prints {"email","password","otpauthUri"}
+```
 
 1. Add the URI to an authenticator app (paste it, or render it as a QR code locally — never with an
    online QR generator).
-2. Sign in at `/ops/` with e-mail, password and the current code.
+2. Sign in at `/ops/` with e-mail, the one-time password and the current code.
 3. **Account** → change the password (14+ characters). This ends any other session.
-
-Delete the log stream as above even if you think nobody else can read it.
 
 ## Lost phone or suspected compromise
 
 ```bash
-npm run ops:operator -- reset-2fa --email asha@merchantflo.in   # new authenticator URI, all sessions end
-npm run ops:operator -- disable --email asha@merchantflo.in     # leaving, or compromise: sessions end now
+npm run ops:operator -- reset-2fa --email asha@merchantflo.in --recipient-key op.pub   # new authenticator URI (encrypted), all sessions end
+npm run ops:operator -- disable --email asha@merchantflo.in                            # leaving, or compromise: sessions end now
 ```
 
-In AWS run the same commands through the one-off task above. Every change is in the audit log.
+For a lost phone, the operator makes a new key pair if the old private key went with the phone's
+laptop. In AWS run the same commands through the one-off task above. Every change is in the audit log.
 
 Merchant dashboard users who lose their phone are reset by their own merchant admin (Team →
 Two-factor → Reset), not by Merchantflo.
