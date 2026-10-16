@@ -1,6 +1,7 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { and, desc, eq, getTableColumns, isNull, lt, ne, or } from 'drizzle-orm';
 import { DUMMY_HASH, hashPassword, verifyPassword } from '../auth/passwords.js';
+import { hashToken } from '../auth/sessions.js';
 import { generateSecret, otpauthUri, verifyTotp } from '../auth/totp.js';
 import type { Clock } from '../clock.js';
 import type { Db, DbOrTx } from '../db/client.js';
@@ -30,7 +31,6 @@ export const DEFAULT_OPERATOR_AUTH: OperatorAuthConfig = {
 
 export const TOTP_ISSUER = 'Merchantflo Ops';
 const INVALID = 'Invalid email, password or code';
-const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
 
 export function operatorView(o: Operator) {
   return { id: o.id, email: o.email, name: o.name, role: o.role, disabled: o.disabled, lastLoginAt: o.lastLoginAt, createdAt: o.createdAt };

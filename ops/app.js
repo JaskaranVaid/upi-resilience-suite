@@ -1,14 +1,8 @@
 // Merchantflo ops console: kill switch, operational metrics and the audit log, for Merchantflo staff.
 // Every value shown is escaped by html`` (shared with the merchant dashboard).
+import { ApiError } from '/dashboard/api/client.js';
+import { busy, toast } from '/dashboard/components/ui.js';
 import { html, mount } from '/dashboard/lib/html.js';
-
-class ApiError extends Error {
-  constructor(status, code, message) {
-    super(message);
-    this.status = status;
-    this.code = code;
-  }
-}
 
 async function request(method, path, body) {
   const res = await fetch(`/ops/api${path}`, {
@@ -47,12 +41,17 @@ const root = document.getElementById('app');
 let me = null;
 const canAct = () => me && (me.role === 'OWNER' || me.role === 'OPERATOR');
 
-function toast(message, { error = false } = {}) {
-  const el = document.createElement('div');
-  el.className = error ? 'toast error' : 'toast';
-  el.textContent = message;
-  document.getElementById('toasts').append(el);
-  setTimeout(() => el.remove(), 5000);
+/** Merchant-id suggestions for an input with a datalist, asked for once typing pauses. */
+function suggestMerchants(input, datalist, enabled = () => true) {
+  let timer;
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    if (!enabled() || input.value.length < 2) return;
+    timer = setTimeout(async () => {
+      const { data } = await api.merchants(input.value).catch(() => ({ data: [] }));
+      mount(datalist, html`${data.map((m) => html`<option value="${m.id}">${m.name} (${m.mode})</option>`)}`);
+    }, 200);
+  });
 }
 
 const when = (iso) => (iso ? new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'medium' }) + ' IST' : '—');
@@ -114,7 +113,8 @@ async function route() {
       return renderLogin();
     }
   }
-  const key = location.hash.replace(/^#\//, '') in VIEWS ? location.hash.replace(/^#\//, '') : 'pauses';
+  const requested = location.hash.replace(/^#\//, '');
+  const key = requested in VIEWS ? requested : 'pauses';
   const active = await api.pauses('active').catch(() => ({ data: [] }));
   mount(
     root,
@@ -144,26 +144,26 @@ async function route() {
   });
   const view = root.querySelector('#view');
   try {
-    await VIEWS[key].render(view);
+    await VIEWS[key].render(view, { active: active.data });
   } catch (err) {
     if (err.status !== 401) mount(view, html`<div class="callout warn">${err.message}</div>`);
   }
 }
 
-async function renderPauses(el) {
-  const [active, recent] = await Promise.all([api.pauses('active'), api.pauses('recent')]);
-  const row = (p, withLift) => html`<tr>
+async function renderPauses(el, { active }) {
+  const recent = await api.pauses('recent');
+  const row = (p) => html`<tr>
     <td>${scopeLabel(p)}</td>
     <td>${p.reason}</td>
     <td class="mono">${p.createdBy ?? 'system'}</td>
     <td>${when(p.createdAt)}</td>
-    <td>${p.liftedAt ? when(p.liftedAt) : withLift && canAct() ? html`<button class="btn" data-lift="${p.id}">Lift</button>` : 'in force'}</td>
+    <td>${p.liftedAt ? when(p.liftedAt) : canAct() ? html`<button class="btn" data-lift="${p.id}">Lift</button>` : 'in force'}</td>
   </tr>`;
-  const table = (rows, withLift) =>
+  const table = (rows) =>
     rows.length
       ? html`<div class="table-wrap"><table>
           <thead><tr><th>Scope</th><th>Reason</th><th>By</th><th>Since</th><th>Lifted</th></tr></thead>
-          <tbody>${rows.map((p) => row(p, withLift))}</tbody>
+          <tbody>${rows.map(row)}</tbody>
         </table></div>`
       : html`<p class="empty">None.</p>`;
   mount(
@@ -186,22 +186,17 @@ async function renderPauses(el) {
           </form>`
         : html`<div class="callout info mt">Your role can view pauses but not change them.</div>`}
       <h3 class="mt">In force</h3>
-      ${table(active.data, true)}
+      ${table(active)}
       <h3 class="mt">Recent</h3>
-      ${table(recent.data.filter((p) => p.liftedAt), false)}`,
+      ${table(recent.data.filter((p) => p.liftedAt))}`,
   );
 
   el.querySelectorAll('[data-lift]').forEach((btn) =>
     btn.addEventListener('click', async () => {
       if (!confirm('Lift this pause? Waiting debits and payments will continue.')) return;
-      btn.disabled = true;
-      try {
-        await api.lift(btn.dataset.lift);
+      if (await busy(btn, () => api.lift(btn.dataset.lift))) {
         toast('Pause lifted');
         route();
-      } catch (err) {
-        btn.disabled = false;
-        toast(err.message, { error: true });
       }
     }),
   );
@@ -214,25 +209,16 @@ async function renderPauses(el) {
   };
   form.scope.addEventListener('change', syncTarget);
   syncTarget();
-  form.target.addEventListener('input', async () => {
-    if (form.scope.value !== 'MERCHANT' || form.target.value.length < 2) return;
-    const { data } = await api.merchants(form.target.value).catch(() => ({ data: [] }));
-    mount(el.querySelector('#merchant-list'), html`${data.map((m) => html`<option value="${m.id}">${m.name} (${m.mode})</option>`)}`);
-  });
+  suggestMerchants(form.target, el.querySelector('#merchant-list'), () => form.scope.value === 'MERCHANT');
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const scope = form.scope.value;
     const what = scope === 'GLOBAL' ? 'ALL money movement for every merchant' : `${scope.toLowerCase()} ${form.target.value}`;
     if (!confirm(`Pause ${what}?`)) return;
-    const btn = form.querySelector('button');
-    btn.disabled = true;
-    try {
-      await api.pause({ scope, ...(scope === 'GLOBAL' ? {} : { target: form.target.value.trim() }), reason: form.reason.value.trim() });
+    const body = { scope, ...(scope === 'GLOBAL' ? {} : { target: form.target.value.trim() }), reason: form.reason.value.trim() };
+    if (await busy(form.querySelector('button'), () => api.pause(body))) {
       toast('Paused');
       route();
-    } catch (err) {
-      btn.disabled = false;
-      toast(err.message, { error: true });
     }
   });
 }
@@ -309,29 +295,20 @@ async function renderPrivacy(el) {
   );
   const form = el.querySelector('#erase-form');
   if (!form) return;
-  form.merchantId.addEventListener('input', async () => {
-    if (form.merchantId.value.length < 2) return;
-    const { data } = await api.merchants(form.merchantId.value).catch(() => ({ data: [] }));
-    mount(el.querySelector('#erase-merchants'), html`${data.map((m) => html`<option value="${m.id}">${m.name} (${m.mode})</option>`)}`);
-  });
+  suggestMerchants(form.merchantId, el.querySelector('#erase-merchants'));
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const vpa = form.vpa.value.trim();
     const phone = form.phone.value.trim();
     if (!vpa && !phone) return toast('Give a VPA, a phone number or both', { error: true });
     if (!confirm(`Erase this customer's identifiers from merchant ${form.merchantId.value}? This cannot be undone.`)) return;
-    const btn = form.querySelector('button');
-    btn.disabled = true;
-    try {
-      const c = await api.erase({ merchantId: form.merchantId.value.trim(), reason: form.reason.value.trim(), ...(vpa ? { vpa } : {}), ...(phone ? { phone } : {}) });
+    const body = { merchantId: form.merchantId.value.trim(), reason: form.reason.value.trim(), ...(vpa ? { vpa } : {}), ...(phone ? { phone } : {}) };
+    const c = await busy(form.querySelector('button'), () => api.erase(body));
+    if (c) {
       form.vpa.value = '';
       form.phone.value = '';
       el.querySelector('#erase-result').textContent =
         `Erased from ${c.mandates} mandates, ${c.payments} payments, ${c.checkoutSessions} checkout sessions and ${c.webhookDeliveries} webhook log rows.`;
-    } catch (err) {
-      toast(err.message, { error: true });
-    } finally {
-      btn.disabled = false;
     }
   });
 }

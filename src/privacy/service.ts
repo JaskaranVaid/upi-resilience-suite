@@ -123,12 +123,12 @@ export class PrivacyService {
     // Revoked mandates registered before the cutoff with no live debit and none touched since.
     const idleMandates = await db
       .update(mandates)
-      .set({ customerVpa: sql`${REDACTED}` })
+      .set({ customerVpa: REDACTED })
       .where(
         and(
           eq(mandates.status, 'REVOKED'),
           lt(mandates.createdAt, cutoff),
-          ne(sql`${mandates.customerVpa}`, REDACTED),
+          ne(mandates.customerVpa, REDACTED),
           notExists(
             db
               .select({ one: sql`1` })
@@ -173,12 +173,11 @@ export class PrivacyService {
     const isPhone = (v: unknown) => phone !== null && typeof v === 'string' && normPhone(v) === phone;
     const mentions = (v: unknown): boolean => {
       if (typeof v === 'string') return isVpa(v) || isPhone(v);
-      if (Array.isArray(v)) return v.some(mentions);
       if (v && typeof v === 'object') return Object.values(v).some(mentions);
       return false;
     };
     const scrub = (v: unknown): unknown => {
-      if (typeof v === 'string') return mentions(v) ? REDACTED : v;
+      if (typeof v === 'string') return isVpa(v) || isPhone(v) ? REDACTED : v;
       if (Array.isArray(v)) return v.map(scrub);
       if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, scrub(x)]));
       return v;
@@ -189,7 +188,7 @@ export class PrivacyService {
 
     await this.scan(mandates, mandates.id, mandates.merchantId, merchantId, { customerVpa: mandates.customerVpa }, async (rows) => {
       const ids = rows.filter((r) => isVpa(r.customerVpa)).map((r) => r.id);
-      if (ids.length) await db.update(mandates).set({ customerVpa: sql`${REDACTED}` }).where(inArray(mandates.id, ids));
+      if (ids.length) await db.update(mandates).set({ customerVpa: REDACTED }).where(inArray(mandates.id, ids));
       counts.mandates += ids.length;
     });
     await this.scan(payments, payments.id, payments.merchantId, merchantId, { payerVpa: payments.payerVpa, customerAction: payments.customerAction }, async (rows) => {
@@ -210,10 +209,13 @@ export class PrivacyService {
       },
     );
     await this.scan(webhookOutbox, webhookOutbox.id, webhookOutbox.merchantId, merchantId, { payload: webhookOutbox.payload }, async (rows) => {
-      for (const r of rows.filter((x) => mentions(x.payload))) {
-        await db.update(webhookOutbox).set({ payload: scrub(r.payload) }).where(eq(webhookOutbox.id, r.id));
-        counts.webhookDeliveries += 1;
-      }
+      const hits = rows.filter((x) => mentions(x.payload));
+      if (hits.length === 0) return;
+      // One commit per batch, not per row.
+      await db.transaction(async (tx) => {
+        for (const r of hits) await tx.update(webhookOutbox).set({ payload: scrub(r.payload) }).where(eq(webhookOutbox.id, r.id));
+      });
+      counts.webhookDeliveries += hits.length;
     });
 
     await recordEvents(db, { merchantId, actor, now: clock.now() }, [{ type: 'DATA_ERASED', data: { ...counts } }]);

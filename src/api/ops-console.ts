@@ -49,7 +49,6 @@ export const opsConsoleApi = (ctx: AppContext) => async (app: FastifyInstance) =
   app.decorateRequest('operator', null);
 
   app.addHook('preHandler', async (req) => {
-    if (!req.url.startsWith('/ops/api/')) return;
     if (req.method !== 'GET' && req.headers[OPS_CSRF_HEADER] !== '1') throw new AppError('FORBIDDEN', `Missing ${OPS_CSRF_HEADER} header`);
     if (req.routeOptions.url === '/ops/api/login') return;
     const token = req.cookies[OPS_COOKIE];
@@ -128,7 +127,7 @@ export const opsConsoleApi = (ctx: AppContext) => async (app: FastifyInstance) =
   app.post('/ops/api/pauses', async (req, reply) => {
     const o = requireOperatorRole(req, CAN_ACT);
     const body = pauseBody.parse(req.body);
-    const p = await ctx.pauses.pause({ scope: body.scope, target: body.target ?? null, reason: body.reason }, o.id);
+    const p = await ctx.pauses.pause(body, o.id);
     return reply.status(201).send(pauseView(p));
   });
 

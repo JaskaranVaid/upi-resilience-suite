@@ -42,15 +42,15 @@ function current(): FieldEncryption {
 export const isSealedField = (stored: string): boolean => stored.startsWith(PREFIX);
 
 /**
- * What an erased NOT NULL personal field holds (src/privacy/service.ts). Written as plaintext on
- * purpose, so SQL can tell a redacted row from a live one; it is never sealed.
+ * What an erased NOT NULL personal field holds (src/privacy/service.ts). personalText never seals
+ * it, so SQL can tell a redacted row from a live one.
  */
 export const REDACTED = '[erased]';
 
 /** True when a stored value should be (re)written: plaintext, or sealed under an older key. Always false while encryption is off. */
 export function needsSealing(stored: string | null): boolean {
   const { box, enabled } = current();
-  return enabled && stored !== null && stored !== REDACTED && !stored.startsWith(`${PREFIX}${box.activeKeyId}.`);
+  return enabled && stored !== null && stored !== REDACTED && (!isSealedField(stored) || box.needsReseal(stored.slice(PREFIX.length)));
 }
 
 function seal(value: unknown): string {
@@ -61,10 +61,10 @@ function open<T>(stored: string): T {
   return current().box.open<T>(stored.slice(PREFIX.length));
 }
 
-/** A text column holding personal data. */
+/** A text column holding personal data. REDACTED is stored as is, so SQL can find redacted rows. */
 export const personalText = customType<{ data: string; driverData: string }>({
   dataType: () => 'text',
-  toDriver: (value) => (current().enabled ? seal(value) : value),
+  toDriver: (value) => (value === REDACTED || !current().enabled ? value : seal(value)),
   fromDriver: (stored) => (isSealedField(stored) ? open<string>(stored) : stored),
 });
 

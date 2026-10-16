@@ -72,11 +72,6 @@ export class SecretBox {
     return sealed.split('.')[0] !== this.activeId;
   }
 
-  /** The key id new values are sealed with. */
-  get activeKeyId(): string {
-    return this.activeId;
-  }
-
   /**
    * A box for another purpose: each key replaced by HKDF-SHA256(key, purpose), same ids. One key
    * ring serves several uses without one use's ciphertext opening under another's key.

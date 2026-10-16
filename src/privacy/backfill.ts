@@ -26,9 +26,6 @@ const TARGETS: Target[] = [
   { name: 'webhookDeliveries', table: webhookOutbox, id: webhookOutbox.id, fields: { payload: webhookOutbox.payload } },
 ];
 
-/** The stored form of a column value, bypassing decryption: text as-is, a jsonb string's text, or the jsonb object's JSON. */
-const storedForm = (v: unknown): string | null => (v === null || v === undefined ? null : typeof v === 'string' ? v : JSON.stringify(v));
-
 /**
  * Seal personal fields still stored in plaintext (rows written before encryption) and re-seal
  * those under an older key, in batches. Safe to re-run and to run beside live traffic: each row
@@ -46,27 +43,27 @@ export async function privacyBackfill(db: Db, opts: { batchSize?: number } = {})
         .from(t.table)
         .where(gt(t.id, after))
         .orderBy(asc(t.id))
-        .limit(batchSize)) as Array<Record<string, unknown> & { id: string }>;
+        .limit(batchSize)) as Array<Record<string, string | null> & { id: string }>;
       if (page.length === 0) break;
       after = page.at(-1)!.id;
 
-      const stale = page.filter((row) => Object.keys(t.fields).some((k) => needsSealing(storedForm(row[k]))));
+      const stale = page.filter((row) => Object.keys(t.fields).some((k) => needsSealing(row[k] ?? null)));
       if (stale.length === 0) continue;
       const decrypted = (await db
         .select({ id: t.id, ...t.fields })
         .from(t.table)
         .where(inArray(t.id, stale.map((r) => r.id)))) as Array<Record<string, unknown> & { id: string }>;
-      for (const row of decrypted) {
-        const { id, ...values } = row;
-        await db.update(t.table).set(values).where(eq(t.id, id));
-      }
+      // One commit per batch, not per row.
+      await db.transaction(async (tx) => {
+        for (const { id, ...values } of decrypted) await tx.update(t.table).set(values).where(eq(t.id, id));
+      });
       counts[t.name] += decrypted.length;
     }
   }
   return counts;
 }
 
-/** The column as stored: jsonb comes back as its scalar text when it is a sealed string, as JSON text otherwise. */
+/** The column as stored, always as text: a jsonb string's own text (sealed values), JSON text otherwise. */
 function rawOf(col: PgColumn): SQL<unknown> {
   return col.getSQLType() === 'jsonb' ? sql`${col} #>> '{}'` : sql`${col}::text`;
 }
