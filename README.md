@@ -105,6 +105,25 @@ to the number of proxy hops (e.g. `1`) or the proxies' CIDRs (`true` is refused:
 spoof their IP). Merchant webhook URLs must be https on public hosts (`WEBHOOK_TARGETS=public-only`).
 See [`.env.example`](.env.example).
 
+## Security, privacy and the ops console
+
+- **Ops console** (`/ops/`) for Merchantflo staff: password + authenticator code at every sign-in,
+  OWNER/OPERATOR/VIEWER roles, every action audited. Accounts come from a shell:
+  `npm run ops:operator -- create --email … --name … --role OWNER --recipient-key op.pub`; new credentials are
+  only ever printed encrypted to the operator's public key ([operators runbook](docs/runbooks/operators.md)).
+- **Kill switch**: pause new money movement globally, per merchant or per PSP in seconds; nothing is
+  cancelled and status checks, reconciliation and webhooks carry on ([runbook](docs/runbooks/kill-switch.md)).
+- **Dashboard two-factor sign-in**, optional per user (Security page); admins can reset a member's.
+- **Customer data encrypted at rest**: VPAs, phone numbers, payment links/QR and webhook payloads are
+  sealed by the application (AES-256-GCM, key derived from `CREDENTIALS_KEYS`); `npm run privacy:backfill`
+  seals older rows and re-seals after key rotation.
+- **Retention and erasure (DPDP)**: the worker redacts identifiers on finished payments/sessions after
+  `PERSONAL_DATA_RETENTION_DAYS` (180) and deletes webhook logs after `WEBHOOK_LOG_RETENTION_DAYS` (30);
+  `POST /v1/privacy/erasure` removes one customer's identifiers from a merchant's records.
+- **CI gates**: `npm audit` (high/critical), CodeQL, gitleaks, Trivy on the image. See [SECURITY.md](SECURITY.md),
+  the [threat model](docs/security/threat-model.md), [incident response](docs/runbooks/incident-response.md),
+  and the legal drafts for counsel in [`docs/legal/`](docs/legal/retention-policy.md).
+
 ## Merchants, modes and PSP connections
 
 Merchantflo never holds funds: each merchant connects **its own** PSP accounts

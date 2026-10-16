@@ -17,6 +17,7 @@ locals {
     "deadWebhooks24h",
     "reconFailures24h",
     "pspCircuitsOpen",
+    "executionPausesActive",
     "workerHeartbeat",
   ]
 
@@ -60,6 +61,11 @@ locals {
       metric      = "pspCircuitsOpen", comparison = "GreaterThanOrEqualToThreshold", threshold = 1
       period      = 300, evaluations = 2, missing = "notBreaching", severity = "high"
       description = "A PSP circuit has been open for 10 minutes: its technical declines are high and traffic is failing over."
+    }
+    "execution-paused" = {
+      metric      = "executionPausesActive", comparison = "GreaterThanOrEqualToThreshold", threshold = 1
+      period      = 300, evaluations = 6, missing = "notBreaching", severity = "medium"
+      description = "A kill-switch pause has been in force for 30 minutes. Make sure it is still meant to be (ops console → Kill switch)."
     }
     "worker-heartbeat" = {
       metric      = "workerHeartbeat", comparison = "LessThanThreshold", threshold = 1

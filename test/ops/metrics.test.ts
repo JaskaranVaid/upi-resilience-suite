@@ -48,7 +48,7 @@ describe('operational metrics', () => {
   it('is all zeros on a quiet system, with a heartbeat', async () => {
     expect(await collect()).toEqual({
       restrictedWindowExecutions: 0, noticeFailures: 0, debitBacklog: 0, pollerBacklog: 0, pollerOldestOverdueSeconds: 0,
-      webhookBacklog: 0, deadWebhooks24h: 0, reconFailures24h: 0, pspCircuitsOpen: 0, openCircuits: [], workerHeartbeat: 1,
+      webhookBacklog: 0, deadWebhooks24h: 0, reconFailures24h: 0, pspCircuitsOpen: 0, openCircuits: [], executionPausesActive: 0, workerHeartbeat: 1,
     });
   });
 

@@ -1,9 +1,10 @@
 import { sql } from 'drizzle-orm';
-import { bigint, boolean, index, integer, jsonb, pgTable, pgView, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+import { bigint, bigserial, boolean, index, integer, jsonb, pgTable, pgView, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 import type { Capture, ComplaintReason, ComplaintStatus, CustomerAction, CustomerDebit, PaymentChannel, PspMode, ReversalStatus } from '../psp/types.js';
 import type { CaseReason, CaseResolution, CaseStatus, EventType, SettlementStatus, SubjectType, VerificationStatus } from '../tracking/types.js';
 import type { MerchantCategory } from '../rules/mdr.js';
 import type { MethodCosts, SteeringConfig } from '../rules/steering.js';
+import { personalJson, personalText } from '../security/fields.js';
 
 const money = (name: string) => bigint(name, { mode: 'number' });
 const ts = (name: string) => timestamp(name, { withTimezone: true, mode: 'date' });
@@ -145,7 +146,8 @@ export const mandates = pgTable(
   merchantId: text('merchant_id').notNull().references(() => merchants.id),
   /** UMN / mandate reference at the PSP. */
   mandateRef: text('mandate_ref').notNull(),
-  customerVpa: text('customer_vpa').notNull(),
+  /** Personal data: sealed at rest (src/security/fields.ts). */
+  customerVpa: personalText('customer_vpa').notNull(),
   maxAmountPaise: money('max_amount_paise').notNull(),
   /** PSPs that can execute this mandate (several when MIC-portable), in priority order. */
   eligiblePsps: jsonb('eligible_psps').$type<string[]>().notNull(),
@@ -212,10 +214,10 @@ export const payments = pgTable(
     amountPaise: money('amount_paise').notNull(),
     /** How the customer pays. */
     channel: text('channel').$type<PaymentChannel>().notNull().default('UPI_COLLECT'),
-    /** The payer's VPA (UPI collect only). */
-    payerVpa: text('payer_vpa'),
+    /** The payer's VPA (UPI collect only). Personal data, like the action below: sealed at rest. */
+    payerVpa: personalText('payer_vpa'),
     /** What the customer must do to pay, as the PSP returned it (deeplinks, QR, redirect, checkout). */
-    customerAction: jsonb('customer_action').$type<CustomerAction>(),
+    customerAction: personalJson('customer_action').$type<CustomerAction>(),
     idempotencyKey: text('idempotency_key').notNull(),
     /** Merchant's own order reference, optional. */
     orderId: text('order_id'),
@@ -292,8 +294,8 @@ export const checkoutSessions = pgTable(
     idempotencyKey: text('idempotency_key'),
     amountPaise: money('amount_paise').notNull(),
     orderId: text('order_id'),
-    customerPhone: text('customer_phone'),
-    customerVpa: text('customer_vpa'),
+    customerPhone: personalText('customer_phone'),
+    customerVpa: personalText('customer_vpa'),
     returnUrl: text('return_url'),
     status: text('status').$type<CheckoutSessionStatus>().notNull().default('OPEN'),
     /** The latest payment started for this session. */
@@ -336,7 +338,8 @@ export const webhookOutbox = pgTable(
     id: text('id').primaryKey(),
     merchantId: text('merchant_id').notNull().references(() => merchants.id),
     event: text('event').notNull(),
-    payload: jsonb('payload').notNull(),
+    /** May carry a customer's VPA (payment events): sealed at rest like the payment's own fields. */
+    payload: personalJson('payload').notNull(),
     attempts: integer('attempts').notNull().default(0),
     nextAttemptAt: ts('next_attempt_at').notNull(),
     deliveredAt: ts('delivered_at'),
@@ -490,6 +493,12 @@ export const dashboardUsers = pgTable('dashboard_users', {
   failedLogins: integer('failed_logins').notNull().default(0),
   lockedUntil: ts('locked_until'),
   lastLoginAt: ts('last_login_at'),
+  /** Authenticator secret (SecretBox-sealed) once two-factor sign-in is on; null when off. */
+  totpSecret: text('totp_secret'),
+  /** A secret being enrolled, until the user confirms a code from it. */
+  totpPendingSecret: text('totp_pending_secret'),
+  /** Last accepted TOTP time step — a code is accepted once. */
+  totpLastStep: integer('totp_last_step'),
   createdBy: text('created_by'),
   createdAt: createdAt(),
   updatedAt: ts('updated_at').notNull().defaultNow(),
@@ -507,6 +516,85 @@ export const dashboardSessions = pgTable(
     revokedAt: ts('revoked_at'),
   },
   (t) => [index('sessions_user').on(t.userId)],
+);
+
+// ─── Phase 6: Merchantflo operators (ops console), audit, kill switch ────────────────────
+
+/** OWNER manages operators; OPERATOR can pause/lift and erase; VIEWER reads. */
+export type OperatorRole = 'OWNER' | 'OPERATOR' | 'VIEWER';
+
+/** Merchantflo staff. Separate from merchants' dashboard users; sign-in always needs a TOTP code. */
+export const operators = pgTable('operators', {
+  id: text('id').primaryKey(),
+  /** Stored lower-cased. */
+  email: text('email').notNull().unique(),
+  name: text('name').notNull(),
+  passwordHash: text('password_hash').notNull(),
+  /** TOTP secret, sealed with the credentials key ring. */
+  totpSecret: text('totp_secret').notNull(),
+  /** Last TOTP time step accepted: a code is never accepted twice. */
+  totpLastStep: integer('totp_last_step'),
+  role: text('role').$type<OperatorRole>().notNull(),
+  disabled: boolean('disabled').notNull().default(false),
+  failedLogins: integer('failed_logins').notNull().default(0),
+  lockedUntil: ts('locked_until'),
+  lastLoginAt: ts('last_login_at'),
+  createdAt: createdAt(),
+  updatedAt: ts('updated_at').notNull().defaultNow(),
+});
+
+export const operatorSessions = pgTable(
+  'operator_sessions',
+  {
+    id: text('id').primaryKey(),
+    operatorId: text('operator_id').notNull().references(() => operators.id),
+    tokenHash: text('token_hash').notNull().unique(),
+    createdAt: ts('created_at').notNull(),
+    lastSeenAt: ts('last_seen_at').notNull(),
+    expiresAt: ts('expires_at').notNull(),
+    revokedAt: ts('revoked_at'),
+  },
+  (t) => [index('operator_sessions_operator').on(t.operatorId)],
+);
+
+/** Every operator action and sign-in (who, what, on what, when). Append-only. */
+export const operatorAudit = pgTable(
+  'operator_audit',
+  {
+    id: text('id').primaryKey(),
+    /** Insertion order (several entries can share a timestamp). */
+    seq: bigserial('seq', { mode: 'number' }).notNull(),
+    /** Null for actions from the command line or the system. */
+    operatorId: text('operator_id'),
+    action: text('action').notNull(),
+    target: text('target'),
+    details: jsonb('details').$type<Record<string, unknown>>(),
+    createdAt: createdAt(),
+  },
+  (t) => [index('operator_audit_time').on(t.createdAt), index('operator_audit_seq').on(t.seq)],
+);
+
+export type PauseScope = 'GLOBAL' | 'MERCHANT' | 'PSP';
+
+/**
+ * The kill switch: while a row is active (lifted_at null), no new money movement starts in its
+ * scope — every merchant (GLOBAL), one merchant, or one PSP (a connection/adapter id, or
+ * `provider:<name>` for every connection of a provider). Nothing is cancelled.
+ */
+export const executionPauses = pgTable(
+  'execution_pauses',
+  {
+    id: text('id').primaryKey(),
+    scope: text('scope').$type<PauseScope>().notNull(),
+    /** Merchant id, PSP id or provider:<name>; null for GLOBAL. */
+    target: text('target'),
+    reason: text('reason').notNull(),
+    createdBy: text('created_by'),
+    createdAt: createdAt(),
+    liftedAt: ts('lifted_at'),
+    liftedBy: text('lifted_by'),
+  },
+  (t) => [index('execution_pauses_active').on(t.liftedAt)],
 );
 
 /**

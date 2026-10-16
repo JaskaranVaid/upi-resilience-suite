@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from 'node:crypto';
 
 const ALG = 'aes-256-gcm';
 const b64 = (b: Buffer) => b.toString('base64url');
@@ -70,5 +70,19 @@ export class SecretBox {
   /** True when a value was sealed with an older key and should be re-sealed with the active one. */
   needsReseal(sealed: string): boolean {
     return sealed.split('.')[0] !== this.activeId;
+  }
+
+  /** The key id new values are sealed with. */
+  get activeKeyId(): string {
+    return this.activeId;
+  }
+
+  /**
+   * A box for another purpose: each key replaced by HKDF-SHA256(key, purpose), same ids. One key
+   * ring serves several uses without one use's ciphertext opening under another's key.
+   */
+  derive(purpose: string): SecretBox {
+    const keys = new Map([...this.keys].map(([id, key]) => [id, Buffer.from(hkdfSync('sha256', key, Buffer.alloc(0), purpose, 32))]));
+    return new SecretBox(keys, this.activeId);
   }
 }

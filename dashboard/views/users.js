@@ -1,6 +1,6 @@
 import { api } from '../api/client.js';
 import { errorBox, forbidden, loading } from '../components/panels.js';
-import { busy, toast } from '../components/ui.js';
+import { busy, confirmDialog, toast } from '../components/ui.js';
 import { when } from '../lib/format.js';
 import { html, mount } from '../lib/html.js';
 
@@ -26,12 +26,15 @@ export async function renderUsers(el, { me }) {
     el,
     html`<div class="page-head"><h1>Team</h1></div>
       <div class="table-wrap mb"><table>
-        <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Last sign-in</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Two-factor</th><th>Last sign-in</th><th></th></tr></thead>
         <tbody>${users.map(
           (u) => html`<tr data-id="${u.id}">
             <td>${u.name}</td><td>${u.email}</td>
             <td>${roleSelect('role', u.role)}</td>
             <td>${u.disabled ? html`<span class="badge tone-neutral">Disabled</span>` : html`<span class="badge tone-good">Active</span>`}</td>
+            <td>${u.twoFactor
+              ? html`<span class="badge tone-good">On</span> ${u.id !== me.user.id ? html`<button class="btn" data-reset-2fa title="For a lost phone: they can sign in with their password and set it up again">Reset</button>` : ''}`
+              : html`<span class="badge tone-neutral">Off</span>`}</td>
             <td>${when(u.lastLoginAt)}</td>
             <td><button class="btn" data-toggle>${u.disabled ? 'Enable' : 'Disable'}</button></td>
           </tr>`,
@@ -56,6 +59,18 @@ export async function renderUsers(el, { me }) {
     tr.querySelector('select').addEventListener('change', async (e) => {
       const ok = await busy(e.target, () => api.updateUser(id, { role: e.target.value }));
       if (ok) toast('Role updated');
+      rerender();
+    });
+    tr.querySelector('[data-reset-2fa]')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const sure = await confirmDialog({
+        title: `Reset two-factor sign-in for ${u.name}?`,
+        body: 'They will sign in with just their password until they set up an authenticator again. Do this only after confirming who is asking.',
+        confirmLabel: 'Reset',
+      });
+      if (!sure) return;
+      const ok = await busy(btn, () => api.updateUser(id, { twoFactor: false }));
+      if (ok) toast('Two-factor sign-in reset');
       rerender();
     });
     tr.querySelector('[data-toggle]').addEventListener('click', async (e) => {

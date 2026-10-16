@@ -41,6 +41,8 @@ async function main() {
     adapters,
     adminToken: env.ADMIN_TOKEN,
     secrets,
+    encryptPersonalFields: env.ENCRYPT_PERSONAL_FIELDS === 'true',
+    retention: { personalDataDays: env.PERSONAL_DATA_RETENTION_DAYS, webhookLogDays: env.WEBHOOK_LOG_RETENTION_DAYS },
     connectionAdapters: connectionAdapterFactory({ cashfreeTimeoutMs: env.CASHFREE_TIMEOUT_MS }), // system clock
     ...(env.PUBLIC_BASE_URL ? { publicBaseUrl: env.PUBLIC_BASE_URL } : {}),
     secureCookies: env.NODE_ENV === 'production',
@@ -65,6 +67,8 @@ async function main() {
         await ctx.poller.runOnce();
         await ctx.reconciler.runDue(); // throttled internally (daily settlement reports)
         await ctx.dispatcher.runOnce();
+        const purged = await ctx.privacy.runDue(); // daily retention purge
+        if (purged && Object.values(purged).some((n) => n > 0)) log.info('retention purge', { ...purged });
       },
       heartbeatFile: env.HEARTBEAT_FILE ?? DEFAULT_HEARTBEAT_FILE,
       pollMs: env.WORKER_POLL_MS,

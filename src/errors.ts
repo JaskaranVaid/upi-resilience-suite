@@ -18,7 +18,9 @@ export type ErrorCode =
   | 'RATE_LIMITED'
   | 'NO_PSP_CONNECTED'
   | 'PSP_CREDENTIALS_REJECTED'
-  | 'PSP_UNREACHABLE';
+  | 'PSP_UNREACHABLE'
+  | 'EXECUTION_PAUSED'
+  | 'MFA_REQUIRED';
 
 const STATUS: Record<ErrorCode, number> = {
   NOT_FOUND: 404,
@@ -41,6 +43,8 @@ const STATUS: Record<ErrorCode, number> = {
   NO_PSP_CONNECTED: 422,
   PSP_CREDENTIALS_REJECTED: 422,
   PSP_UNREACHABLE: 502,
+  EXECUTION_PAUSED: 503,
+  MFA_REQUIRED: 401,
 };
 
 export class AppError extends Error {

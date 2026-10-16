@@ -1,0 +1,23 @@
+/* Ops console: the dashboard's tokens and components (/dashboard/styles.css) plus a few of its own. */
+.ops-banner {
+  background: var(--bad-bg);
+  color: var(--bad);
+  padding: 10px 24px;
+  border-bottom: 1px solid var(--border);
+}
+.ops-banner strong { margin-right: 8px; }
+.ops-calm {
+  background: var(--good-bg);
+  color: var(--good);
+  padding: 10px 24px;
+  border-bottom: 1px solid var(--border);
+}
+.pause-form { display: grid; gap: 12px; grid-template-columns: 160px 1fr; align-items: end; }
+.pause-form .wide { grid-column: 1 / -1; }
+.btn-danger { background: var(--bad); color: var(--surface); border-color: var(--bad); }
+.btn-danger:hover { background: var(--bad); filter: brightness(1.08); }
+.kpi.alert .value { color: var(--bad); }
+pre.details { margin: 0; min-width: 280px; white-space: pre-wrap; word-break: break-word; font-size: 12px; }
+@media (max-width: 760px) {
+  .pause-form { grid-template-columns: 1fr; }
+}

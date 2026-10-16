@@ -23,8 +23,9 @@ act immediately; **high** = act within the hour; **medium** = same working day.
 **Critical.** An AutoPay debit was sent to a PSP inside an NPCI peak window (10:00–13:00 or
 17:00–21:30 IST) or a configured blackout. The worker checks the window before every execution, so
 this means a bug, a clock problem, or rule-set misconfiguration.
-1. Stop executions: `aws ecs update-service --cluster merchantflo-<env> --service merchantflo-<env>-worker --desired-count 0`.
-   (Status checks and webhooks stop too; fine for a short while.)
+1. Stop executions: ops console → Kill switch → pause **Everything** ([kill-switch runbook](kill-switch.md)).
+   Status checks and webhooks keep running. Only if the console is unreachable, scale the worker
+   to zero (`aws ecs update-service --cluster merchantflo-<env> --service merchantflo-<env>-worker --desired-count 0`).
 2. Find the attempts (psql via a one-off task, or the dashboard):
    ```sql
    select a.debit_id, a.psp_id, a.created_at at time zone 'Asia/Kolkata' as ist, a.latency_ms, a.outcome
@@ -33,7 +34,13 @@ this means a bug, a clock problem, or rule-set misconfiguration.
    order by a.created_at desc;
    ```
 3. Check the task clock (`/health` returns `time`) and `GET /v1/rules` (windows in force).
-4. Restore the worker count once the cause is fixed. Tell affected merchants; NPCI may ask the PSP.
+4. Lift the pause (or restore the worker count) once the cause is fixed. Tell affected merchants; NPCI may ask the PSP.
+
+### execution-paused
+**Medium.** A kill-switch pause has been in force for 30 minutes. Intentional pauses are fine, but
+a forgotten one silently delays every debit and payment in its scope. Ops console → Kill switch:
+check each pause's reason and owner; lift it, or note in the incident timeline why it stays.
+Merchants in scope get `503 EXECUTION_PAUSED` on new payments. [Kill-switch runbook](kill-switch.md).
 
 ### notice-failures
 **High.** PSPs are refusing pre-debit notices (`last_error_code = NOTICE_FAILED`); those debits

@@ -31,9 +31,13 @@ import { publicTargetGuard, type ResolveHost, type WebhookTargetPolicy } from '.
 import { publicOnlyFetch } from './webhooks/http.js';
 import { DEFAULT_RATE_LIMITS, type RateLimits } from './api/rate-limit.js';
 import { AuthFailureLimiter } from './api/auth-failures.js';
+import { configureFieldEncryption } from './security/fields.js';
 import { SecretBox } from './security/secrets.js';
 import { connectionAdapterFactory } from './psp/connections.js';
 import { Lifecycle } from './ops/lifecycle.js';
+import { OperatorService } from './ops-console/operators.js';
+import { ExecutionControl } from './ops-console/pauses.js';
+import { PrivacyService, type RetentionConfig } from './privacy/service.js';
 import type { Logger } from './ops/log.js';
 import type { ConnectionAdapterFactory } from './psp/registry.js';
 
@@ -80,14 +84,21 @@ export interface AppContext {
   publicBaseUrl: string | null;
   /** Draining state: /readyz fails once shutdown begins. */
   lifecycle: Lifecycle;
+  /** Merchantflo staff accounts (ops console). */
+  operators: OperatorService;
+  /** The kill switch. */
+  pauses: ExecutionControl;
+  privacy: PrivacyService;
 }
 
 export function buildContext(args: {
   db: Db;
   /** Shared PSP adapters (mocks, a platform sandbox account): usable by TEST merchants only. */
   adapters: PspAdapter[];
-  /** Seals merchants' PSP credentials (development key by default). */
+  /** Seals merchants' PSP credentials and (with a derived key) customers' personal fields; development key by default. */
   secrets?: SecretBox;
+  /** Seal VPAs, phones and customer actions at rest (default true). Process-wide: see src/security/fields.ts. */
+  encryptPersonalFields?: boolean;
   /** Builds adapters for merchant connections (real Cashfree/mock by default; faked in tests). */
   connectionAdapters?: ConnectionAdapterFactory;
   publicBaseUrl?: string;
@@ -108,6 +119,8 @@ export function buildContext(args: {
   /** Resolves a webhook hostname to IP addresses (DNS by default; stubbed in tests). */
   resolveHost?: ResolveHost;
   recon?: Partial<ReconOptions>;
+  /** Retention periods (docs/legal/retention-policy.md). */
+  retention?: Partial<RetentionConfig>;
   /** Structured logger for background failures (console.error when omitted). */
   log?: Logger;
 }): AppContext {
@@ -115,9 +128,12 @@ export function buildContext(args: {
   const sleep = args.sleep ?? realSleep;
   const health = new HealthTracker(args.health ?? {}, clock);
   const secrets = args.secrets ?? SecretBox.development();
+  configureFieldEncryption({ box: secrets, enabled: args.encryptPersonalFields ?? true });
   const connectionAdapters = args.connectionAdapters ?? connectionAdapterFactory({ clock });
   const psps = new PspRegistry(args.adapters, { db: args.db, secrets, clock, build: connectionAdapters });
-  const router = new Router(psps, health, clock, sleep, args.router);
+  const operators = new OperatorService({ db: args.db, clock, secrets });
+  const pauses = new ExecutionControl({ db: args.db, clock, operators });
+  const router = new Router(psps, health, clock, sleep, { ...args.router, pausedPsps: () => pauses.pausedPsps() });
   const polling = { ...DEFAULT_POLLING, ...args.polling };
   const tracking = new TrackingService({ db: args.db, clock, psps, cfg: polling });
   const value = new ValueService({ db: args.db });
@@ -128,7 +144,7 @@ export function buildContext(args: {
   // Production policy: connect only to public addresses, checked at connect time (no DNS rebinding).
   const fetchImpl: FetchLike = args.fetchImpl ?? (webhookTargets === 'public-only' ? publicOnlyFetch : (url, init) => fetch(url, init));
   const checkout = new CheckoutService({ db: args.db, clock });
-  const payments = new PaymentService({ db: args.db, clock, router, tracking });
+  const payments = new PaymentService({ db: args.db, clock, router, tracking, pauses });
   const queries = new PaymentQueryService({ db: args.db, clock, cfg: polling, psps });
   const customerTokenSecret = args.customerTokenSecret ?? 'dev-customer-token-secret-not-for-production';
   const logError = args.log ? (msg: string, err?: unknown) => args.log!.error(msg, err) : undefined;
@@ -143,7 +159,7 @@ export function buildContext(args: {
     webhookDeliveries: new WebhookDeliveryService({ db: args.db, clock }),
     checkoutSessions: new CheckoutSessionService({ db: args.db, clock, checkout, payments, psps, queries, tokenSecret: customerTokenSecret }),
     payments,
-    worker: new DebitWorker({ db: args.db, clock, router, tracking, opts: args.worker, ...(logError ? { log: logError } : {}) }),
+    worker: new DebitWorker({ db: args.db, clock, router, tracking, pauses, opts: args.worker, ...(logError ? { log: logError } : {}) }),
     dispatcher: new WebhookDispatcher(args.db, clock, fetchImpl, {
       ...(webhookTargets === 'public-only' ? { targetGuard: publicTargetGuard(args.resolveHost) } : {}),
     }),
@@ -155,7 +171,7 @@ export function buildContext(args: {
     users: new UserService({ db: args.db, clock }),
     apiKeys: new ApiKeyService({ db: args.db, clock }),
     mandateImporter: new MandateImporter({ db: args.db, clock, psps }),
-    sessions: new SessionService({ db: args.db, clock, ...(args.auth ? { cfg: args.auth } : {}) }),
+    sessions: new SessionService({ db: args.db, clock, secrets, ...(args.auth ? { cfg: args.auth } : {}) }),
     queries,
     secureCookies: args.secureCookies ?? false,
     customerTokenSecret,
@@ -174,5 +190,8 @@ export function buildContext(args: {
     connectionAdapters,
     publicBaseUrl: args.publicBaseUrl ?? null,
     lifecycle: new Lifecycle(),
+    operators,
+    pauses,
+    privacy: new PrivacyService({ db: args.db, clock, operators, ...(args.retention ? { cfg: args.retention } : {}) }),
   };
 }

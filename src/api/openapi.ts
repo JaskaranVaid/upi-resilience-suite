@@ -7,6 +7,7 @@ import { importMandatesBody, listDebitsQuery, movePspBody, updateMandateBody } f
 import { changeModeBody, createApiKeyBody } from './routes/merchants.js';
 import { payBody } from './routes/public-checkout.js';
 import { settlementsQuery } from './routes/settlements.js';
+import { erasureRequest, erasureResponse } from './routes/privacy.js';
 import { listDeliveriesQuery } from './routes/webhook-deliveries.js';
 import {
   acceptQuote, createCheckoutSession, createDebit, createMandate, createMerchant, createPayment, createVendor, quotePaid, quoteRequest, savingsQuery, splitRequest, updateMerchant,
@@ -34,7 +35,7 @@ export interface RouteDoc {
 }
 
 /** Routes outside the merchant API: PSP callbacks, the dashboard's own API, these docs. */
-export const UNDOCUMENTED_ROUTES = ['/webhooks/psp/', '/dashboard', '/openapi.json', '/docs', '/checkout/'];
+export const UNDOCUMENTED_ROUTES = ['/webhooks/psp/', '/dashboard', '/openapi.json', '/docs', '/checkout/', '/ops'];
 
 const list = (item: z.ZodType) => z.object({ data: z.array(item) });
 
@@ -113,6 +114,15 @@ export const ROUTE_DOCS: RouteDoc[] = [
   {
     method: 'post', path: '/v1/webhook-deliveries/:id/redeliver', tag: 'Webhooks', auth: 'apiKey', status: 202, response: webhookDeliveryResponse,
     summary: 'Redeliver a webhook', description: 'For a delivered or failed webhook: sends it again with the same id and payload, signed afresh with your current secret. 409 while it is still pending.',
+  },
+
+  // Privacy
+  {
+    method: 'post', path: '/v1/privacy/erasure', tag: 'Privacy', auth: 'apiKey', body: erasureRequest, response: erasureResponse,
+    summary: 'Erase a customer’s data',
+    description:
+      'For a customer’s erasure request under the DPDP Act: removes their VPA and/or phone number from your mandates, payments, checkout sessions and webhook log. ' +
+      'Amounts, states and references stay — they are your financial records. Matching ignores case and spacing. The audit log records the counts, never the identifiers.',
   },
 
   // Reporting

@@ -33,6 +33,10 @@ const schema = z.object({
   HEARTBEAT_FILE: z.string().optional(),
   /** How often the worker logs an `ops.metrics` line (the alarms' source). 0 turns it off. */
   OPS_METRICS_INTERVAL_MS: z.coerce.number().int().min(0).default(60_000),
+  /** Days before personal fields of finished payments, sessions and idle revoked mandates are redacted. */
+  PERSONAL_DATA_RETENTION_DAYS: z.coerce.number().int().min(1).default(180),
+  /** Days delivered or dead merchant-webhook log rows are kept. */
+  WEBHOOK_LOG_RETENTION_DAYS: z.coerce.number().int().min(1).default(30),
   /** The health check fails when the worker's last completed tick is older than this. */
   WORKER_STALL_MS: z.coerce.number().int().min(10_000).default(600_000),
   /** Comma-separated mock PSP ids (may be empty). Mocks never reach a real PSP. */
@@ -77,6 +81,11 @@ const schema = z.object({
    * Required in production. Generate a key with: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
    */
   CREDENTIALS_KEYS: z.string().optional(),
+  /**
+   * Seal customers' VPAs and phone numbers at rest with a key derived from CREDENTIALS_KEYS
+   * (default true). Turning it off only stops new sealing; sealed rows stay readable.
+   */
+  ENCRYPT_PERSONAL_FIELDS: z.enum(['true', 'false']).default('true'),
   /** Public base URL of this API (e.g. https://api.merchantflo.in), used to show PSP webhook URLs. */
   PUBLIC_BASE_URL: z.url().optional(),
   /** Optional JSON map of pspId -> MockRates, e.g. {"pspA":{"bankUnavailable":0.3}} */

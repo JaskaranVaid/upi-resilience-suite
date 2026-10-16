@@ -10,6 +10,7 @@ import { merchants } from '../db/schema.js';
 import { AppError } from '../errors.js';
 import { dashboardApi } from './dashboard/plugin.js';
 import { docsRoutes } from './openapi.js';
+import { opsConsoleApi } from './ops-console.js';
 import { registerRateLimits } from './rate-limit.js';
 import { checkoutRoutes } from './routes/checkout.js';
 import { mandateRoutes } from './routes/mandates.js';
@@ -17,6 +18,7 @@ import { merchantRoutes } from './routes/merchants.js';
 import { opsRoutes } from './routes/ops.js';
 import { paymentRoutes } from './routes/payments.js';
 import { publicRoutes } from './routes/public.js';
+import { privacyRoutes } from './routes/privacy.js';
 import { pspWebhookRoutes } from './routes/psp-webhooks.js';
 import { connectionRoutes } from './routes/connections.js';
 import { settlementRoutes } from './routes/settlements.js';
@@ -101,31 +103,55 @@ export function buildApp(ctx: AppContext, opts: { logger?: boolean; trustProxy?:
     return reply.status(500).send({ error: { code: 'INTERNAL', message: 'Internal error' } });
   });
 
+  app.addHook('onSend', async (req, reply, payload) => {
+    reply.header('x-content-type-options', 'nosniff');
+    // Production is served over HTTPS only (the load balancer redirects http).
+    if (ctx.secureCookies) reply.header('strict-transport-security', 'max-age=31536000; includeSubDomains');
+    // API answers carry merchant and payment data: never stored by browsers or proxies.
+    const url = req.url;
+    if ((url.startsWith('/v1/') || url.startsWith('/dashboard/api/') || url.startsWith('/ops/api/')) && !reply.hasHeader('cache-control')) {
+      reply.header('cache-control', 'no-store');
+    }
+    return payload;
+  });
+
   app.register(fastifyCookie);
   if (ctx.rateLimits) registerRateLimits(app, ctx.rateLimits);
   // Static merchant console. API calls go to /dashboard/api/*, registered below (more specific routes win).
   app.register(fastifyStatic, {
     root: fileURLToPath(new URL('../../dashboard', import.meta.url)),
     prefix: '/dashboard/',
-    setHeaders: (res) => {
-      res.setHeader('content-security-policy', "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
-      res.setHeader('x-content-type-options', 'nosniff');
-      res.setHeader('referrer-policy', 'same-origin');
+    setHeaders: (reply) => {
+      reply.header('content-security-policy', "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+      reply.header('x-content-type-options', 'nosniff');
+      reply.header('referrer-policy', 'same-origin');
     },
   });
   app.get('/dashboard', async (_req, reply) => reply.redirect('/dashboard/'));
+  // Merchantflo staff console. Its API is /ops/api/* (operator sessions with two-factor sign-in).
+  app.register(fastifyStatic, {
+    root: fileURLToPath(new URL('../../ops', import.meta.url)),
+    prefix: '/ops/',
+    decorateReply: false,
+    setHeaders: (reply) => {
+      reply.header('content-security-policy', "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+      reply.header('x-content-type-options', 'nosniff');
+      reply.header('referrer-policy', 'same-origin');
+    },
+  });
+  app.get('/ops', async (_req, reply) => reply.redirect('/ops/'));
   // checkout.js and its stylesheet load from merchants' pages (any origin); demo.html is ours.
   app.register(fastifyStatic, {
     root: fileURLToPath(new URL('../../checkout', import.meta.url)),
     prefix: '/checkout/',
     decorateReply: false,
     cacheControl: false,
-    setHeaders: (res, path) => {
-      res.setHeader('cross-origin-resource-policy', 'cross-origin');
-      res.setHeader('x-content-type-options', 'nosniff');
-      res.setHeader('cache-control', 'public, max-age=300');
+    setHeaders: (reply, path) => {
+      reply.header('cross-origin-resource-policy', 'cross-origin');
+      reply.header('x-content-type-options', 'nosniff');
+      reply.header('cache-control', 'public, max-age=300');
       if (path.endsWith('.html')) {
-        res.setHeader(
+        reply.header(
           'content-security-policy',
           "default-src 'self'; img-src 'self' data:; script-src 'self' https://sdk.cashfree.com https://checkout.razorpay.com; connect-src 'self' https:; frame-src https:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
         );
@@ -133,6 +159,7 @@ export function buildApp(ctx: AppContext, opts: { logger?: boolean; trustProxy?:
     },
   });
   app.register(dashboardApi(ctx));
+  app.register(opsConsoleApi(ctx));
   app.register(opsRoutes(ctx));
   app.register(merchantRoutes(ctx));
   app.register(mandateRoutes(ctx));
@@ -144,6 +171,7 @@ export function buildApp(ctx: AppContext, opts: { logger?: boolean; trustProxy?:
   app.register(settlementRoutes(ctx));
   app.register(publicCheckoutRoutes(ctx));
   app.register(webhookDeliveryRoutes(ctx));
+  app.register(privacyRoutes(ctx));
   app.register(docsRoutes());
   return app;
 }

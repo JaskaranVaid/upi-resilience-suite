@@ -1,0 +1,26 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main, 'phase/**']
+  pull_request:
+  schedule:
+    - cron: '30 2 * * 1' # Mondays 08:00 IST: new queries catch old code too
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  analyze:
+    name: CodeQL (JavaScript/TypeScript)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          queries: security-extended
+      - uses: github/codeql-action/analyze@v3

@@ -12,7 +12,7 @@ export type DashboardUser = typeof dashboardUsers.$inferSelect;
 export const MIN_PASSWORD_LENGTH = 12;
 
 export function userView(u: DashboardUser) {
-  return { id: u.id, email: u.email, name: u.name, role: u.role, disabled: u.disabled, lastLoginAt: u.lastLoginAt, createdAt: u.createdAt };
+  return { id: u.id, email: u.email, name: u.name, role: u.role, disabled: u.disabled, twoFactor: u.totpSecret !== null, lastLoginAt: u.lastLoginAt, createdAt: u.createdAt };
 }
 
 /** Dashboard user management. Merchant admins (or the merchant API key, to bootstrap) manage users. */
@@ -41,7 +41,13 @@ export class UserService {
     return this.deps.db.select().from(dashboardUsers).where(eq(dashboardUsers.merchantId, merchantId)).orderBy(asc(dashboardUsers.createdAt));
   }
 
-  async update(merchantId: string, userId: string, patch: { role?: DashboardRole; disabled?: boolean; name?: string }, actor: Actor): Promise<DashboardUser> {
+  /** twoFactor: false turns a member's two-factor sign-in off (lost phone); only the user can turn it on. */
+  async update(
+    merchantId: string,
+    userId: string,
+    { twoFactor, ...patch }: { role?: DashboardRole; disabled?: boolean; name?: string; twoFactor?: false },
+    actor: Actor,
+  ): Promise<DashboardUser> {
     const { db, clock } = this.deps;
     const [u] = await db.select().from(dashboardUsers).where(and(eq(dashboardUsers.id, userId), eq(dashboardUsers.merchantId, merchantId)));
     if (!u) throw new AppError('NOT_FOUND', `User ${userId} not found`);
@@ -57,8 +63,16 @@ export class UserService {
 
     const now = clock.now();
     return db.transaction(async (tx) => {
-      const [updated] = await tx.update(dashboardUsers).set({ ...patch, updatedAt: now }).where(eq(dashboardUsers.id, userId)).returning();
-      await recordEvents(tx, { merchantId, actor, now }, [{ type: 'USER_UPDATED', data: { userId, ...patch } }]);
+      const resetTwoFactor = twoFactor === false && u.totpSecret !== null;
+      const [updated] = await tx
+        .update(dashboardUsers)
+        .set({ ...patch, ...(twoFactor === false ? { totpSecret: null, totpPendingSecret: null, totpLastStep: null } : {}), updatedAt: now })
+        .where(eq(dashboardUsers.id, userId))
+        .returning();
+      await recordEvents(tx, { merchantId, actor, now }, [
+        ...(Object.keys(patch).length ? [{ type: 'USER_UPDATED' as const, data: { userId, ...patch } }] : []),
+        ...(resetTwoFactor ? [{ type: 'TWO_FACTOR_DISABLED' as const, data: { userId, reset: true } }] : []),
+      ]);
       return updated!;
     });
   }
