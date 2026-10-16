@@ -20,6 +20,7 @@ and reconciliation stay correct.
 | Merchant **webhook log** (event payloads, which can include a payer VPA) | Yes | 30 days after delivery or final failure (*configurable*: `WEBHOOK_LOG_RETENTION_DAYS`) | Row deleted |
 | Dashboard and ops-console **sessions** | Account identifiers | Until they expire (at most 12 h dashboard, 8 h ops) | Deleted at the next daily run |
 | Payments, debits, attempts, settlement facts, cases, savings ledger (ids, amounts, states, references, timestamps) | No (after the fields above are cleared) | Life of the merchant account, then as agreed in the DPA | Deleted or returned at contract end |
+| Pilot records: shadow debits and reported executions (incl. a backtest's history export), rollout history, double-debit suspects | No — mandate reference, amounts, times, outcomes, PSP transaction id; operators write resolution notes without customer identifiers | Life of the merchant account | Deleted or returned at contract end, with the payments above |
 | Audit trail (`payment_events`, `operator_audit`) | Actor ids; never VPAs or phones | Life of the merchant account (evidence for disputes and regulators) | As agreed in the DPA |
 | Dashboard users and operators (name, e-mail) | Yes (staff of merchants / Merchantflo) | While the account exists | Deleted on request when no longer needed for audit |
 | Application logs (CloudWatch) | Ids and errors, not VPAs or phones | 365 days production, 30 staging, 14 dev | Expire automatically |

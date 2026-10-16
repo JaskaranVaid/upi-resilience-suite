@@ -29,6 +29,12 @@ in Phase 0. Update the status column as they move.
 | 22 | **First operator accounts** on staging and production (OWNER for each founder, each with their own key pair) — [operators runbook](../runbooks/operators.md) | Founder 1 | Phase 6 | To do |
 | 23 | **Kill-switch drill** on staging (global, merchant, PSP; lift and watch waiting debits resume) — record it in the [kill-switch runbook](../runbooks/kill-switch.md#drill-founder-action-23) | Founder 1 | Phase 6 exit | To do |
 | 24 | Restrict `/ops/*` at the WAF to office/VPN IP ranges (or put the console behind a VPN) | Founder 1 | Before pilot | To do |
+| 25 | **Pilot agreement** with the first design partner, from the [pilot terms draft](../legal/pilot-terms.md) after counsel review (questions in §6 of the draft) | Founder 2 | Phase 7 start | To do |
+| 26 | **History export** from the partner (1–3 months of AutoPay executions with failure codes mapped to `failureKind`) and a backtest review with them — [pilot runbook §2](../runbooks/pilot.md#2-backtest-optional-before-integrating) | Founder 2 | Phase 7 | To do |
+| 27 | **Go/no-go reviews** before CANARY and before FULL (scorecard, shadow report, duplicates, coverage); record the decision as the stage change's reason | All | Phase 7 | To do |
+| 28 | **Weekly pilot review** with the partner for the length of the pilot — [pilot runbook](../runbooks/pilot.md#weekly-review-every-pilot-every-week) | Founder 2 | Phase 7 | To do |
+| 29 | **Rollback drill** on staging: a test merchant in CANARY rolled back to SHADOW with scheduled debits, paused, handed back by execution reports, pause lifted — [pilot runbook](../runbooks/pilot.md#rollback) | Founder 1 | Before canary | To do |
+| 30 | **Second design partner** through the same steps, and written permission from the first for a case study | Founder 2 | Phase 7 exit | To do |
 
 ## Message templates
 

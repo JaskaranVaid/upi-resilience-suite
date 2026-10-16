@@ -1,8 +1,8 @@
 # Merchantflo integration guide
 
 From zero to a working test-mode integration: a checkout on your site, recurring AutoPay debits, and
-signed webhooks. Everything here runs in **test mode**, where no real money moves. The last section
-covers going live.
+signed webhooks. Everything here runs in **test mode**, where no real money moves. §8 covers going
+live, and §9 moving an existing AutoPay setup over in a pilot.
 
 - API reference: `GET /docs` on your Merchantflo host (OpenAPI document at `/openapi.json`)
 - Node SDK: [`sdk/node`](../sdk/node/README.md) (typed client and webhook verifier)
@@ -169,6 +169,7 @@ Merchantflo POSTs JSON to your `webhookUrl`:
 | `case.needs_action`, `case.resolved` | A payment issue needs you / was resolved | payment facts + `case` |
 | `debit.scheduled`, `debit.notice_sent`, `debit.rescheduled` | AutoPay debit accepted, notice sent, moved to another slot (`reason`) | the Debit object |
 | `debit.succeeded`, `debit.failed` | Final AutoPay outcome | the Debit object |
+| `pilot.stage_changed` | Your pilot moved between shadow, canary and full ([§9](#9-pilots)) | `stage`, `canaryPercent`, `previousStage`, `previousCanaryPercent`, `changedAt` |
 
 "Payment facts" are `paymentType` (`COLLECT` or `AUTOPAY`), `paymentId`, `orderId`, `amountPaise`,
 `upiRrn`, `customerDebit`, `capture` and `reversal`, never internal PSP codes.
@@ -242,3 +243,56 @@ Payments that need the poller (.54–.57) move on within a minute or two. Follow
 4. Point checkout.js and your server at the production Merchantflo host, using the live key.
 5. Watch the first payments in the dashboard (**Payments**, **Dispute Desk**, **Developers →
    Webhook deliveries**).
+
+## 9. Pilots
+
+If you already run UPI AutoPay through your own billing system, Merchantflo takes over gradually.
+Your live merchant starts in **shadow**: you keep executing every debit as today, and Merchantflo
+shows what it would have done. Then it executes a random slice of your mandates (**canary**, e.g.
+5%), then all of them (**full**). Merchantflo changes the stage with you; you get
+`pilot.stage_changed` each time, and `GET /v1/pilot` tells you where you are.
+
+**Your integration does not change between stages.** Send every debit to
+`POST /v1/mandates/:id/debits` as in §4, and branch on `executedBy` in the response:
+
+| `executedBy` | Object | What you do |
+|---|---|---|
+| `MERCHANTFLO` | Debit (`dbt_…`) | Nothing. Merchantflo notifies and executes. **Do not execute it yourself.** |
+| `MERCHANT` | ShadowDebit (`shd_…`, `"object": "shadow_debit"`) | Execute it on your own path, as before, then report the outcome |
+
+The answer is fixed per idempotency key: a retry returns the first answer, even if the stage changed
+in between. Mandate responses also carry `executedBy`, the assignment for new debits on that mandate.
+
+**Report what your system did** (JSON, up to 5,000 per call, or `text/csv` up to 5 MB):
+
+```bash
+curl -s http://localhost:3000/v1/pilot/executions -H "authorization: Bearer $KEY" -H "content-type: application/json" \
+  -d '{"executions": [{"idempotencyKey": "INV-2026-11-asha", "executedAt": "2026-11-05T11:20:00+05:30",
+       "outcome": "FAILED", "failureKind": "TECHNICAL", "failureCode": "U30", "pspTxnId": "…", "attempts": 1}]}'
+```
+
+- `failureKind`: `TECHNICAL` (bank, switch or PSP), `BUSINESS` (customer side, e.g. insufficient
+  funds) or `UNKNOWN` (default). Only technical failures can count as value, so classify them.
+- A later report for the same key replaces the earlier one (send the final outcome after your retries).
+- `GET /v1/shadow-debits?reported=false` lists the shadow debits still waiting for your report.
+- CSV header: `idempotencyKey,mandateRef,amountPaise,requestedAt,dueDate,executedAt,outcome,failureKind,failureCode,pspTxnId,attempts,orderId`.
+
+**History (backtest).** The same endpoint takes past executions Merchantflo never saw: give any
+unique `idempotencyKey` plus `mandateRef` and `amountPaise`. You can do this before integrating at
+all, to see the report on your own history.
+
+**If you report a debit that was Merchantflo's** (a misroute), the result says `MISROUTED`. If
+Merchantflo had not started it, it is handed back: `debit.failed` with `lastErrorCode:
+EXECUTED_BY_MERCHANT`, and Merchantflo never executes it. If it had started, both may succeed — the
+double-debit detector flags it and Merchantflo calls you. Fix your routing on `executedBy`.
+
+**Reports.** `GET /v1/pilot/report` ("what Merchantflo would have saved": certain value, potential
+value as an upper bound, coverage) and `GET /v1/pilot/scorecard` (the five pass criteria) take
+`month=YYYY-MM` or `from`/`to`. Both are also in the dashboard under **Value → Pilot**, with a CSV of
+every classified execution.
+
+Pilot checklist:
+
+- [ ] Both `executedBy` branches handled, in test mode first (an operator can put a test merchant in a pilot)
+- [ ] Every shadow debit's final outcome reported, with `failureKind`
+- [ ] `pilot.stage_changed` reaches the person who owns billing
