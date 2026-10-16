@@ -69,3 +69,6 @@ export function periodFromQuery(query: unknown, now: Date): Period {
   const q = periodQuery.parse(query);
   return resolvePeriod({ ...(q.month ? { month: q.month } : {}), ...(q.from ? { from: q.from } : {}), ...(q.to ? { to: q.to } : {}) }, now);
 }
+
+/** The period in a download's file name: `2026-10`, or `2026-10-01_2026-10-07` for a range. */
+export const periodSpan = (p: Period): string => p.month ?? `${p.days[0]}_${p.days.at(-1)}`;

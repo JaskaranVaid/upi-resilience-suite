@@ -2,35 +2,19 @@ import { asc, desc, eq, ilike } from 'drizzle-orm';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { AppContext } from '../context.js';
-import { executionPauses, merchants, type OperatorRole } from '../db/schema.js';
+import { executionPauses, merchants } from '../db/schema.js';
 import { AppError } from '../errors.js';
 import { collectOpsMetrics } from '../ops/metrics.js';
-import { operatorView, type Operator } from '../ops-console/operators.js';
+import { operatorView } from '../ops-console/operators.js';
 import { pauseView } from '../ops-console/pauses.js';
+import { CAN_ACT, operatorOf, requireOperatorRole } from './ops-auth.js';
+import { opsPilotsApi } from './ops-pilots.js';
 import { erasureFields, needsIdentifier } from './routes/privacy.js';
 
 export const OPS_COOKIE = 'mf_ops';
 export const OPS_CSRF_HEADER = 'x-ops-request';
 export const MIN_OPERATOR_PASSWORD = 14;
 
-declare module 'fastify' {
-  interface FastifyRequest {
-    operator: Operator | null;
-  }
-}
-
-function operatorOf(req: FastifyRequest): Operator {
-  if (!req.operator) throw new AppError('UNAUTHORIZED', 'Please sign in');
-  return req.operator;
-}
-
-function requireOperatorRole(req: FastifyRequest, roles: OperatorRole[]): Operator {
-  const o = operatorOf(req);
-  if (!roles.includes(o.role)) throw new AppError('FORBIDDEN', 'Your role does not allow this action');
-  return o;
-}
-
-const CAN_ACT: OperatorRole[] = ['OWNER', 'OPERATOR'];
 
 const loginBody = z.object({ email: z.string().min(3).max(320), password: z.string().min(1).max(1024), code: z.string().max(20) });
 const passwordBody = z.object({ current: z.string().min(1).max(1024), next: z.string().min(MIN_OPERATOR_PASSWORD, `at least ${MIN_OPERATOR_PASSWORD} characters`).max(1024) });
@@ -146,4 +130,7 @@ export const opsConsoleApi = (ctx: AppContext) => async (app: FastifyInstance) =
     const { id } = z.object({ id: z.string().max(100) }).parse(req.params);
     return pauseView(await ctx.pauses.lift(id, o.id));
   });
+
+  // Child plugin: inherits the session and CSRF hook above.
+  await app.register(opsPilotsApi(ctx));
 };

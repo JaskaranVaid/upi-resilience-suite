@@ -176,6 +176,22 @@ export class RolloutService {
   }
 
   /**
+   * The natural next step for a merchant (SHADOW → CANARY at `canaryPercent`, CANARY → FULL) and
+   * what blocks it now, without changing anything. Null when the merchant is already FULL.
+   */
+  async nextStep(merchantId: string, canaryPercent = 5): Promise<{ stage: RolloutStage; canaryPercent: number | null; problems: string[] } | null> {
+    const [m] = await this.deps.db.select().from(merchants).where(eq(merchants.id, merchantId));
+    if (!m) throw new AppError('NOT_FOUND', `Merchant ${merchantId} not found`);
+    if (m.rolloutStage === 'FULL') return null;
+    const to = m.rolloutStage === 'SHADOW' ? { stage: 'CANARY' as const, canaryPercent } : { stage: 'FULL' as const, canaryPercent: null };
+    return { ...to, problems: await this.problems(m, to) };
+  }
+
+  private async problems(m: Merchant, to: { stage: RolloutStage; canaryPercent: number | null }): Promise<string[]> {
+    return isForward(m, to) ? (await Promise.all(this.gates.map((g) => g(m, to)))).flat() : [];
+  }
+
+  /**
    * Move a merchant to another stage or canary size. Backward moves (the rollback) are always
    * allowed; forward moves must pass every gate unless an OWNER overrides them, with a reason.
    * Affects new debit requests only: debits already accepted keep their executor.
@@ -194,7 +210,7 @@ export class RolloutService {
       throw new AppError('CONFLICT', `Merchant is already ${to.stage}${to.canaryPercent ? ` at ${to.canaryPercent}%` : ''}`);
     }
     // Gates are always evaluated for a forward move, so an override records exactly what it overrode.
-    const problems = isForward(current, to) ? (await Promise.all(this.gates.map((g) => g(current, to)))).flat() : [];
+    const problems = await this.problems(current, to);
     if (problems.length > 0 && !override) throw new AppError('CONFLICT', `Not ready for ${to.stage}${to.canaryPercent ? ` ${to.canaryPercent}%` : ''}: ${problems.join('; ')}`);
 
     return db.transaction(async (tx) => {

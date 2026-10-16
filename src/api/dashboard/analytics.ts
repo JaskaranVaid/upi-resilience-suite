@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { slug } from '../../analytics/csv.js';
-import { periodFromQuery, type Period } from '../../analytics/period.js';
+import { periodFromQuery, periodSpan, type Period } from '../../analytics/period.js';
 import type { AppContext } from '../../context.js';
 import { merchants } from '../../db/schema.js';
 import { userOf } from './plugin.js';
@@ -30,11 +30,10 @@ export const analyticsRoutes = (ctx: AppContext) => async (app: FastifyInstance)
     const merchantId = userOf(req).merchantId;
     const p = period(req);
     const [m] = await ctx.db.select({ name: merchants.name }).from(merchants).where(eq(merchants.id, merchantId));
-    const span = p.month ?? `${p.days[0]}_${p.days.at(-1)}`;
     const body = kind === 'statement' ? await ctx.analytics.statement.summaryCsv(merchantId, p) : await ctx.analytics.statement.valueEventsCsv(merchantId, p);
     return reply
       .header('content-type', 'text/csv; charset=utf-8')
-      .header('content-disposition', `attachment; filename="${kind}-${slug(m?.name ?? '')}-${span}.csv"`)
+      .header('content-disposition', `attachment; filename="${kind}-${slug(m?.name ?? '')}-${periodSpan(p)}.csv"`)
       .header('cache-control', 'no-store')
       .send(body);
   };
