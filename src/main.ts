@@ -66,6 +66,8 @@ async function main() {
         await ctx.worker.runOnce();
         await ctx.poller.runOnce();
         await ctx.reconciler.runDue(); // throttled internally (daily settlement reports)
+        const suspects = await ctx.duplicates.runDue(); // pilot double-debit check, every 10 minutes
+        if (suspects > 0) log.warn('suspected double debits', { suspects });
         await ctx.dispatcher.runOnce();
         const purged = await ctx.privacy.runDue(); // daily retention purge
         if (purged && Object.values(purged).some((n) => n > 0)) log.info('retention purge', { ...purged });

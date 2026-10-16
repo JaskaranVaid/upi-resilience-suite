@@ -43,6 +43,7 @@ import { ShadowService } from './pilot/shadow.js';
 import { DebitIntake } from './pilot/intake.js';
 import { ExecutionReports } from './pilot/executions.js';
 import { ShadowReportService } from './pilot/report.js';
+import { DuplicateDetector, type DuplicateOptions } from './pilot/duplicates.js';
 import type { Logger } from './ops/log.js';
 import type { ConnectionAdapterFactory } from './psp/registry.js';
 
@@ -104,6 +105,8 @@ export interface AppContext {
   executionReports: ExecutionReports;
   /** "What you would have saved": the merchant's own executions, classified. */
   shadowReport: ShadowReportService;
+  /** Suspected double debits for operators to review. */
+  duplicates: DuplicateDetector;
 }
 
 export function buildContext(args: {
@@ -136,6 +139,7 @@ export function buildContext(args: {
   recon?: Partial<ReconOptions>;
   /** Retention periods (docs/legal/retention-policy.md). */
   retention?: Partial<RetentionConfig>;
+  duplicates?: Partial<DuplicateOptions>;
   /** Structured logger for background failures (console.error when omitted). */
   log?: Logger;
 }): AppContext {
@@ -216,5 +220,6 @@ export function buildContext(args: {
     intake: new DebitIntake({ db: args.db, scheduler, shadow }),
     executionReports: new ExecutionReports({ db: args.db, clock, shadow, worker }),
     shadowReport: new ShadowReportService({ db: args.db }),
+    duplicates: new DuplicateDetector({ db: args.db, clock, operators, ...(args.duplicates ? { opts: args.duplicates } : {}) }),
   };
 }

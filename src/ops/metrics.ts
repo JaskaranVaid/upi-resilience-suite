@@ -2,7 +2,7 @@ import { and, count, eq, gte, inArray, isNotNull, isNull, lt, lte, min, or, type
 import type { Clock } from '../clock.js';
 import { getRuleSet } from '../config/rules.js';
 import type { Db } from '../db/client.js';
-import { debits, executionPauses, paymentAttempts, paymentTracking, reconRuns, webhookOutbox } from '../db/schema.js';
+import { debits, duplicateSuspects, executionPauses, paymentAttempts, paymentTracking, reconRuns, webhookOutbox } from '../db/schema.js';
 import type { HealthTracker } from '../routing/health.js';
 import { isRestricted } from '../rules/windows.js';
 import type { Logger } from './log.js';
@@ -44,6 +44,8 @@ export interface OpsMetrics {
   openCircuits: string[];
   /** Kill-switch pauses in force (global, merchant or PSP). */
   executionPausesActive: number;
+  /** Suspected double debits (pilot) no operator has reviewed yet. Must be 0. */
+  duplicateDebitsOpen: number;
   /** Always 1: its absence means no worker is reporting. */
   workerHeartbeat: 1;
 }
@@ -60,6 +62,7 @@ export const OPS_METRIC_NAMES = [
   'reconFailures24h',
   'pspCircuitsOpen',
   'executionPausesActive',
+  'duplicateDebitsOpen',
   'workerHeartbeat',
 ] as const satisfies ReadonlyArray<keyof OpsMetrics>;
 
@@ -69,7 +72,7 @@ interface Deps {
   health: HealthTracker;
 }
 
-async function countWhere(db: Db, table: typeof debits | typeof paymentTracking | typeof webhookOutbox | typeof reconRuns | typeof executionPauses, where: SQL | undefined): Promise<number> {
+async function countWhere(db: Db, table: typeof debits | typeof paymentTracking | typeof webhookOutbox | typeof reconRuns | typeof executionPauses | typeof duplicateSuspects, where: SQL | undefined): Promise<number> {
   const [row] = await db.select({ n: count() }).from(table).where(where);
   return row?.n ?? 0;
 }
@@ -140,6 +143,7 @@ export async function collectOpsMetrics({ db, clock, health }: Deps): Promise<Op
     pspCircuitsOpen: openCircuits.length,
     openCircuits,
     executionPausesActive: await countWhere(db, executionPauses, isNull(executionPauses.liftedAt)),
+    duplicateDebitsOpen: await countWhere(db, duplicateSuspects, eq(duplicateSuspects.status, 'OPEN')),
     workerHeartbeat: 1,
   };
 }
