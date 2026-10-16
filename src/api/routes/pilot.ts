@@ -2,6 +2,9 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { AppContext } from '../../context.js';
 import { shadowDebitView } from '../../pilot/shadow.js';
+import { executionReportsBody, fromCsvRow } from '../../pilot/executions.js';
+import { parseCsv } from '../../mandates/csv.js';
+import { AppError } from '../../errors.js';
 import { merchantOf } from '../app.js';
 import { idParam } from '../schemas.js';
 
@@ -14,6 +17,9 @@ export const listShadowDebitsQuery = z.object({
 
 /** The merchant's pilot (Phase 7): rollout stage, shadow debits, reported executions and the scorecard. */
 export const pilotRoutes = (ctx: AppContext) => async (app: FastifyInstance) => {
+  // CSV bodies for execution reports (scoped to these routes).
+  app.addContentTypeParser('text/csv', { parseAs: 'string', bodyLimit: 5 * 1024 * 1024 }, (_req, body, done) => done(null, body));
+
   app.get('/v1/pilot', async (req) => ctx.rollout.get(merchantOf(req).id));
 
   app.get('/v1/shadow-debits', async (req) => {
@@ -28,5 +34,25 @@ export const pilotRoutes = (ctx: AppContext) => async (app: FastifyInstance) => 
   app.get('/v1/shadow-debits/:id', async (req) => {
     const { id } = idParam.parse(req.params);
     return shadowDebitView(await ctx.shadow.get(merchantOf(req).id, id));
+  });
+
+  /**
+   * What your own system did with debits it executes (shadow debits), or history for a backtest.
+   * JSON `{ executions: [...] }` or `text/csv` with the documented header. Each item is judged on its own.
+   */
+  app.post('/v1/pilot/executions', { bodyLimit: 5 * 1024 * 1024 }, async (req) => {
+    const merchant = merchantOf(req);
+    let items: unknown[];
+    if (typeof req.body === 'string') {
+      try {
+        items = parseCsv(req.body).map(fromCsvRow);
+      } catch (e) {
+        throw new AppError('VALIDATION', e instanceof Error ? e.message : 'Invalid CSV');
+      }
+      if (items.length === 0) throw new AppError('VALIDATION', 'No executions to report');
+    } else {
+      items = executionReportsBody.parse(req.body).executions;
+    }
+    return ctx.executionReports.report(merchant.id, items);
   });
 };

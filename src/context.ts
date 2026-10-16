@@ -41,6 +41,7 @@ import { PrivacyService, type RetentionConfig } from './privacy/service.js';
 import { RolloutService } from './pilot/rollout.js';
 import { ShadowService } from './pilot/shadow.js';
 import { DebitIntake } from './pilot/intake.js';
+import { ExecutionReports } from './pilot/executions.js';
 import type { Logger } from './ops/log.js';
 import type { ConnectionAdapterFactory } from './psp/registry.js';
 
@@ -98,6 +99,8 @@ export interface AppContext {
   shadow: ShadowService;
   /** Entry point for debit requests: decides who executes each one. */
   intake: DebitIntake;
+  /** What the merchant's own system did (legacy outcomes, backtests). */
+  executionReports: ExecutionReports;
 }
 
 export function buildContext(args: {
@@ -159,6 +162,7 @@ export function buildContext(args: {
   const scheduler = new SchedulerService({ db: args.db, clock, router, opts: args.scheduler });
   const shadow = new ShadowService({ db: args.db, clock, router, ...(args.scheduler ? { opts: args.scheduler } : {}) });
   const logError = args.log ? (msg: string, err?: unknown) => args.log!.error(msg, err) : undefined;
+  const worker = new DebitWorker({ db: args.db, clock, router, tracking, pauses, opts: args.worker, ...(logError ? { log: logError } : {}) });
   return {
     db: args.db,
     clock,
@@ -170,7 +174,7 @@ export function buildContext(args: {
     webhookDeliveries: new WebhookDeliveryService({ db: args.db, clock }),
     checkoutSessions: new CheckoutSessionService({ db: args.db, clock, checkout, payments, psps, queries, tokenSecret: customerTokenSecret }),
     payments,
-    worker: new DebitWorker({ db: args.db, clock, router, tracking, pauses, opts: args.worker, ...(logError ? { log: logError } : {}) }),
+    worker,
     dispatcher: new WebhookDispatcher(args.db, clock, fetchImpl, {
       ...(webhookTargets === 'public-only' ? { targetGuard: publicTargetGuard(args.resolveHost) } : {}),
     }),
@@ -207,5 +211,6 @@ export function buildContext(args: {
     rollout: new RolloutService({ db: args.db, clock, operators }),
     shadow,
     intake: new DebitIntake({ db: args.db, scheduler, shadow }),
+    executionReports: new ExecutionReports({ db: args.db, clock, shadow, worker }),
   };
 }

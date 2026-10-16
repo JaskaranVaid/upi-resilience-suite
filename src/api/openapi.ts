@@ -9,6 +9,7 @@ import { payBody } from './routes/public-checkout.js';
 import { settlementsQuery } from './routes/settlements.js';
 import { erasureRequest, erasureResponse } from './routes/privacy.js';
 import { listShadowDebitsQuery } from './routes/pilot.js';
+import { CSV_HEADER, executionReport, executionReportsResponse, MAX_EXECUTION_REPORTS } from '../pilot/executions.js';
 import { listDeliveriesQuery } from './routes/webhook-deliveries.js';
 import {
   acceptQuote, createCheckoutSession, createDebit, createMandate, createMerchant, createPayment, createVendor, quotePaid, quoteRequest, savingsQuery, splitRequest, updateMerchant,
@@ -95,6 +96,15 @@ export const ROUTE_DOCS: RouteDoc[] = [
   },
   { method: 'get', path: '/v1/shadow-debits', tag: 'Pilot', auth: 'apiKey', query: listShadowDebitsQuery, response: z.object({ data: z.array(shadowDebitResponse), nextBefore: z.string().nullable() }), summary: 'List shadow debits', description: 'Newest first; page with `before` = the previous `nextBefore`. `reported=false` lists the ones still waiting for your outcome report.' },
   { method: 'get', path: '/v1/shadow-debits/:id', tag: 'Pilot', auth: 'apiKey', response: shadowDebitResponse, summary: 'Retrieve a shadow debit' },
+  {
+    method: 'post', path: '/v1/pilot/executions', tag: 'Pilot', auth: 'apiKey',
+    body: z.object({ executions: z.array(executionReport).min(1).max(MAX_EXECUTION_REPORTS) }), response: executionReportsResponse,
+    summary: 'Report what your system executed',
+    description:
+      'For each shadow debit your system executes, report the outcome (a later report for the same key replaces it). For a backtest, send history: items whose key names no debit need `mandateRef` and `amountPaise`. ' +
+      `JSON as documented, or \`text/csv\` with header \`${CSV_HEADER.join(',')}\` (up to 5 MB). ` +
+      'A key that names a debit Merchantflo executes is `MISROUTED`: if we had not started it, it is handed back (`debit.failed`, `EXECUTED_BY_MERCHANT`) so the customer is never debited twice. Items are judged one by one.',
+  },
 
   // Merchant account
   { method: 'post', path: '/v1/merchants', tag: 'Account', auth: 'admin', body: createMerchant, status: 201, summary: 'Onboard a merchant (operator)', description: 'Returns the first API key and the webhook signing secret, once.' },

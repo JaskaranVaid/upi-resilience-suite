@@ -368,6 +368,33 @@ export class DebitWorker {
     await this.tracking?.recordOutcome(tx, { merchantId: d.merchantId, subjectType: 'AUTOPAY', subjectId: d.id, pspId, txnRef, outcome, now });
   }
 
+  /**
+   * The merchant reports that its own system executed this debit (a pilot misroute). If Merchantflo
+   * has not started it — still SCHEDULED — it is handed back atomically: FAILED with
+   * EXECUTED_BY_MERCHANT, never executed. Once claimed or sent to a PSP nothing is changed, and the
+   * double-debit detector watches the pair instead.
+   */
+  async handBack(merchantId: string, debitId: string): Promise<{ handedBack: boolean; state: DebitState }> {
+    const now = this.clock.now();
+    return this.db.transaction(async (tx) => {
+      // Conditional on SCHEDULED: a worker claiming it concurrently holds the row lock and moves it
+      // to EXECUTING first, and then this update matches nothing.
+      const [row] = await tx
+        .update(debits)
+        .set({ state: 'FAILED', lastErrorCode: 'EXECUTED_BY_MERCHANT', completedAt: now, updatedAt: now })
+        .where(and(eq(debits.id, debitId), eq(debits.merchantId, merchantId), eq(debits.state, 'SCHEDULED')))
+        .returning();
+      if (!row) {
+        const [current] = await tx.select({ state: debits.state }).from(debits).where(eq(debits.id, debitId));
+        if (!current) throw new AppError('NOT_FOUND', `Debit ${debitId} not found`);
+        return { handedBack: false, state: current.state };
+      }
+      await enqueueWebhook(tx, { merchantId, event: 'debit.failed', payload: debitView(row), now });
+      await this.afterOutcome(tx, row, 'FAILED', { kind: 'NOT_SUBMITTED' }, null, null, now);
+      return { handedBack: true, state: row.state };
+    });
+  }
+
   /** Back to SCHEDULED without an attempt, a notice or a webhook: the kill switch is on. */
   private async holdForPause(d: Debit, now: Date, scheduledAt: Date): Promise<void> {
     await this.db.update(debits).set({ state: 'SCHEDULED', scheduledAt, executingSince: null, updatedAt: now }).where(eq(debits.id, d.id));
