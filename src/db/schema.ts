@@ -490,6 +490,12 @@ export const dashboardUsers = pgTable('dashboard_users', {
   failedLogins: integer('failed_logins').notNull().default(0),
   lockedUntil: ts('locked_until'),
   lastLoginAt: ts('last_login_at'),
+  /** Authenticator secret (SecretBox-sealed) once two-factor sign-in is on; null when off. */
+  totpSecret: text('totp_secret'),
+  /** A secret being enrolled, until the user confirms a code from it. */
+  totpPendingSecret: text('totp_pending_secret'),
+  /** Last accepted TOTP time step — a code is accepted once. */
+  totpLastStep: integer('totp_last_step'),
   createdBy: text('created_by'),
   createdAt: createdAt(),
   updatedAt: ts('updated_at').notNull().defaultNow(),

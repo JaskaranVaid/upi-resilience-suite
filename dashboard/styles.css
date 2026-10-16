@@ -68,6 +68,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { margin: 0; }
 body {
   background: var(--bg);
@@ -283,3 +284,5 @@ details.table-view .table-wrap { margin-top: 8px; max-height: 320px; overflow: a
 /* Developers: webhook payloads */
 details.payload summary { cursor: pointer; }
 details.payload pre { margin: 6px 0 0; max-width: 340px; max-height: 240px; overflow: auto; white-space: pre; background: var(--bg); padding: 8px; border-radius: 6px; }
+/* Authenticator enrolment QR: dark modules on white in either theme, so phones can read it. */
+.svg-host.qr { width: 200px; background: #ffffff; padding: 8px; border-radius: 8px; }

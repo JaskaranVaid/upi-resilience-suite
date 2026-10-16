@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { eq } from 'drizzle-orm';
+import QRCode from 'qrcode';
 import { z } from 'zod';
 import type { AppContext } from '../../context.js';
 import { merchants, type DashboardRole } from '../../db/schema.js';
@@ -37,7 +38,9 @@ export function requireRole(req: FastifyRequest, roles: DashboardRole[]): Dashbo
 
 export const OPERATOR_ROLES: DashboardRole[] = ['ADMIN', 'SUPPORT'];
 
-const loginBody = z.object({ email: z.string().min(3).max(320), password: z.string().min(1).max(1024) });
+const loginBody = z.object({ email: z.string().min(3).max(320), password: z.string().min(1).max(1024), code: z.string().max(20).optional() });
+const codeBody = z.object({ code: z.string().min(1).max(20) });
+const disableTwoFactorBody = z.object({ password: z.string().min(1).max(1024), code: z.string().min(1).max(20) });
 const roleEnum = z.enum(['ADMIN', 'SUPPORT', 'VIEWER']);
 export const createUserBody = z.object({
   email: z.email().max(320),
@@ -46,7 +49,13 @@ export const createUserBody = z.object({
   role: roleEnum,
 });
 const updateUserBody = z
-  .object({ role: roleEnum.optional(), disabled: z.boolean().optional(), name: z.string().min(1).max(200).optional() })
+  .object({
+    role: roleEnum.optional(),
+    disabled: z.boolean().optional(),
+    name: z.string().min(1).max(200).optional(),
+    // Admins can only turn a member's two-factor off (lost phone); enrolling is the user's own step.
+    twoFactor: z.literal(false).optional(),
+  })
   .refine((b) => Object.keys(b).length > 0, 'Nothing to update');
 
 /**
@@ -84,7 +93,7 @@ export const dashboardApi = (ctx: AppContext) => async (app: FastifyInstance) =>
 
   app.post('/dashboard/api/login', async (req, reply) => {
     const body = loginBody.parse(req.body);
-    const { user, token } = await ctx.sessions.login(body.email, body.password);
+    const { user, token } = await ctx.sessions.login(body.email, body.password, body.code);
     setCookie(reply, token);
     return { user: userView(user) };
   });
@@ -99,6 +108,21 @@ export const dashboardApi = (ctx: AppContext) => async (app: FastifyInstance) =>
     const u = userOf(req);
     const [m] = await ctx.db.select({ name: merchants.name }).from(merchants).where(eq(merchants.id, u.merchantId));
     return { user: userView(u), merchant: { id: u.merchantId, name: m?.name ?? '' } };
+  });
+
+  app.post('/dashboard/api/me/2fa/setup', async (req) => {
+    const { secret, otpauthUri } = await ctx.sessions.beginTwoFactor(userOf(req));
+    return { secret, otpauthUri, qrSvg: await QRCode.toString(otpauthUri, { type: 'svg', margin: 1 }) };
+  });
+
+  app.post('/dashboard/api/me/2fa/confirm', async (req) => {
+    const { code } = codeBody.parse(req.body);
+    return { user: userView(await ctx.sessions.confirmTwoFactor(userOf(req).id, code, req.cookies[SESSION_COOKIE])) };
+  });
+
+  app.post('/dashboard/api/me/2fa/disable', async (req) => {
+    const body = disableTwoFactorBody.parse(req.body);
+    return { user: userView(await ctx.sessions.disableTwoFactor(userOf(req).id, body.password, body.code)) };
   });
 
   app.get('/dashboard/api/users', async (req) => {

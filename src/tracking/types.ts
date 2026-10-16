@@ -70,7 +70,9 @@ export type EventType =
   | 'USER_CREATED'
   | 'USER_UPDATED'
   | 'LOGIN_SUCCEEDED'
-  | 'LOGIN_FAILED';
+  | 'LOGIN_FAILED'
+  | 'TWO_FACTOR_ENABLED'
+  | 'TWO_FACTOR_DISABLED';
 
 export interface NewEvent {
   type: EventType;

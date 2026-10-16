@@ -163,7 +163,7 @@ export function buildContext(args: {
     users: new UserService({ db: args.db, clock }),
     apiKeys: new ApiKeyService({ db: args.db, clock }),
     mandateImporter: new MandateImporter({ db: args.db, clock, psps }),
-    sessions: new SessionService({ db: args.db, clock, ...(args.auth ? { cfg: args.auth } : {}) }),
+    sessions: new SessionService({ db: args.db, clock, secrets, ...(args.auth ? { cfg: args.auth } : {}) }),
     queries,
     secureCookies: args.secureCookies ?? false,
     customerTokenSecret,

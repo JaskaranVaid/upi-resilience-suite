@@ -141,6 +141,13 @@
       "when": 1792085350102,
       "tag": "0019_execution_pauses",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1792129023335,
+      "tag": "0020_dashboard_two_factor",
+      "breakpoints": true
     }
   ]
 }

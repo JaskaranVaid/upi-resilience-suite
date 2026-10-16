@@ -9,6 +9,7 @@ import { renderLogin } from './views/login.js';
 import { renderOverview } from './views/overview.js';
 import { renderPaymentDetail } from './views/payment-detail.js';
 import { renderPayments, renderSearch } from './views/payments.js';
+import { renderSecurity } from './views/security.js';
 import { renderUsers } from './views/users.js';
 
 // Hash router: #/path?query. Each route maps to a view; views fetch their own data.
@@ -22,6 +23,7 @@ const ROUTES = [
   { pattern: /^\/value$/, view: renderAnalytics, nav: 'value' },
   { pattern: /^\/users$/, view: renderUsers, nav: 'users' },
   { pattern: /^\/developers$/, view: renderDevelopers, nav: 'developers' },
+  { pattern: /^\/security$/, view: renderSecurity, nav: 'security' },
 ];
 
 const root = document.getElementById('app');
@@ -54,6 +56,7 @@ function shell(active) {
         ${link('value', '#/value', 'Value')}
         ${me.user.role === 'ADMIN' ? link('users', '#/users', 'Team') : ''}
         ${me.user.role === 'ADMIN' ? link('developers', '#/developers', 'Developers') : ''}
+        ${link('security', '#/security', 'Security')}
       </nav>
       <div class="me">
         <div>${me.user.name}</div>
