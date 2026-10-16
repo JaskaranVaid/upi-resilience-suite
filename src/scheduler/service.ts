@@ -2,7 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import type { Clock } from '../clock.js';
 import { AUTOPAY_NO_AFA_LIMIT_PAISE, getRuleSet } from '../config/rules.js';
 import type { Db } from '../db/client.js';
-import { debits, mandates } from '../db/schema.js';
+import { debits, mandates, type RolloutStage } from '../db/schema.js';
 import { AppError } from '../errors.js';
 import { newId } from '../ids.js';
 import type { Router } from '../routing/router.js';
@@ -10,6 +10,7 @@ import { istMidnight } from '../rules/time.js';
 import { isPeak } from '../rules/windows.js';
 import { recordEvents, SYSTEM } from '../events/record.js';
 import { enqueueWebhook } from '../webhooks/outbox.js';
+import { DebitKeyTaken, lockDebitKey, shadowKeyExists } from '../pilot/keys.js';
 import { DEFAULT_PLANNING, deferredNoticeAt, noticeWindow, plan, sendNotice, type PlanningOptions } from './planning.js';
 
 export type Debit = typeof debits.$inferSelect;
@@ -48,6 +49,8 @@ export function debitView(d: Debit) {
     lastErrorCode: d.lastErrorCode,
     pspTxnId: d.pspTxnId,
     completedAt: d.completedAt,
+    /** Merchantflo sends the notice and executes it (a pilot's shadow debits say MERCHANT). */
+    executedBy: 'MERCHANTFLO' as const,
   };
 }
 
@@ -68,7 +71,8 @@ export class SchedulerService {
     this.opts = { ...DEFAULT_SCHEDULER, ...deps.opts };
   }
 
-  async createDebit(merchantId: string, mandateId: string, input: CreateDebitInput): Promise<{ debit: Debit; created: boolean }> {
+  /** `rolloutStage`: the merchant's pilot stage at intake, recorded on the debit (src/pilot/intake.ts). */
+  async createDebit(merchantId: string, mandateId: string, input: CreateDebitInput, opts: { rolloutStage?: RolloutStage } = {}): Promise<{ debit: Debit; created: boolean }> {
     const existing = await this.findByKey(merchantId, input.idempotencyKey);
     if (existing) return this.replay(existing, mandateId, input);
 
@@ -110,6 +114,9 @@ export class SchedulerService {
 
     try {
       const debit = await this.db.transaction(async (tx) => {
+        // The key may name a shadow debit (one the merchant executes): never make it a live one too.
+        await lockDebitKey(tx, merchantId, input.idempotencyKey);
+        if (await shadowKeyExists(tx, merchantId, input.idempotencyKey)) throw new DebitKeyTaken('SHADOW');
         const [row] = await tx
           .insert(debits)
           .values({
@@ -127,6 +134,7 @@ export class SchedulerService {
             noticeDate: noticeAt ? null : p.noticeDate,
             noticeSentAt: noticeAt ? null : now,
             maxAttempts: this.opts.maxAttempts,
+            rolloutStage: opts.rolloutStage ?? null,
             createdAt: now,
             updatedAt: now,
           })
@@ -150,7 +158,7 @@ export class SchedulerService {
     return d;
   }
 
-  private async findByKey(merchantId: string, key: string): Promise<Debit | undefined> {
+  async findByKey(merchantId: string, key: string): Promise<Debit | undefined> {
     const [d] = await this.db.select().from(debits).where(and(eq(debits.merchantId, merchantId), eq(debits.idempotencyKey, key)));
     return d;
   }

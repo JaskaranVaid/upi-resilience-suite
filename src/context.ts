@@ -39,6 +39,8 @@ import { OperatorService } from './ops-console/operators.js';
 import { ExecutionControl } from './ops-console/pauses.js';
 import { PrivacyService, type RetentionConfig } from './privacy/service.js';
 import { RolloutService } from './pilot/rollout.js';
+import { ShadowService } from './pilot/shadow.js';
+import { DebitIntake } from './pilot/intake.js';
 import type { Logger } from './ops/log.js';
 import type { ConnectionAdapterFactory } from './psp/registry.js';
 
@@ -92,6 +94,10 @@ export interface AppContext {
   privacy: PrivacyService;
   /** Pilot rollout stages (Phase 7). */
   rollout: RolloutService;
+  /** Debits the merchant executes during a pilot, as we would have planned them. */
+  shadow: ShadowService;
+  /** Entry point for debit requests: decides who executes each one. */
+  intake: DebitIntake;
 }
 
 export function buildContext(args: {
@@ -150,6 +156,8 @@ export function buildContext(args: {
   const payments = new PaymentService({ db: args.db, clock, router, tracking, pauses });
   const queries = new PaymentQueryService({ db: args.db, clock, cfg: polling, psps });
   const customerTokenSecret = args.customerTokenSecret ?? 'dev-customer-token-secret-not-for-production';
+  const scheduler = new SchedulerService({ db: args.db, clock, router, opts: args.scheduler });
+  const shadow = new ShadowService({ db: args.db, clock, router, ...(args.scheduler ? { opts: args.scheduler } : {}) });
   const logError = args.log ? (msg: string, err?: unknown) => args.log!.error(msg, err) : undefined;
   return {
     db: args.db,
@@ -157,7 +165,7 @@ export function buildContext(args: {
     adminToken: args.adminToken,
     health,
     router,
-    scheduler: new SchedulerService({ db: args.db, clock, router, opts: args.scheduler }),
+    scheduler,
     checkout,
     webhookDeliveries: new WebhookDeliveryService({ db: args.db, clock }),
     checkoutSessions: new CheckoutSessionService({ db: args.db, clock, checkout, payments, psps, queries, tokenSecret: customerTokenSecret }),
@@ -197,5 +205,7 @@ export function buildContext(args: {
     pauses,
     privacy: new PrivacyService({ db: args.db, clock, operators, ...(args.retention ? { cfg: args.retention } : {}) }),
     rollout: new RolloutService({ db: args.db, clock, operators }),
+    shadow,
+    intake: new DebitIntake({ db: args.db, scheduler, shadow }),
   };
 }

@@ -106,6 +106,8 @@ export const mandateResponse = z
     noAfaLimitPaise: z.number().int().nullable(),
     status: z.enum(['ACTIVE', 'PAUSED', 'REVOKED']),
     createdAt: timestamp,
+    /** Who executes new debits on this mandate under your current pilot stage. */
+    executedBy: z.enum(['MERCHANTFLO', 'MERCHANT']),
   })
   .strict()
   .meta({ id: 'Mandate' });
@@ -130,6 +132,8 @@ export const debitResponse = z
     lastErrorCode: z.string().nullable(),
     pspTxnId: z.string().nullable(),
     completedAt: timestamp.nullable(),
+    /** Merchantflo sends the notice and executes this debit. Do not execute it yourself. */
+    executedBy: z.literal('MERCHANTFLO'),
   })
   .strict()
   .meta({ id: 'Debit' });
@@ -171,3 +175,44 @@ export const pilotResponse = z
   })
   .strict()
   .meta({ id: 'Pilot' });
+
+export const shadowDebitResponse = z
+  .object({
+    object: z.literal('shadow_debit'),
+    id: z.string(),
+    /** Your own system executes this debit, as it did before the pilot. Merchantflo never will. */
+    executedBy: z.literal('MERCHANT'),
+    mandateId: z.string().nullable(),
+    mandateRef: z.string(),
+    orderId: z.string().nullable(),
+    amountPaise: z.number().int(),
+    /** MIRRORED: sent to debit intake; REPORTED: known only from an execution report (e.g. a backtest). */
+    source: z.enum(['MIRRORED', 'REPORTED']),
+    rolloutStage: rolloutStage.nullable(),
+    requestedAt: timestamp,
+    requestedInPeak: z.boolean(),
+    dueDate: z.string().nullable(),
+    /** When Merchantflo would have executed it: off-peak, after the notice period. */
+    plannedAt: timestamp,
+    plannedNoticeDate: z.string(),
+    /** Why Merchantflo would have refused it at intake, if it would have. */
+    wouldRefuse: z.enum(['MANDATE_INACTIVE', 'AMOUNT_EXCEEDS_MANDATE', 'AFA_REQUIRED']).nullable(),
+    /** You reported executing a debit Merchantflo executes: see the pilot guide. */
+    misroutedDebitId: z.string().nullable(),
+    /** What your system reported (POST /v1/pilot/executions); null until then. */
+    outcome: z
+      .object({
+        status: z.enum(['SUCCEEDED', 'FAILED']),
+        executedAt: timestamp,
+        failureKind: z.enum(['TECHNICAL', 'BUSINESS', 'UNKNOWN']).nullable(),
+        failureCode: z.string().nullable(),
+        pspTxnId: z.string().nullable(),
+        attempts: z.number().int().nullable(),
+        reportedAt: timestamp.nullable(),
+      })
+      .strict()
+      .nullable(),
+    createdAt: timestamp,
+  })
+  .strict()
+  .meta({ id: 'ShadowDebit', description: "A debit your own system executes during a pilot, with Merchantflo's plan for it and the outcome you reported." });

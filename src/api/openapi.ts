@@ -1,13 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { createUserBody } from './dashboard/plugin.js';
-import { checkoutPayment, checkoutSessionResponse, debitResponse, mandateResponse, paymentResponse, pilotResponse, publicPaymentStatus, webhookDeliveryResponse } from './responses.js';
+import { checkoutPayment, checkoutSessionResponse, debitResponse, mandateResponse, paymentResponse, pilotResponse, publicPaymentStatus, shadowDebitResponse, webhookDeliveryResponse } from './responses.js';
 import { createConnectionBody, updateConnectionBody } from './routes/connections.js';
 import { importMandatesBody, listDebitsQuery, movePspBody, updateMandateBody } from './routes/mandates.js';
 import { changeModeBody, createApiKeyBody } from './routes/merchants.js';
 import { payBody } from './routes/public-checkout.js';
 import { settlementsQuery } from './routes/settlements.js';
 import { erasureRequest, erasureResponse } from './routes/privacy.js';
+import { listShadowDebitsQuery } from './routes/pilot.js';
 import { listDeliveriesQuery } from './routes/webhook-deliveries.js';
 import {
   acceptQuote, createCheckoutSession, createDebit, createMandate, createMerchant, createPayment, createVendor, quotePaid, quoteRequest, savingsQuery, splitRequest, updateMerchant,
@@ -77,8 +78,12 @@ export const ROUTE_DOCS: RouteDoc[] = [
   { method: 'post', path: '/v1/mandates/:id/revoke', tag: 'AutoPay', auth: 'apiKey', response: mandateResponse, summary: 'Revoke a mandate' },
   { method: 'post', path: '/v1/mandates/move-psp', tag: 'AutoPay', auth: 'apiKey', body: movePspBody, summary: 'Point every mandate on one PSP at another' },
   {
-    method: 'post', path: '/v1/mandates/:id/debits', tag: 'AutoPay', auth: 'apiKey', body: createDebit, idempotent: true, status: 201, response: debitResponse,
-    summary: 'Request a recurring debit', description: 'Merchantflo sends the pre-debit notice and executes in a compliant off-peak slot (never in the NPCI peak windows).',
+    method: 'post', path: '/v1/mandates/:id/debits', tag: 'AutoPay', auth: 'apiKey', body: createDebit, idempotent: true, status: 201, response: z.union([debitResponse, shadowDebitResponse]),
+    summary: 'Request a recurring debit',
+    description:
+      'Merchantflo sends the pre-debit notice and executes in a compliant off-peak slot (never in the NPCI peak windows). ' +
+      'During a pilot, check `executedBy`: `MERCHANTFLO` — a Debit we execute (do not execute it yourself); `MERCHANT` — a ShadowDebit your own system executes as before, then reports with POST /v1/pilot/executions. ' +
+      'A retry with the same idempotency key always returns the first answer.',
   },
   { method: 'get', path: '/v1/debits/:id', tag: 'AutoPay', auth: 'apiKey', response: debitResponse, summary: 'Retrieve a debit' },
   { method: 'get', path: '/v1/debits', tag: 'AutoPay', auth: 'apiKey', query: listDebitsQuery, response: list(debitResponse), summary: 'List debits' },
@@ -88,6 +93,8 @@ export const ROUTE_DOCS: RouteDoc[] = [
     method: 'get', path: '/v1/pilot', tag: 'Pilot', auth: 'apiKey', response: pilotResponse, summary: 'Your pilot rollout stage',
     description: 'Who executes your AutoPay debits during a pilot. Every debit response also says so in `executedBy`, so your integration never needs to read this.',
   },
+  { method: 'get', path: '/v1/shadow-debits', tag: 'Pilot', auth: 'apiKey', query: listShadowDebitsQuery, response: z.object({ data: z.array(shadowDebitResponse), nextBefore: z.string().nullable() }), summary: 'List shadow debits', description: 'Newest first; page with `before` = the previous `nextBefore`. `reported=false` lists the ones still waiting for your outcome report.' },
+  { method: 'get', path: '/v1/shadow-debits/:id', tag: 'Pilot', auth: 'apiKey', response: shadowDebitResponse, summary: 'Retrieve a shadow debit' },
 
   // Merchant account
   { method: 'post', path: '/v1/merchants', tag: 'Account', auth: 'admin', body: createMerchant, status: 201, summary: 'Onboard a merchant (operator)', description: 'Returns the first API key and the webhook signing secret, once.' },
