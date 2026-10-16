@@ -65,7 +65,7 @@ locals {
     "execution-paused" = {
       metric      = "executionPausesActive", comparison = "GreaterThanOrEqualToThreshold", threshold = 1
       period      = 300, evaluations = 6, missing = "notBreaching", severity = "medium"
-      description = "A kill-switch pause has been in force for 30 minutes. Make sure it is still meant to be (ops console → Pauses)."
+      description = "A kill-switch pause has been in force for 30 minutes. Make sure it is still meant to be (ops console → Kill switch)."
     }
     "worker-heartbeat" = {
       metric      = "workerHeartbeat", comparison = "LessThanThreshold", threshold = 1

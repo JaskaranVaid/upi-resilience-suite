@@ -24,6 +24,11 @@ in Phase 0. Update the status column as they move.
 | 17 | **Restore drill** on staging (`scripts/drills/restore-drill.sh staging`); record timings in the [backup-restore runbook](../runbooks/backup-restore.md) | Founder 1 | Phase 5 exit | To do |
 | 18 | **Alarm fire drill** on staging: notification path for every alarm, plus the real-condition drills — [alerts runbook](../runbooks/alerts.md#fire-drill) | Founder 1 | Phase 5 exit | To do |
 | 19 | **7-day staging soak** with test-mode traffic (scheduled debits across peak windows): zero restricted-window executions, no unexplained alarms → **M1** | All | Phase 5 exit | To do |
+| 20 | **External penetration test** of staging against [the scope](../security/pentest-scope.md); fix and retest every high/critical finding | Founder 1 | Phase 6 exit | To do |
+| 21 | **Counsel review** of the legal drafts ([privacy notice](../legal/privacy-notice.md), [DPA](../legal/dpa.md), [retention policy](../legal/retention-policy.md), [sub-processors](../legal/subprocessors.md)) together with question set 4 below; confirm CERT-In and breach-notice duties | Founder 2 | Phase 6 exit | To do |
+| 22 | **First operator accounts** on staging and production (OWNER for each founder) — [operators runbook](../runbooks/operators.md); delete the log stream holding the enrolment output | Founder 1 | Phase 6 | To do |
+| 23 | **Kill-switch drill** on staging (global, merchant, PSP; lift and watch waiting debits resume) — record it in the [kill-switch runbook](../runbooks/kill-switch.md#drill-founder-action-23) | Founder 1 | Phase 6 exit | To do |
+| 24 | Restrict `/ops/*` at the WAF to office/VPN IP ranges (or put the console behind a VPN) | Founder 1 | Before pilot | To do |
 
 ## Message templates
 

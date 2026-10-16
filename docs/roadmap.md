@@ -60,10 +60,18 @@ and alarm drills; runbooks ([deploy](runbooks/deploy.md), [alerts](runbooks/aler
 [backup-restore](runbooks/backup-restore.md), [load testing](runbooks/load-testing.md)).
 **Exit:** 7-day staging soak with zero restricted-window executions; alerts fire-drilled. → **M1**
 
-## Phase 6 — Security, compliance, internal operations
+## Phase 6 — Security, compliance, internal operations ✅ code (2026-10-16; pen test, counsel review and drills are founder actions #20–#24)
 Threat model, dependency/secret scanning, admin 2FA, external pen test; DPDP (retention, deletion,
 privacy notice, DPA), field encryption for VPAs/phones; legal documents and counsel opinion;
 internal ops console with a kill switch (pause executions per merchant, PSP or globally).
+Built: CI gates (`npm audit`, CodeQL, gitleaks, Trivy) and security headers; ops console at `/ops/`
+with operator accounts that always need a TOTP code, roles and an audit log; kill switch (global,
+merchant, PSP — nothing cancelled, alarm after 30 minutes); optional two-factor sign-in for dashboard
+users; VPAs, phones, payment actions and webhook payloads sealed at rest with a backfill; daily
+retention purge and `POST /v1/privacy/erasure`; [threat model](security/threat-model.md),
+[pen-test scope](security/pentest-scope.md), legal drafts in [legal/](legal/retention-policy.md),
+runbooks ([kill switch](runbooks/kill-switch.md), [incident response](runbooks/incident-response.md),
+[operators](runbooks/operators.md)).
 **Exit:** no open high pen-test findings; kill switch tested.
 
 ## Phase 7 — Pilot
