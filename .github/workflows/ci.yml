@@ -44,12 +44,12 @@ jobs:
         run: docker compose up -d --build --wait
       - run: bash scripts/compose-smoke.sh
       - name: Image vulnerability scan (fixable HIGH/CRITICAL fail the build)
-        uses: aquasecurity/trivy-action@0.28.0
+        # Pinned to a commit: the action's tags are "v"-prefixed and tags can move. Scans OS and library packages.
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: merchantflo:local
           severity: HIGH,CRITICAL
           ignore-unfixed: true
-          vuln-type: os,library
           exit-code: '1'
       - name: Logs on failure
         if: failure()
