@@ -28,6 +28,7 @@ COPY package.json ./
 COPY drizzle ./drizzle
 COPY dashboard ./dashboard
 COPY checkout ./checkout
+COPY ops ./ops
 ARG GIT_SHA=unknown
 ENV GIT_SHA=$GIT_SHA
 USER node

@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { and, desc, eq, isNull, lt, or } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, isNull, lt, ne, or } from 'drizzle-orm';
 import { DUMMY_HASH, hashPassword, verifyPassword } from '../auth/passwords.js';
 import { generateSecret, otpauthUri, verifyTotp } from '../auth/totp.js';
 import type { Clock } from '../clock.js';
@@ -172,6 +172,25 @@ export class OperatorService {
     });
   }
 
+  /** Replace the operator's password; every other session ends (the one presenting keepToken stays). */
+  async changePassword(operatorId: string, current: string, next: string, keepToken?: string): Promise<void> {
+    const { db, clock } = this.deps;
+    const [o] = await db.select().from(operators).where(eq(operators.id, operatorId));
+    if (!o) throw new AppError('NOT_FOUND', `Operator ${operatorId} not found`);
+    if (!(await verifyPassword(current, o.passwordHash))) throw new AppError('UNAUTHORIZED', 'Current password is wrong');
+    const passwordHash = await hashPassword(next);
+    const now = clock.now();
+    await db.transaction(async (tx) => {
+      await tx.update(operators).set({ passwordHash, updatedAt: now }).where(eq(operators.id, operatorId));
+      const others = and(eq(operatorSessions.operatorId, operatorId), isNull(operatorSessions.revokedAt));
+      await tx
+        .update(operatorSessions)
+        .set({ revokedAt: now })
+        .where(keepToken ? and(others, ne(operatorSessions.tokenHash, hashToken(keepToken))) : others);
+      await this.audit(tx, operatorId, 'PASSWORD_CHANGED', operatorId);
+    });
+  }
+
   async findByEmail(email: string): Promise<Operator | undefined> {
     const [o] = await this.deps.db.select().from(operators).where(eq(operators.email, email.trim().toLowerCase()));
     return o;
@@ -182,7 +201,13 @@ export class OperatorService {
     await db.insert(operatorAudit).values({ id: newId('aud'), operatorId, action, target, details: details ?? null, createdAt: this.deps.clock.now() });
   }
 
+  /** Newest first, with the acting operator's email (null for the command line or the system). */
   async listAudit(limit: number) {
-    return this.deps.db.select().from(operatorAudit).orderBy(desc(operatorAudit.seq)).limit(limit);
+    return this.deps.db
+      .select({ ...getTableColumns(operatorAudit), operatorEmail: operators.email })
+      .from(operatorAudit)
+      .leftJoin(operators, eq(operators.id, operatorAudit.operatorId))
+      .orderBy(desc(operatorAudit.seq))
+      .limit(limit);
   }
 }

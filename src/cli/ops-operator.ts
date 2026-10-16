@@ -1,6 +1,7 @@
 /**
  * Manage Merchantflo operator accounts (ops console) from a trusted shell — the first OWNER has
- * to come from somewhere. In AWS run it as a one-off ECS task (docs/runbooks/operators.md).
+ * to come from somewhere. In AWS run it as a one-off ECS task on the production image with the
+ * command `node dist/cli/ops-operator.js create ...` (docs/runbooks/operators.md).
  *
  *   npm run ops:operator -- create --email asha@merchantflo.in --name "Asha" [--role OWNER|OPERATOR|VIEWER]
  *   npm run ops:operator -- reset-2fa --email asha@merchantflo.in
@@ -10,13 +11,13 @@
  * render it as a QR code). Nothing is stored in plaintext.
  */
 import { parseArgs } from 'node:util';
-import { systemClock } from '../src/clock.js';
-import { loadDotEnv } from '../src/config/dotenv.js';
-import { loadEnv } from '../src/config/env.js';
-import { createDb } from '../src/db/client.js';
-import type { OperatorRole } from '../src/db/schema.js';
-import { OperatorService } from '../src/ops-console/operators.js';
-import { SecretBox } from '../src/security/secrets.js';
+import { systemClock } from '../clock.js';
+import { loadDotEnv } from '../config/dotenv.js';
+import { loadEnv } from '../config/env.js';
+import { createDb } from '../db/client.js';
+import type { OperatorRole } from '../db/schema.js';
+import { OperatorService } from '../ops-console/operators.js';
+import { SecretBox } from '../security/secrets.js';
 
 const ROLES: OperatorRole[] = ['OWNER', 'OPERATOR', 'VIEWER'];
 

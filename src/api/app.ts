@@ -10,6 +10,7 @@ import { merchants } from '../db/schema.js';
 import { AppError } from '../errors.js';
 import { dashboardApi } from './dashboard/plugin.js';
 import { docsRoutes } from './openapi.js';
+import { opsConsoleApi } from './ops-console.js';
 import { registerRateLimits } from './rate-limit.js';
 import { checkoutRoutes } from './routes/checkout.js';
 import { mandateRoutes } from './routes/mandates.js';
@@ -126,6 +127,18 @@ export function buildApp(ctx: AppContext, opts: { logger?: boolean; trustProxy?:
     },
   });
   app.get('/dashboard', async (_req, reply) => reply.redirect('/dashboard/'));
+  // Merchantflo staff console. Its API is /ops/api/* (operator sessions with two-factor sign-in).
+  app.register(fastifyStatic, {
+    root: fileURLToPath(new URL('../../ops', import.meta.url)),
+    prefix: '/ops/',
+    decorateReply: false,
+    setHeaders: (reply) => {
+      reply.header('content-security-policy', "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+      reply.header('x-content-type-options', 'nosniff');
+      reply.header('referrer-policy', 'same-origin');
+    },
+  });
+  app.get('/ops', async (_req, reply) => reply.redirect('/ops/'));
   // checkout.js and its stylesheet load from merchants' pages (any origin); demo.html is ours.
   app.register(fastifyStatic, {
     root: fileURLToPath(new URL('../../checkout', import.meta.url)),
@@ -145,6 +158,7 @@ export function buildApp(ctx: AppContext, opts: { logger?: boolean; trustProxy?:
     },
   });
   app.register(dashboardApi(ctx));
+  app.register(opsConsoleApi(ctx));
   app.register(opsRoutes(ctx));
   app.register(merchantRoutes(ctx));
   app.register(mandateRoutes(ctx));

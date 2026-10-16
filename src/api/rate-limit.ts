@@ -32,8 +32,8 @@ const sha = (s: string) => createHash('sha256').update(s).digest('hex').slice(0,
 function groupOf(req: FastifyRequest): Group {
   const url = req.routeOptions.url ?? req.url;
   if (url.startsWith('/v1/')) return 'apiPerMinute';
-  if (url === '/dashboard/api/login') return 'loginPerMinute';
-  if (url.startsWith('/dashboard/api/')) return 'dashboardPerMinute';
+  if (url === '/dashboard/api/login' || url === '/ops/api/login') return 'loginPerMinute';
+  if (url.startsWith('/dashboard/api/') || url.startsWith('/ops/api/')) return 'dashboardPerMinute';
   if (url.startsWith('/public/')) return 'publicPerMinute';
   return null; // health checks, static dashboard assets and PSP webhooks are not limited here
 }
@@ -45,7 +45,7 @@ function callerOf(req: FastifyRequest, group: Group): string {
     if (auth?.startsWith('Bearer ')) return `key:${sha(auth.slice(7).trim())}`;
   }
   if (group === 'dashboardPerMinute') {
-    const session = req.cookies?.rs_session;
+    const session = (req.url.startsWith('/ops/') ? req.cookies?.mf_ops : undefined) ?? req.cookies?.rs_session;
     if (session) return `ses:${sha(session)}`;
   }
   return `ip:${req.ip}`;

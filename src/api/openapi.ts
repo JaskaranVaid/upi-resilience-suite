@@ -34,7 +34,7 @@ export interface RouteDoc {
 }
 
 /** Routes outside the merchant API: PSP callbacks, the dashboard's own API, these docs. */
-export const UNDOCUMENTED_ROUTES = ['/webhooks/psp/', '/dashboard', '/openapi.json', '/docs', '/checkout/'];
+export const UNDOCUMENTED_ROUTES = ['/webhooks/psp/', '/dashboard', '/openapi.json', '/docs', '/checkout/', '/ops'];
 
 const list = (item: z.ZodType) => z.object({ data: z.array(item) });
 
