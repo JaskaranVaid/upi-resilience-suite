@@ -46,7 +46,7 @@ jobs:
     outputs:
       tag: ${{ steps.push.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.COMMIT }}
       - uses: aws-actions/configure-aws-credentials@v4
@@ -80,7 +80,7 @@ jobs:
       name: ${{ inputs.environment || 'staging' }}
       url: ${{ vars.PUBLIC_BASE_URL }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.COMMIT }}
       - uses: actions/setup-node@v4
