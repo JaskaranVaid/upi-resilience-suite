@@ -78,7 +78,7 @@ async function main() {
   };
   try {
     if (command === 'create') {
-      const role = values.role!.toUpperCase() as OperatorRole;
+      const role = values.role.toUpperCase() as OperatorRole;
       if (!ROLES.includes(role)) throw new Error(`role must be one of ${ROLES.join(', ')}`);
       const created = await ops.create({ email: values.email, name: values.name!, role }, null);
       console.log(`created ${created.operator.role} ${created.operator.email} (${created.operator.id})`);

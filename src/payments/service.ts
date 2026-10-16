@@ -6,7 +6,7 @@ import { AppError } from '../errors.js';
 import { recordEvents, SYSTEM } from '../events/record.js';
 import { newId } from '../ids.js';
 import type { PaymentChannel, PspResult } from '../psp/types.js';
-import type { ExecutionControl } from '../ops-console/pauses.js';
+import { assertMayStartPayment, type ExecutionControl } from '../ops-console/pauses.js';
 import type { AttemptRecord, Router } from '../routing/router.js';
 import type { InitialOutcome, TrackingService } from '../tracking/service.js';
 import { applyPaymentOutcome, paymentView, type Payment } from './outcome.js';
@@ -52,14 +52,16 @@ export class PaymentService {
     const { db, clock, router, tracking } = this.deps;
     const existing = await this.findByKey(merchantId, input.idempotencyKey);
     if (existing) return this.replay(existing, input);
-    // The kill switch: no new payment starts while this merchant (or everything) is paused.
-    await this.deps.pauses?.assertMayStartPayment(merchantId);
+    // The kill switch: no new payment starts while this merchant (or everything) is paused. One
+    // lookup serves this check, the all-PSPs-paused check and routing.
+    const pauses = await this.deps.pauses?.state();
+    if (pauses) assertMayStartPayment(pauses, merchantId);
 
     const channel: PaymentChannel = input.channel ?? (input.payerVpa ? 'UPI_COLLECT' : 'UPI_INTENT');
     if (channel === 'UPI_COLLECT' && !input.payerVpa) throw new AppError('VALIDATION', 'payerVpa is required for a UPI collect');
     const adapters = (await router.psps.requireForMerchant(merchantId)).filter((a) => a.capabilities.channels.includes(channel));
     if (adapters.length === 0) throw new AppError('NO_PSP_CONNECTED', `None of this merchant's payment providers accepts ${channel} payments`);
-    const paused = (await this.deps.pauses?.pausedPsps()) ?? new Set<string>();
+    const paused = pauses?.psps ?? new Set<string>();
     if (adapters.every((a) => paused.has(a.id))) {
       throw new AppError('EXECUTION_PAUSED', "This merchant's payment providers are paused by Merchantflo operations; please retry later");
     }
@@ -97,6 +99,7 @@ export class PaymentService {
     const outcome = await router.execute({
       op: 'collect',
       candidates: pspIds,
+      pausedPsps: paused,
       amountPaise: input.amountPaise,
       channel,
       ...(input.payerVpa ? { payerVpa: input.payerVpa } : {}),

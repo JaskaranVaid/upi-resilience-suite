@@ -175,6 +175,7 @@ export class DebitWorker {
     const outcome = await this.router.execute({
       op: 'mandate',
       candidates: mandate.eligiblePsps,
+      ...(paused ? { pausedPsps: paused.psps } : {}),
       amountPaise: d.amountPaise,
       mandateRef: mandate.mandateRef,
       noticeRef: d.id,

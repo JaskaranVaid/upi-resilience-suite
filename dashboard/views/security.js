@@ -5,8 +5,9 @@ import { html, mount, raw } from '../lib/html.js';
 /** The signed-in user's own sign-in security: turn two-factor sign-in on or off. */
 export async function renderSecurity(el, ctx) {
   const { me } = ctx;
-  const rerender = async () => {
-    me.user = (await api.me()).user;
+  // Both endpoints answer with the updated user.
+  const rerender = (user) => {
+    me.user = user;
     renderSecurity(el, ctx);
   };
 
@@ -30,7 +31,7 @@ export async function renderSecurity(el, ctx) {
       const ok = await busy(f.querySelector('button'), () => api.twoFactorDisable(f.password.value, f.code.value.trim()));
       if (ok) {
         toast('Two-factor sign-in is off');
-        rerender();
+        rerender(ok.user);
       }
     });
     return;
@@ -76,7 +77,7 @@ export async function renderSecurity(el, ctx) {
       const done = await busy(f.querySelector('button'), () => api.twoFactorConfirm(f.code.value.trim()));
       if (done) {
         toast('Two-factor sign-in is on');
-        rerender();
+        rerender(done.user);
       }
     });
   });

@@ -1,4 +1,4 @@
-import { and, count, eq, inArray, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Clock } from '../clock.js';
 import type { Db } from '../db/client.js';
 import { executionPauses, merchants, pspConnections, type PauseScope } from '../db/schema.js';
@@ -18,6 +18,13 @@ const PROVIDER = 'provider:';
 
 export function pauseView(p: ExecutionPause) {
   return { id: p.id, scope: p.scope, target: p.target, reason: p.reason, createdBy: p.createdBy, createdAt: p.createdAt, liftedAt: p.liftedAt, liftedBy: p.liftedBy };
+}
+
+/** Throws EXECUTION_PAUSED (503) when new payments for this merchant must not start. */
+export function assertMayStartPayment(state: PauseState, merchantId: string): void {
+  if (state.global || state.merchants.has(merchantId)) {
+    throw new AppError('EXECUTION_PAUSED', 'Payments are paused by Merchantflo operations; please retry later');
+  }
 }
 
 /**
@@ -75,11 +82,6 @@ export class ExecutionControl {
     return this.deps.db.select().from(executionPauses).where(isNull(executionPauses.liftedAt));
   }
 
-  async activeCount(): Promise<number> {
-    const [row] = await this.deps.db.select({ n: count() }).from(executionPauses).where(isNull(executionPauses.liftedAt));
-    return row?.n ?? 0;
-  }
-
   async state(): Promise<PauseState> {
     const pauses = await this.active();
     return {
@@ -91,22 +93,7 @@ export class ExecutionControl {
 
   /** PSP ids (connections and shared adapters) currently paused. */
   async pausedPsps(): Promise<ReadonlySet<string>> {
-    const pauses = await this.deps.db
-      .select({ target: executionPauses.target })
-      .from(executionPauses)
-      .where(and(isNull(executionPauses.liftedAt), eq(executionPauses.scope, 'PSP')));
-    return this.expandPsps(pauses.map((p) => p.target!));
-  }
-
-  /** Throws EXECUTION_PAUSED (503) when new payments for this merchant must not start. */
-  async assertMayStartPayment(merchantId: string): Promise<void> {
-    const pauses = await this.deps.db
-      .select({ scope: executionPauses.scope, target: executionPauses.target })
-      .from(executionPauses)
-      .where(and(isNull(executionPauses.liftedAt), inArray(executionPauses.scope, ['GLOBAL', 'MERCHANT'])));
-    if (pauses.some((p) => p.scope === 'GLOBAL' || p.target === merchantId)) {
-      throw new AppError('EXECUTION_PAUSED', 'Payments are paused by Merchantflo operations; please retry later');
-    }
+    return (await this.state()).psps;
   }
 
   private async expandPsps(targets: string[]): Promise<ReadonlySet<string>> {

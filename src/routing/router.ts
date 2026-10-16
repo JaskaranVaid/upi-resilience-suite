@@ -29,6 +29,8 @@ export interface RouteRequest {
   client?: { ip?: string; userAgent?: string };
   /** Stable prefix for txnRefs (e.g. the debit id) so attempts are traceable. */
   baseRef: string;
+  /** Kill-switch PSP pauses the caller already looked up (saves a query); looked up when omitted. */
+  pausedPsps?: ReadonlySet<string>;
 }
 
 export interface AttemptRecord {
@@ -102,7 +104,7 @@ export class Router {
     // Candidates the registry can't resolve (e.g. a connection since deleted) are skipped.
     const resolved = new Map<string, PspAdapter>();
     const channel = req.channel ?? 'UPI_COLLECT';
-    const paused = await this.opts.pausedPsps();
+    const paused = req.pausedPsps ?? (await this.opts.pausedPsps());
     for (const id of req.candidates) {
       if (paused.has(id)) continue;
       try {

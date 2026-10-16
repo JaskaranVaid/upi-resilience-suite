@@ -28,9 +28,10 @@ export const DEFAULT_AUTH: AuthConfig = {
   touchIntervalMs: 60_000,
 };
 
-const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
+/** How session tokens are stored (dashboard and ops console alike): only their SHA-256. */
+export const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
 
-export const DASHBOARD_TOTP_ISSUER = 'Merchantflo';
+const DASHBOARD_TOTP_ISSUER = 'Merchantflo';
 
 /**
  * Email + password login with lockout, and opaque session tokens stored only as hashes. Users who
@@ -48,7 +49,7 @@ export class SessionService {
   }
 
   async login(emailInput: string, password: string, code?: string): Promise<{ user: DashboardUser; token: string }> {
-    const { db, clock, secrets } = this.deps;
+    const { db, clock } = this.deps;
     const now = clock.now();
     const email = emailInput.trim().toLowerCase();
     const [u] = await db.select().from(dashboardUsers).where(eq(dashboardUsers.email, email));
@@ -76,8 +77,7 @@ export class SessionService {
     if (u.totpSecret) {
       // Asked for only after a correct password, so the question tells a guesser nothing.
       if (!code) throw new AppError('MFA_REQUIRED', 'Enter the 6-digit code from your authenticator app');
-      const step = verifyTotp(secrets.open<string>(u.totpSecret), code, now, u.totpLastStep);
-      if (step === null || !(await this.claimStep(u.id, step))) await fail('bad_code', 'Invalid code');
+      if (!(await this.acceptCode(u, code, now))) await fail('bad_code', 'Invalid code');
     }
 
     const token = randomBytes(32).toString('base64url');
@@ -161,14 +161,13 @@ export class SessionService {
 
   /** Turn two-factor off: needs the password and a current code. */
   async disableTwoFactor(userId: string, password: string, code: string): Promise<DashboardUser> {
-    const { db, clock, secrets } = this.deps;
+    const { db, clock } = this.deps;
     const [u] = await db.select().from(dashboardUsers).where(eq(dashboardUsers.id, userId));
     if (!u) throw new AppError('NOT_FOUND', `User ${userId} not found`);
     if (!(await verifyPassword(password, u.passwordHash))) throw new AppError('UNAUTHORIZED', 'Password is wrong');
     if (!u.totpSecret) throw new AppError('CONFLICT', 'Two-factor sign-in is not on');
     const now = clock.now();
-    const step = verifyTotp(secrets.open<string>(u.totpSecret), code, now, u.totpLastStep);
-    if (step === null || !(await this.claimStep(u.id, step))) throw new AppError('UNAUTHORIZED', 'Invalid code');
+    if (!(await this.acceptCode(u, code, now))) throw new AppError('UNAUTHORIZED', 'Invalid code');
     return db.transaction(async (tx) => {
       const [updated] = await tx
         .update(dashboardUsers)
@@ -178,6 +177,12 @@ export class SessionService {
       await recordEvents(tx, { merchantId: u.merchantId, actor: { type: 'DASHBOARD_USER', id: userId }, now }, [{ type: 'TWO_FACTOR_DISABLED', data: { userId } }]);
       return updated!;
     });
+  }
+
+  /** A current code from the enrolled authenticator, not used before (the step is claimed atomically). */
+  private async acceptCode(u: DashboardUser, code: string, now: Date): Promise<boolean> {
+    const step = verifyTotp(this.deps.secrets.open<string>(u.totpSecret!), code, now, u.totpLastStep);
+    return step !== null && (await this.claimStep(u.id, step));
   }
 
   /** Record a used time step atomically: of two requests racing with one code, only one wins. */

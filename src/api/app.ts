@@ -62,6 +62,12 @@ const REQUEST_LOGGER = {
   base: null,
 };
 
+/** Merchant dashboard and ops console pages: same-origin only, never framed. (nosniff is set on every reply.) */
+function consoleHeaders(reply: { header(name: string, value: string): unknown }): void {
+  reply.header('content-security-policy', "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+  reply.header('referrer-policy', 'same-origin');
+}
+
 export function buildApp(ctx: AppContext, opts: { logger?: boolean; trustProxy?: false | number | string[] } = {}): FastifyInstance {
   // Behind a load balancer, trustProxy makes req.ip the client's address (rate limits are per IP).
   // A hop count trusts exactly that many proxies in front of us (the rest of X-Forwarded-For is client-supplied).
@@ -121,11 +127,7 @@ export function buildApp(ctx: AppContext, opts: { logger?: boolean; trustProxy?:
   app.register(fastifyStatic, {
     root: fileURLToPath(new URL('../../dashboard', import.meta.url)),
     prefix: '/dashboard/',
-    setHeaders: (reply) => {
-      reply.header('content-security-policy', "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
-      reply.header('x-content-type-options', 'nosniff');
-      reply.header('referrer-policy', 'same-origin');
-    },
+    setHeaders: consoleHeaders,
   });
   app.get('/dashboard', async (_req, reply) => reply.redirect('/dashboard/'));
   // Merchantflo staff console. Its API is /ops/api/* (operator sessions with two-factor sign-in).
@@ -133,11 +135,7 @@ export function buildApp(ctx: AppContext, opts: { logger?: boolean; trustProxy?:
     root: fileURLToPath(new URL('../../ops', import.meta.url)),
     prefix: '/ops/',
     decorateReply: false,
-    setHeaders: (reply) => {
-      reply.header('content-security-policy', "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
-      reply.header('x-content-type-options', 'nosniff');
-      reply.header('referrer-policy', 'same-origin');
-    },
+    setHeaders: consoleHeaders,
   });
   app.get('/ops', async (_req, reply) => reply.redirect('/ops/'));
   // checkout.js and its stylesheet load from merchants' pages (any origin); demo.html is ours.
@@ -148,7 +146,6 @@ export function buildApp(ctx: AppContext, opts: { logger?: boolean; trustProxy?:
     cacheControl: false,
     setHeaders: (reply, path) => {
       reply.header('cross-origin-resource-policy', 'cross-origin');
-      reply.header('x-content-type-options', 'nosniff');
       reply.header('cache-control', 'public, max-age=300');
       if (path.endsWith('.html')) {
         reply.header(
