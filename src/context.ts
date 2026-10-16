@@ -42,6 +42,7 @@ import { RolloutService } from './pilot/rollout.js';
 import { ShadowService } from './pilot/shadow.js';
 import { DebitIntake } from './pilot/intake.js';
 import { ExecutionReports } from './pilot/executions.js';
+import { ShadowReportService } from './pilot/report.js';
 import type { Logger } from './ops/log.js';
 import type { ConnectionAdapterFactory } from './psp/registry.js';
 
@@ -101,6 +102,8 @@ export interface AppContext {
   intake: DebitIntake;
   /** What the merchant's own system did (legacy outcomes, backtests). */
   executionReports: ExecutionReports;
+  /** "What you would have saved": the merchant's own executions, classified. */
+  shadowReport: ShadowReportService;
 }
 
 export function buildContext(args: {
@@ -212,5 +215,6 @@ export function buildContext(args: {
     shadow,
     intake: new DebitIntake({ db: args.db, scheduler, shadow }),
     executionReports: new ExecutionReports({ db: args.db, clock, shadow, worker }),
+    shadowReport: new ShadowReportService({ db: args.db }),
   };
 }
