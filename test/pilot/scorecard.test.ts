@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resolvePeriod } from '../../src/analytics/period.js';
+import { pilotScorecardResponse } from '../../src/api/responses.js';
 import { FakeClock } from '../../src/clock.js';
 import { buildContext, type AppContext } from '../../src/context.js';
 import { debits, duplicateSuspects, paymentAttempts, paymentTracking, savingsEvents, shadowDebits, webhookOutbox, type DebitState } from '../../src/db/schema.js';
@@ -105,6 +106,8 @@ describe('pilot scorecard', () => {
     expect(c.details).toMatchObject({ canary: { n: 50, succeeded: 45 }, control: { n: 50, succeeded: 35 } });
     expect(c.details.difference as number).toBeCloseTo(0.2, 10);
     expect(c.details.low as number).toBeGreaterThan(0);
+    // The documented response schema (OpenAPI, SDK) matches what the API sends.
+    pilotScorecardResponse.parse(JSON.parse(JSON.stringify(await ctx.scorecard.evaluate(merchantId, OCT))));
   });
 
   it('calls a small or negative difference what it is', async () => {

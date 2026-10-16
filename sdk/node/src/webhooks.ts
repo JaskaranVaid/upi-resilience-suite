@@ -1,10 +1,27 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
+/** Every event Merchantflo sends today; new ones may be added, so ignore events you don't know. */
+export type WebhookEventType =
+  | 'debit.scheduled'
+  | 'debit.notice_sent'
+  | 'debit.rescheduled'
+  | 'debit.succeeded'
+  | 'debit.failed'
+  | 'payment.succeeded'
+  | 'payment.failed'
+  | 'payment.reversal_initiated'
+  | 'payment.reversed'
+  | 'payment.captured_after_failure'
+  | 'case.needs_action'
+  | 'case.resolved'
+  /** Your pilot moved between shadow, canary and full (`data`: stage, canaryPercent, previousStage, …). */
+  | 'pilot.stage_changed';
+
 /** A webhook Merchantflo sent you. `data` depends on `event` (see the integration guide). */
 export interface WebhookEvent<T = Record<string, unknown>> {
   /** Delivery id: the same across retries and redeliveries, so use it to ignore duplicates. */
   id: string;
-  event: string;
+  event: WebhookEventType | (string & {});
   createdAt: string;
   data: T;
 }

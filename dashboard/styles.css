@@ -266,7 +266,7 @@ details.table-view .table-wrap { margin-top: 8px; max-height: 320px; overflow: a
 .tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--neutral-bg); color: var(--neutral); margin-left: 6px; vertical-align: middle; }
 .filter-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin-bottom: 14px; }
 .statement { max-width: 860px; }
-.statement table td.note { white-space: normal; color: var(--text-2); font-size: 12px; min-width: 240px; }
+.statement table td.note, .pilot table td.note { white-space: normal; color: var(--text-2); font-size: 12px; min-width: 240px; }
 .statement .doc-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
 
 @media print {

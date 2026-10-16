@@ -34,6 +34,26 @@ Amounts are integer paise. Anything not wrapped yet is reachable with `mf.reques
 and 5xx (`maxRetries`, default 2, with exponential backoff). Other writes are never retried: pass an
 idempotency key to make a create safe to repeat.
 
+## Pilots
+
+During a pilot Merchantflo executes only some of your debits. `debits.create` returns a `Debit`
+(`executedBy: 'MERCHANTFLO'`: we notify and execute — do not run it yourself) or a `ShadowDebit`
+(`executedBy: 'MERCHANT'`: your billing system executes it as before, then reports the outcome):
+
+```ts
+const d = await mf.debits.create(mandate.id, { amountPaise: 49900 }, { idempotencyKey: 'INV-2026-11' });
+if (d.executedBy === 'MERCHANT') {
+  const r = await myBilling.charge(d);                       // your existing path
+  await mf.pilot.reportExecutions([{ idempotencyKey: 'INV-2026-11', executedAt: r.at, outcome: r.ok ? 'SUCCEEDED' : 'FAILED', failureKind: r.kind }]);
+}
+
+const report = await mf.pilot.report({ month: '2026-11' });  // what Merchantflo would have saved
+const card = await mf.pilot.scorecard({ month: '2026-11' }); // the five pass criteria
+```
+
+`pilot.reportExecutions` also takes a history export (keys Merchantflo never saw, with
+`mandateRef` and `amountPaise`) for a backtest before integrating.
+
 ## Webhooks
 
 Verify every webhook against the **raw** body before acting on it:

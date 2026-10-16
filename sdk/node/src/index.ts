@@ -6,7 +6,7 @@
  *   const mf = new Merchantflo({ apiKey: process.env.MERCHANTFLO_API_KEY!, baseUrl: 'https://…' });
  *   const session = await mf.checkout.sessions.create({ amountPaise: 249900, orderId: 'ORD-1' });
  */
-export { verifyWebhook, WebhookVerificationError, type VerifyWebhookInput, type WebhookEvent, type WebhookHeaders } from './webhooks.js';
+export { verifyWebhook, WebhookVerificationError, type VerifyWebhookInput, type WebhookEvent, type WebhookEventType, type WebhookHeaders } from './webhooks.js';
 
 export const VERSION = '0.1.0';
 
@@ -88,9 +88,17 @@ export interface Mandate {
   noAfaLimitPaise: number | null;
   status: 'ACTIVE' | 'PAUSED' | 'REVOKED';
   createdAt: string;
+  /** Who executes new debits on this mandate under your current pilot stage. */
+  executedBy: Executor;
 }
 
+/** Who executes a debit: Merchantflo, or your own billing system (during a pilot). */
+export type Executor = 'MERCHANTFLO' | 'MERCHANT';
+
+/** A debit Merchantflo executes. */
 export interface Debit {
+  /** Merchantflo sends the notice and executes this debit: do not execute it yourself. */
+  executedBy: 'MERCHANTFLO';
   id: string;
   mandateId: string;
   orderId: string | null;
@@ -108,6 +116,150 @@ export interface Debit {
   pspTxnId: string | null;
   completedAt: string | null;
 }
+
+/** A debit your own system executes during a pilot, with Merchantflo's plan for it. */
+export interface ShadowDebit {
+  object: 'shadow_debit';
+  id: string;
+  /** Your system executes it, as before the pilot. Merchantflo never will. */
+  executedBy: 'MERCHANT';
+  mandateId: string | null;
+  mandateRef: string;
+  orderId: string | null;
+  amountPaise: number;
+  source: 'MIRRORED' | 'REPORTED';
+  rolloutStage: RolloutStage | null;
+  requestedAt: string;
+  requestedInPeak: boolean;
+  dueDate: string | null;
+  /** When Merchantflo would have executed it. */
+  plannedAt: string;
+  plannedNoticeDate: string;
+  wouldRefuse: 'MANDATE_INACTIVE' | 'AMOUNT_EXCEEDS_MANDATE' | 'AFA_REQUIRED' | null;
+  misroutedDebitId: string | null;
+  /** What you reported with `pilot.reportExecutions`; null until then. */
+  outcome: {
+    status: 'SUCCEEDED' | 'FAILED';
+    executedAt: string;
+    failureKind: FailureKind | null;
+    failureCode: string | null;
+    pspTxnId: string | null;
+    attempts: number | null;
+    reportedAt: string | null;
+  } | null;
+  createdAt: string;
+}
+
+export type RolloutStage = 'SHADOW' | 'CANARY' | 'FULL';
+export type FailureKind = 'TECHNICAL' | 'BUSINESS' | 'UNKNOWN';
+
+export interface Pilot {
+  stage: RolloutStage;
+  /** Share of mandates Merchantflo executes while CANARY; null otherwise. */
+  canaryPercent: number | null;
+  since: string | null;
+}
+
+export interface Period {
+  label: string;
+  month: string | null;
+  from: string;
+  to: string;
+}
+
+interface CriterionBase {
+  label: string;
+  target: string;
+  status: 'PASS' | 'FAIL' | 'PENDING' | 'NO_DATA';
+  /** Whether moving to FULL requires it (uplift is reported, not gated). */
+  gated: boolean;
+  methodNote: string;
+}
+type Arm = { n: number; succeeded: number; rate: number | null };
+
+export type PilotCriterion = CriterionBase &
+  (
+    | { key: 'doubleDebits'; details: { open: number; confirmed: number; dismissed: number } }
+    | { key: 'restrictedWindowExecutions'; details: { count: number } }
+    | {
+        key: 'autopayUplift';
+        /** Rates and the difference with its 95% interval are fractions (0.05 = 5 points). */
+        details: { canary: Arm; control: Arm; difference: number | null; low: number | null; high: number | null; recoveryUpliftPp: number | null };
+      }
+    | { key: 'webhooksOnTime'; details: { judged: number; onTime: number; late: number; failed: number; share: number | null } }
+    | {
+        key: 'statementReconciles';
+        details: { payments: number; reconciled: number; awaiting: number; overdue: number; mismatched: number; valueEvents: number; unverifiable: number };
+      }
+  );
+
+export interface PilotScorecard {
+  period: Period;
+  criteria: PilotCriterion[];
+  /** Every gated criterion passes. */
+  passed: boolean;
+}
+
+export interface ShadowReport {
+  period: Period;
+  observed: { count: number; amountPaise: number; succeeded: number; successRate: number | null };
+  classes: Array<{
+    key: 'PEAK_RESCUE' | 'RETRY_RECOVERABLE' | 'PEAK_RISK' | 'WOULD_REFUSE' | 'BUSINESS_DECLINE' | 'UNCLASSIFIED_FAILURE' | 'NO_CHANGE';
+    label: string;
+    value: 'CERTAIN' | 'POTENTIAL' | 'NONE';
+    methodNote: string;
+    count: number;
+    amountPaise: number;
+  }>;
+  /** Value Merchantflo would certainly have protected. */
+  certainPaise: number;
+  /** At most this much more: an upper bound, never added to the certain value. */
+  potentialPaise: number;
+  estimate: { recoveryRate: number; sample: number; amountPaise: number } | null;
+  estimateNote: string;
+  projectedSuccessRate: { atLeast: number | null; atMost: number | null };
+  bySource: { MIRRORED: number; REPORTED: number };
+  awaitingOutcome: number;
+  outcomeCoverage: number | null;
+  coverageNote: string;
+}
+
+/** What your own system did with a debit (or, for history, any past AutoPay execution). */
+export interface ExecutionReport {
+  /** The key the debit was requested with, or any unique id for history. */
+  idempotencyKey: string;
+  /** Required for history (a key Merchantflo never saw). */
+  mandateRef?: string;
+  amountPaise?: number;
+  orderId?: string;
+  requestedAt?: string;
+  dueDate?: string;
+  executedAt: string;
+  outcome: 'SUCCEEDED' | 'FAILED';
+  /** Only TECHNICAL failures count as recoverable. Default UNKNOWN. */
+  failureKind?: FailureKind;
+  failureCode?: string;
+  pspTxnId?: string;
+  attempts?: number;
+}
+
+export interface ExecutionReportResult {
+  summary: { recorded: number; updated: number; unchanged: number; created: number; misrouted: number; conflicts: number; invalid: number };
+  results: Array<{
+    index: number;
+    idempotencyKey: string | null;
+    status: 'RECORDED' | 'UPDATED' | 'UNCHANGED' | 'CREATED' | 'MISROUTED' | 'CONFLICT' | 'INVALID';
+    shadowDebitId?: string;
+    debitId?: string;
+    /** A misrouted debit Merchantflo had not started was handed back to you (never executed by us). */
+    handedBack?: boolean;
+    debitState?: string;
+    error?: string;
+  }>;
+}
+
+/** A period: a billing month (`YYYY-MM`, IST), or `from`/`to` instants. Default: this month. */
+export type PeriodParams = { month?: string; from?: string; to?: string };
 
 export interface WebhookDelivery {
   /** Also the webhook body's `id`: the same across retries and redeliveries. */
@@ -236,10 +388,35 @@ export class Merchantflo {
   };
 
   readonly debits = {
-    /** Merchantflo sends the pre-debit notice and executes in a compliant off-peak slot. */
-    create: (mandateId: string, params: CreateDebitParams, o?: RequestOptions) => this.request<Debit>('POST', `/v1/mandates/${enc(mandateId)}/debits`, params, o),
+    /**
+     * Merchantflo sends the pre-debit notice and executes in a compliant off-peak slot. During a
+     * pilot, check `executedBy`: a `ShadowDebit` (`MERCHANT`) is yours to execute as before.
+     */
+    create: (mandateId: string, params: CreateDebitParams, o?: RequestOptions) => this.request<Debit | ShadowDebit>('POST', `/v1/mandates/${enc(mandateId)}/debits`, params, o),
     retrieve: (id: string) => this.request<Debit>('GET', `/v1/debits/${enc(id)}`),
     list: (q: { state?: Debit['state']; limit?: number } = {}) => this.request<List<Debit>>('GET', '/v1/debits', undefined, undefined, q),
+  };
+
+  readonly pilot = {
+    /** Your rollout stage: who executes your AutoPay debits. */
+    get: () => this.request<Pilot>('GET', '/v1/pilot'),
+    /** The five pass criteria for a period. */
+    scorecard: (q: PeriodParams = {}) => this.request<PilotScorecard>('GET', '/v1/pilot/scorecard', undefined, undefined, q),
+    /** What Merchantflo would have saved on the debits your system executed. */
+    report: (q: PeriodParams = {}) => this.request<ShadowReport>('GET', '/v1/pilot/report', undefined, undefined, q),
+    /** Report what your system did (up to 5,000 per call); safe to repeat — a later report replaces an earlier one. */
+    reportExecutions: (executions: ExecutionReport[]) => this.request<ExecutionReportResult>('POST', '/v1/pilot/executions', { executions }),
+  };
+
+  readonly shadowDebits = {
+    retrieve: (id: string) => this.request<ShadowDebit>('GET', `/v1/shadow-debits/${enc(id)}`),
+    /** Newest first; `reported: false` lists the ones still waiting for your outcome report. */
+    list: (q: { reported?: boolean; before?: string; limit?: number } = {}) =>
+      this.request<List<ShadowDebit> & { nextBefore: string | null }>('GET', '/v1/shadow-debits', undefined, undefined, {
+        ...(q.reported === undefined ? {} : { reported: String(q.reported) }),
+        before: q.before,
+        limit: q.limit,
+      }),
   };
 
   readonly webhookDeliveries = {

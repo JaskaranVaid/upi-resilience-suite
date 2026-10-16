@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../../src/api/app.js';
+import { pilotScorecardResponse, shadowReportResponse } from '../../src/api/responses.js';
 import { FakeClock } from '../../src/clock.js';
 import { buildContext } from '../../src/context.js';
 import { MockPsp } from '../../src/psp/mock.js';
@@ -23,6 +24,7 @@ describe('pilot API: scorecard and shadow report', () => {
   it('returns the five criteria for a billing month or a range', async () => {
     const res = await get('/v1/pilot/scorecard?month=2026-10');
     expect(res.statusCode).toBe(200);
+    pilotScorecardResponse.parse(res.json()); // what OpenAPI documents, strictly
     expect(res.json().criteria.map((c: { key: string }) => c.key)).toEqual(['doubleDebits', 'restrictedWindowExecutions', 'autopayUplift', 'webhooksOnTime', 'statementReconciles']);
     expect((await get('/v1/pilot/scorecard?from=2026-10-01T00:00:00%2B05:30&to=2026-10-08T00:00:00%2B05:30')).json().period.month).toBeNull();
     expect((await get('/v1/pilot/scorecard?month=2026-13')).statusCode).toBe(400);
@@ -36,6 +38,7 @@ describe('pilot API: scorecard and shadow report', () => {
     const res = await get('/v1/pilot/report?month=2026-10');
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ certainPaise: rs(1000), potentialPaise: 0, observed: { count: 1 } });
+    shadowReportResponse.parse(res.json());
     const other = (await app.inject({ method: 'POST', url: '/v1/merchants', headers: { authorization: `Bearer ${ADMIN}` }, payload: { name: 'Other' } })).json().apiKey;
     expect((await get('/v1/pilot/report?month=2026-10', other)).json().observed.count).toBe(0);
   });

@@ -216,3 +216,113 @@ export const shadowDebitResponse = z
   })
   .strict()
   .meta({ id: 'ShadowDebit', description: "A debit your own system executes during a pilot, with Merchantflo's plan for it and the outcome you reported." });
+
+const period = z
+  .object({
+    label: z.string(),
+    /** 'YYYY-MM' for a billing month; null for a custom range. */
+    month: z.string().nullable(),
+    from: timestamp,
+    /** Exclusive. */
+    to: timestamp,
+  })
+  .strict();
+
+const count = z.number().int();
+const rate = z.number().nullable();
+const arm = z.object({ n: count, succeeded: count, rate }).strict();
+const criterionBase = {
+  label: z.string(),
+  /** The bar, in words. */
+  target: z.string(),
+  status: z.enum(['PASS', 'FAIL', 'PENDING', 'NO_DATA']),
+  /** Whether moving to FULL requires it to pass (uplift is reported, not gated). */
+  gated: z.boolean(),
+  methodNote: z.string(),
+};
+
+export const pilotScorecardResponse = z
+  .object({
+    period,
+    criteria: z.array(
+      z.discriminatedUnion('key', [
+        z.object({ key: z.literal('doubleDebits'), ...criterionBase, details: z.object({ open: count, confirmed: count, dismissed: count }).strict() }).strict(),
+        z.object({ key: z.literal('restrictedWindowExecutions'), ...criterionBase, details: z.object({ count }).strict() }).strict(),
+        z
+          .object({
+            key: z.literal('autopayUplift'),
+            ...criterionBase,
+            details: z
+              .object({
+                /** Debits Merchantflo executed in CANARY. */
+                canary: arm,
+                /** Debits your own system executed in CANARY. */
+                control: arm,
+                /** Canary minus control success rate, and its 95% interval (fractions, not percent). */
+                difference: rate,
+                low: rate,
+                high: rate,
+                /** Success-rate uplift from Merchantflo's recovery on its own traffic, in percentage points (context). */
+                recoveryUpliftPp: rate,
+              })
+              .strict(),
+          })
+          .strict(),
+        z
+          .object({
+            key: z.literal('webhooksOnTime'),
+            ...criterionBase,
+            details: z.object({ judged: count, onTime: count, late: count, failed: count, share: rate }).strict(),
+          })
+          .strict(),
+        z
+          .object({
+            key: z.literal('statementReconciles'),
+            ...criterionBase,
+            details: z
+              .object({ payments: count, reconciled: count, awaiting: count, overdue: count, mismatched: count, valueEvents: count, unverifiable: count })
+              .strict(),
+          })
+          .strict(),
+      ]),
+    ),
+    /** Every gated criterion passes. */
+    passed: z.boolean(),
+  })
+  .strict()
+  .meta({ id: 'PilotScorecard', description: 'The five pilot pass criteria for a period, each with its numbers and how it is measured.' });
+
+export const shadowReportResponse = z
+  .object({
+    period,
+    /** Your reported executions in the period (by execution time). */
+    observed: z.object({ count, amountPaise: count, succeeded: count, successRate: rate }).strict(),
+    /** Every execution falls in exactly one class. */
+    classes: z.array(
+      z
+        .object({
+          key: z.enum(['PEAK_RESCUE', 'RETRY_RECOVERABLE', 'PEAK_RISK', 'WOULD_REFUSE', 'BUSINESS_DECLINE', 'UNCLASSIFIED_FAILURE', 'NO_CHANGE']),
+          label: z.string(),
+          value: z.enum(['CERTAIN', 'POTENTIAL', 'NONE']),
+          methodNote: z.string(),
+          count,
+          amountPaise: count,
+        })
+        .strict(),
+    ),
+    /** Value Merchantflo would certainly have protected. */
+    certainPaise: count,
+    /** Value it could have protected at most: an upper bound, never added to the certain value. */
+    potentialPaise: count,
+    /** Potential value × your measured recovery rate on live Merchantflo debits; null without enough live traffic. */
+    estimate: z.object({ recoveryRate: z.number(), sample: count, amountPaise: count }).strict().nullable(),
+    estimateNote: z.string(),
+    projectedSuccessRate: z.object({ atLeast: rate, atMost: rate }).strict(),
+    bySource: z.object({ MIRRORED: count, REPORTED: count }).strict(),
+    /** Shadow debits requested in the period whose outcome you have not reported. */
+    awaitingOutcome: count,
+    outcomeCoverage: rate,
+    coverageNote: z.string(),
+  })
+  .strict()
+  .meta({ id: 'ShadowReport', description: 'What Merchantflo would have saved on the debits your own system executed, classified conservatively.' });

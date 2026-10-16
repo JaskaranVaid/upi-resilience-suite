@@ -238,6 +238,8 @@ const stageBadge = (stage, percent) => html`<span class="badge tone-${STAGE_TONE
 const pct = (x, digits = 1) => (x === null || x === undefined ? '—' : `${(x * 100).toFixed(digits)}%`);
 /** A difference of two rates, in percentage points. */
 const pp = (x) => (x === null || x === undefined ? '—' : `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(x * 100).toFixed(1)} pp`);
+/** A projected rate: one value when its bounds agree, else "a–b". */
+const range = ({ atLeast, atMost }) => (pct(atLeast) === pct(atMost) ? pct(atLeast) : `${pct(atLeast)}–${pct(atMost)}`);
 const istMonth = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }).slice(0, 7);
 
 async function renderPilots(el, { param }) {
@@ -342,7 +344,7 @@ async function renderPilot(el, merchantId, month = istMonth()) {
         <div class="kpi"><div class="value num">${money(report.potentialPaise)}</div><div class="label">Potential value (upper bound)</div></div>
         <div class="kpi"><div class="value num">${report.estimate ? money(report.estimate.amountPaise) : '—'}</div><div class="label">${report.estimate ? `Estimate (${pct(report.estimate.recoveryRate, 0)} recovery, n=${report.estimate.sample})` : 'No estimate yet (too little live traffic)'}</div></div>
         <div class="kpi"><div class="value num">${pct(report.observed.successRate)}</div><div class="label">Observed success (${report.observed.count} executions)</div></div>
-        <div class="kpi"><div class="value num">${pct(report.projectedSuccessRate.atLeast)}–${pct(report.projectedSuccessRate.atMost)}</div><div class="label">Projected success with Merchantflo</div></div>
+        <div class="kpi"><div class="value num">${range(report.projectedSuccessRate)}</div><div class="label">Projected success with Merchantflo</div></div>
         <div class="kpi ${report.awaitingOutcome ? 'attention' : ''}"><div class="value num">${pct(report.outcomeCoverage, 0)}</div><div class="label">Outcome coverage (${report.awaitingOutcome} awaiting)</div></div>
       </div>
       <div class="table-wrap"><table>
