@@ -85,6 +85,10 @@ export const ROUTE_DOCS: RouteDoc[] = [
   // Merchant account
   { method: 'post', path: '/v1/merchants', tag: 'Account', auth: 'admin', body: createMerchant, status: 201, summary: 'Onboard a merchant (operator)', description: 'Returns the first API key and the webhook signing secret, once.' },
   { method: 'patch', path: '/v1/admin/merchants/:id', tag: 'Account', auth: 'admin', body: changeModeBody, summary: "Change a merchant's mode (operator)" },
+  {
+    method: 'get', path: '/v1/admin/ops/metrics', tag: 'Operations', auth: 'admin', summary: 'Operational gauges (operator)',
+    description: 'Restricted-window executions, notice failures, poller/debit/webhook backlogs, dead webhooks, failed reconciliations and open PSP circuits — what the production alarms watch.',
+  },
   { method: 'get', path: '/v1/merchants/me', tag: 'Account', auth: 'apiKey', summary: 'Your merchant settings' },
   { method: 'patch', path: '/v1/merchants/me', tag: 'Account', auth: 'apiKey', body: updateMerchant, summary: 'Update your merchant settings' },
   { method: 'post', path: '/v1/merchants/me/webhook-secret/rotate', tag: 'Account', auth: 'apiKey', summary: 'Rotate the webhook signing secret', description: 'Returns the new secret once; deliveries from now on are signed with it.' },
@@ -116,6 +120,8 @@ export const ROUTE_DOCS: RouteDoc[] = [
   { method: 'get', path: '/v1/settlements', tag: 'Reporting', auth: 'apiKey', query: settlementsQuery, summary: 'Settlement report lines, as reconciled' },
   { method: 'get', path: '/v1/rules', tag: 'Reporting', auth: 'apiKey', summary: 'Regulatory parameters in force (peak windows, MDR)' },
   { method: 'get', path: '/health', tag: 'Operations', auth: 'none', summary: 'Liveness and database check' },
+  { method: 'get', path: '/healthz', tag: 'Operations', auth: 'none', summary: 'Liveness probe (no database call)' },
+  { method: 'get', path: '/readyz', tag: 'Operations', auth: 'none', summary: 'Readiness probe', description: '503 while the instance is shutting down or cannot reach its database.' },
 ];
 
 const SECURITY: Record<Exclude<Auth, 'none'>, object> = {

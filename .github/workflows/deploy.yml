@@ -1,0 +1,98 @@
+name: Deploy
+
+# Staging: automatically after CI passes on main (build once, deploy that image).
+# Production (or dev, or a staging redeploy): run this workflow by hand with an environment and,
+# to promote, the commit already running in staging. Production's GitHub environment requires a
+# reviewer. Everything is off until the repository variable DEPLOY_ENABLED is "true".
+# Setup and procedures: infra/README.md, docs/runbooks/deploy.md.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to deploy
+        type: choice
+        options: [staging, production, dev]
+        required: true
+      image_tag:
+        description: Commit of an image already in ECR (blank = build this commit)
+        type: string
+        required: false
+
+permissions:
+  id-token: write # OIDC to AWS
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.environment || 'staging' }}
+  cancel-in-progress: false
+
+env:
+  COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+jobs:
+  build:
+    name: build and push image
+    if: >-
+      vars.DEPLOY_ENABLED == 'true' &&
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' ||
+       github.event_name == 'workflow_dispatch' && inputs.image_tag == '')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      tag: ${{ steps.push.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.COMMIT }}
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_BUILD_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - id: push
+        name: Build and push merchantflo:<commit> (tags are immutable; an existing one is reused)
+        env:
+          REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+        run: |
+          if aws ecr describe-images --repository-name "${REPOSITORY##*/}" --image-ids imageTag="$COMMIT" >/dev/null 2>&1; then
+            echo "image $REPOSITORY:$COMMIT already exists"
+          else
+            docker build --build-arg GIT_SHA="$COMMIT" -t "$REPOSITORY:$COMMIT" .
+            docker push "$REPOSITORY:$COMMIT"
+          fi
+          echo "tag=$COMMIT" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: deploy to ${{ inputs.environment || 'staging' }}
+    needs: build
+    if: >-
+      always() && vars.DEPLOY_ENABLED == 'true' &&
+      (needs.build.result == 'success' ||
+       github.event_name == 'workflow_dispatch' && needs.build.result == 'skipped' && inputs.image_tag != '')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: ${{ inputs.environment || 'staging' }}
+      url: ${{ vars.PUBLIC_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.COMMIT }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Migrate, roll the services, smoke check
+        env:
+          ENVIRONMENT: ${{ inputs.environment || 'staging' }}
+          IMAGE: ${{ vars.ECR_REPOSITORY }}:${{ inputs.image_tag || needs.build.outputs.tag }}
+          PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
+        run: bash scripts/deploy/ecs-deploy.sh "$ENVIRONMENT" "$IMAGE" "$PUBLIC_BASE_URL"

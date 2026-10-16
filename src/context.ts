@@ -33,6 +33,8 @@ import { DEFAULT_RATE_LIMITS, type RateLimits } from './api/rate-limit.js';
 import { AuthFailureLimiter } from './api/auth-failures.js';
 import { SecretBox } from './security/secrets.js';
 import { connectionAdapterFactory } from './psp/connections.js';
+import { Lifecycle } from './ops/lifecycle.js';
+import type { Logger } from './ops/log.js';
 import type { ConnectionAdapterFactory } from './psp/registry.js';
 
 export interface AppContext {
@@ -76,6 +78,8 @@ export interface AppContext {
   connectionAdapters: ConnectionAdapterFactory;
   /** Public base URL of this API, for showing PSP webhook URLs (null = relative paths). */
   publicBaseUrl: string | null;
+  /** Draining state: /readyz fails once shutdown begins. */
+  lifecycle: Lifecycle;
 }
 
 export function buildContext(args: {
@@ -104,6 +108,8 @@ export function buildContext(args: {
   /** Resolves a webhook hostname to IP addresses (DNS by default; stubbed in tests). */
   resolveHost?: ResolveHost;
   recon?: Partial<ReconOptions>;
+  /** Structured logger for background failures (console.error when omitted). */
+  log?: Logger;
 }): AppContext {
   const clock = args.clock ?? systemClock;
   const sleep = args.sleep ?? realSleep;
@@ -125,6 +131,7 @@ export function buildContext(args: {
   const payments = new PaymentService({ db: args.db, clock, router, tracking });
   const queries = new PaymentQueryService({ db: args.db, clock, cfg: polling, psps });
   const customerTokenSecret = args.customerTokenSecret ?? 'dev-customer-token-secret-not-for-production';
+  const logError = args.log ? (msg: string, err?: unknown) => args.log!.error(msg, err) : undefined;
   return {
     db: args.db,
     clock,
@@ -136,14 +143,14 @@ export function buildContext(args: {
     webhookDeliveries: new WebhookDeliveryService({ db: args.db, clock }),
     checkoutSessions: new CheckoutSessionService({ db: args.db, clock, checkout, payments, psps, queries, tokenSecret: customerTokenSecret }),
     payments,
-    worker: new DebitWorker({ db: args.db, clock, router, tracking, opts: args.worker }),
+    worker: new DebitWorker({ db: args.db, clock, router, tracking, opts: args.worker, ...(logError ? { log: logError } : {}) }),
     dispatcher: new WebhookDispatcher(args.db, clock, fetchImpl, {
       ...(webhookTargets === 'public-only' ? { targetGuard: publicTargetGuard(args.resolveHost) } : {}),
     }),
     psps,
     tracking,
-    poller: new StatusPoller({ db: args.db, clock, tracking }),
-    reconciler: new SettlementReconciler({ db: args.db, clock, psps, tracking, ...(args.recon ? { opts: args.recon } : {}) }),
+    poller: new StatusPoller({ db: args.db, clock, tracking, ...(logError ? { log: logError } : {}) }),
+    reconciler: new SettlementReconciler({ db: args.db, clock, psps, tracking, ...(args.recon ? { opts: args.recon } : {}), ...(logError ? { log: logError } : {}) }),
     disputes: new DisputeService({ db: args.db, clock, psps, tracking }),
     users: new UserService({ db: args.db, clock }),
     apiKeys: new ApiKeyService({ db: args.db, clock }),
@@ -166,5 +173,6 @@ export function buildContext(args: {
     secrets,
     connectionAdapters,
     publicBaseUrl: args.publicBaseUrl ?? null,
+    lifecycle: new Lifecycle(),
   };
 }

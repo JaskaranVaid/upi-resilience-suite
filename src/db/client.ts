@@ -1,5 +1,5 @@
-import { fileURLToPath } from 'node:url';
 import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core';
+import { migratePostgres, migrationsFolder } from './migrate.js';
 import * as schema from './schema.js';
 
 export type Db = PgDatabase<PgQueryResultHKT, typeof schema>;
@@ -11,15 +11,25 @@ export interface DbHandle {
   close(): Promise<void>;
 }
 
-const migrationsFolder = fileURLToPath(new URL('../../drizzle', import.meta.url));
+export interface DbOptions {
+  /**
+   * Apply pending migrations first (default). Production api/worker processes pass false: the
+   * deploy's migrate task applies them once, and startup only checks (see assertSchemaCurrent).
+   */
+  migrate?: boolean;
+  /** Maximum connections in the Postgres pool (node-postgres default: 10). */
+  poolMax?: number;
+}
 
 /**
- * Open the database and apply migrations.
+ * Open the database (and, by default, apply migrations).
  *  - undefined / "pglite://memory" → in-process in-memory Postgres (dev, tests)
  *  - "pglite://<dir>"              → in-process Postgres persisted to <dir>
- *  - "postgres://..."              → real Postgres via node-postgres
+ *  - "postgres://..."              → real Postgres via node-postgres; TLS through the URL
+ *                                    (e.g. ?sslmode=verify-full&sslrootcert=/path/ca.pem)
  */
-export async function createDb(url?: string): Promise<DbHandle> {
+export async function createDb(url?: string, opts: DbOptions = {}): Promise<DbHandle> {
+  const migrateFirst = opts.migrate ?? true;
   if (!url || url.startsWith('pglite://')) {
     const { PGlite } = await import('@electric-sql/pglite');
     const { drizzle } = await import('drizzle-orm/pglite');
@@ -27,15 +37,15 @@ export async function createDb(url?: string): Promise<DbHandle> {
     const dir = url?.slice('pglite://'.length);
     const client = dir && dir !== 'memory' ? new PGlite(dir) : new PGlite();
     const db = drizzle(client, { schema });
-    await migrate(db, { migrationsFolder });
+    // One process owns a PGlite database, so no lock is needed.
+    if (migrateFirst) await migrate(db, { migrationsFolder });
     return { db: db as unknown as Db, close: () => client.close() };
   }
 
+  if (migrateFirst) await migratePostgres(url);
   const { Pool } = await import('pg');
   const { drizzle } = await import('drizzle-orm/node-postgres');
-  const { migrate } = await import('drizzle-orm/node-postgres/migrator');
-  const pool = new Pool({ connectionString: url });
+  const pool = new Pool({ connectionString: url, ...(opts.poolMax ? { max: opts.poolMax } : {}) });
   const db = drizzle(pool, { schema });
-  await migrate(db, { migrationsFolder });
   return { db: db as unknown as Db, close: () => pool.end() };
 }

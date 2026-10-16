@@ -3,13 +3,37 @@ import { sql } from 'drizzle-orm';
 import type { AppContext } from '../../context.js';
 import { getRuleSet, MDR_2026, mdrStatus } from '../../config/rules.js';
 import { savingsSummary } from '../../ledger/savings.js';
-import { merchantOf } from '../app.js';
+import { collectOpsMetrics } from '../../ops/metrics.js';
+import { merchantOf, requireAdmin } from '../app.js';
 import { savingsQuery } from '../schemas.js';
 
 export const opsRoutes = (ctx: AppContext) => async (app: FastifyInstance) => {
+  // Probes run every few seconds from the load balancer and container runtime: keep them out of the logs.
+  /** Liveness: the process is up and serving. Never touches the database, so a database outage doesn't restart every task. */
+  app.get('/healthz', { logLevel: 'silent' }, async () => ({ status: 'ok' }));
+
+  /** Readiness: send traffic here. Fails while shutting down (draining) or when the database is unreachable. */
+  app.get('/readyz', { logLevel: 'silent' }, async (_req, reply) => {
+    if (ctx.lifecycle.draining) return reply.status(503).send({ status: 'draining' });
+    try {
+      await ctx.db.execute(sql`select 1`);
+    } catch (e) {
+      // The route's own logger is silenced (probe noise); this one isn't.
+      app.log.warn({ err: e }, 'readiness: database unreachable');
+      return reply.status(503).send({ status: 'unavailable' });
+    }
+    return { status: 'ready' };
+  });
+
   app.get('/health', async () => {
     await ctx.db.execute(sql`select 1`);
     return { status: 'ok', time: ctx.clock.now(), ruleSet: getRuleSet(ctx.clock.now()).id };
+  });
+
+  /** Operator view of the gauges the production alarms watch (the worker also logs them every minute). */
+  app.get('/v1/admin/ops/metrics', async (req) => {
+    requireAdmin(ctx, req);
+    return collectOpsMetrics({ db: ctx.db, clock: ctx.clock, health: ctx.health });
   });
 
   app.get('/v1/psps/health', async (req) => {

@@ -53,12 +53,19 @@ export function requireAdmin(ctx: AppContext, req: FastifyRequest): void {
   }
 }
 
+/** Request logs in the same JSON shape as src/ops/log.ts: a level name and an ISO time. */
+const REQUEST_LOGGER = {
+  formatters: { level: (label: string) => ({ level: label }) },
+  timestamp: () => `,"time":"${new Date().toISOString()}"`,
+  base: null,
+};
+
 export function buildApp(ctx: AppContext, opts: { logger?: boolean; trustProxy?: false | number | string[] } = {}): FastifyInstance {
   // Behind a load balancer, trustProxy makes req.ip the client's address (rate limits are per IP).
   // A hop count trusts exactly that many proxies in front of us (the rest of X-Forwarded-For is client-supplied).
   const hops = opts.trustProxy;
   const trustProxy = typeof hops === 'number' ? (_addr: string, hop: number) => hop < hops : (hops ?? false);
-  const options: FastifyServerOptions = { logger: opts.logger ?? false, trustProxy };
+  const options: FastifyServerOptions = { logger: opts.logger ? REQUEST_LOGGER : false, trustProxy };
   const app = Fastify(options);
 
   app.decorateRequest('merchant', null);

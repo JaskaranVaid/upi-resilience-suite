@@ -10,14 +10,20 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start:prod": "node --enable-source-maps dist/main.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/main.ts --migrate",
+    "check:migrations": "tsx scripts/check-migrations.ts",
+    "db:verify": "tsx src/ops/verify-cli.ts",
     "demo": "tsx scripts/demo.ts",
     "demo:dashboard": "tsx scripts/demo-dashboard.ts",
     "smoke:cashfree": "tsx scripts/cashfree-sandbox-smoke.ts",
-    "smoke:razorpay": "tsx scripts/razorpay-test-smoke.ts"
+    "smoke:razorpay": "tsx scripts/razorpay-test-smoke.ts",
+    "load:test": "tsx scripts/load-test.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",

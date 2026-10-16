@@ -48,10 +48,16 @@ OpenAPI spec and docs; typed Node SDK and webhook verification helpers; test-mod
 log and redelivery; [integration guide](integration-guide.md).
 **Exit:** a developer who did not build it integrates in test mode in under a day from the docs.
 
-## Phase 5 — Production infrastructure
+## Phase 5 — Production infrastructure ✅ code (2026-10-15; staging soak and drills are founder actions #13–#19)
 Docker images; Terraform for AWS Mumbai (ECS, RDS, Secrets/KMS, ALB+WAF); dev/staging/prod with a
 migration-aware deploy pipeline; logs, metrics, alerts (zero restricted-window executions, notice
 failures, poller backlog, dead webhooks, PSP circuits); load tests; backup restore drill; runbooks.
+Built: one image with api/worker/migrate roles and `/healthz`/`/readyz`, graceful drain, worker
+heartbeat; migrations once per deploy under an advisory lock with an expand/contract check
+([0007](decisions/0007-expand-contract-migrations.md)); JSON logs and an `ops.metrics` line driving
+CloudWatch alarms; Terraform in [`infra/`](../infra/README.md); deploy workflow; load test, restore
+and alarm drills; runbooks ([deploy](runbooks/deploy.md), [alerts](runbooks/alerts.md),
+[backup-restore](runbooks/backup-restore.md), [load testing](runbooks/load-testing.md)).
 **Exit:** 7-day staging soak with zero restricted-window executions; alerts fire-drilled. → **M1**
 
 ## Phase 6 — Security, compliance, internal operations
