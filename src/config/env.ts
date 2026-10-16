@@ -77,6 +77,11 @@ const schema = z.object({
    * Required in production. Generate a key with: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
    */
   CREDENTIALS_KEYS: z.string().optional(),
+  /**
+   * Seal customers' VPAs and phone numbers at rest with a key derived from CREDENTIALS_KEYS
+   * (default true). Turning it off only stops new sealing; sealed rows stay readable.
+   */
+  ENCRYPT_PERSONAL_FIELDS: z.enum(['true', 'false']).default('true'),
   /** Public base URL of this API (e.g. https://api.merchantflo.in), used to show PSP webhook URLs. */
   PUBLIC_BASE_URL: z.url().optional(),
   /** Optional JSON map of pspId -> MockRates, e.g. {"pspA":{"bankUnavailable":0.3}} */

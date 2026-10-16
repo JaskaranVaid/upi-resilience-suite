@@ -31,6 +31,7 @@ import { publicTargetGuard, type ResolveHost, type WebhookTargetPolicy } from '.
 import { publicOnlyFetch } from './webhooks/http.js';
 import { DEFAULT_RATE_LIMITS, type RateLimits } from './api/rate-limit.js';
 import { AuthFailureLimiter } from './api/auth-failures.js';
+import { configureFieldEncryption } from './security/fields.js';
 import { SecretBox } from './security/secrets.js';
 import { connectionAdapterFactory } from './psp/connections.js';
 import { Lifecycle } from './ops/lifecycle.js';
@@ -92,8 +93,10 @@ export function buildContext(args: {
   db: Db;
   /** Shared PSP adapters (mocks, a platform sandbox account): usable by TEST merchants only. */
   adapters: PspAdapter[];
-  /** Seals merchants' PSP credentials (development key by default). */
+  /** Seals merchants' PSP credentials and (with a derived key) customers' personal fields; development key by default. */
   secrets?: SecretBox;
+  /** Seal VPAs, phones and customer actions at rest (default true). Process-wide: see src/security/fields.ts. */
+  encryptPersonalFields?: boolean;
   /** Builds adapters for merchant connections (real Cashfree/mock by default; faked in tests). */
   connectionAdapters?: ConnectionAdapterFactory;
   publicBaseUrl?: string;
@@ -121,6 +124,7 @@ export function buildContext(args: {
   const sleep = args.sleep ?? realSleep;
   const health = new HealthTracker(args.health ?? {}, clock);
   const secrets = args.secrets ?? SecretBox.development();
+  configureFieldEncryption({ box: secrets, enabled: args.encryptPersonalFields ?? true });
   const connectionAdapters = args.connectionAdapters ?? connectionAdapterFactory({ clock });
   const psps = new PspRegistry(args.adapters, { db: args.db, secrets, clock, build: connectionAdapters });
   const operators = new OperatorService({ db: args.db, clock, secrets });

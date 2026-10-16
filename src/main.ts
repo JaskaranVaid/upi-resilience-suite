@@ -41,6 +41,7 @@ async function main() {
     adapters,
     adminToken: env.ADMIN_TOKEN,
     secrets,
+    encryptPersonalFields: env.ENCRYPT_PERSONAL_FIELDS === 'true',
     connectionAdapters: connectionAdapterFactory({ cashfreeTimeoutMs: env.CASHFREE_TIMEOUT_MS }), // system clock
     ...(env.PUBLIC_BASE_URL ? { publicBaseUrl: env.PUBLIC_BASE_URL } : {}),
     secureCookies: env.NODE_ENV === 'production',

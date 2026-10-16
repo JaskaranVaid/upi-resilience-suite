@@ -4,6 +4,7 @@ import type { Capture, ComplaintReason, ComplaintStatus, CustomerAction, Custome
 import type { CaseReason, CaseResolution, CaseStatus, EventType, SettlementStatus, SubjectType, VerificationStatus } from '../tracking/types.js';
 import type { MerchantCategory } from '../rules/mdr.js';
 import type { MethodCosts, SteeringConfig } from '../rules/steering.js';
+import { personalJson, personalText } from '../security/fields.js';
 
 const money = (name: string) => bigint(name, { mode: 'number' });
 const ts = (name: string) => timestamp(name, { withTimezone: true, mode: 'date' });
@@ -145,7 +146,8 @@ export const mandates = pgTable(
   merchantId: text('merchant_id').notNull().references(() => merchants.id),
   /** UMN / mandate reference at the PSP. */
   mandateRef: text('mandate_ref').notNull(),
-  customerVpa: text('customer_vpa').notNull(),
+  /** Personal data: sealed at rest (src/security/fields.ts). */
+  customerVpa: personalText('customer_vpa').notNull(),
   maxAmountPaise: money('max_amount_paise').notNull(),
   /** PSPs that can execute this mandate (several when MIC-portable), in priority order. */
   eligiblePsps: jsonb('eligible_psps').$type<string[]>().notNull(),
@@ -212,10 +214,10 @@ export const payments = pgTable(
     amountPaise: money('amount_paise').notNull(),
     /** How the customer pays. */
     channel: text('channel').$type<PaymentChannel>().notNull().default('UPI_COLLECT'),
-    /** The payer's VPA (UPI collect only). */
-    payerVpa: text('payer_vpa'),
+    /** The payer's VPA (UPI collect only). Personal data, like the action below: sealed at rest. */
+    payerVpa: personalText('payer_vpa'),
     /** What the customer must do to pay, as the PSP returned it (deeplinks, QR, redirect, checkout). */
-    customerAction: jsonb('customer_action').$type<CustomerAction>(),
+    customerAction: personalJson('customer_action').$type<CustomerAction>(),
     idempotencyKey: text('idempotency_key').notNull(),
     /** Merchant's own order reference, optional. */
     orderId: text('order_id'),
@@ -292,8 +294,8 @@ export const checkoutSessions = pgTable(
     idempotencyKey: text('idempotency_key'),
     amountPaise: money('amount_paise').notNull(),
     orderId: text('order_id'),
-    customerPhone: text('customer_phone'),
-    customerVpa: text('customer_vpa'),
+    customerPhone: personalText('customer_phone'),
+    customerVpa: personalText('customer_vpa'),
     returnUrl: text('return_url'),
     status: text('status').$type<CheckoutSessionStatus>().notNull().default('OPEN'),
     /** The latest payment started for this session. */
