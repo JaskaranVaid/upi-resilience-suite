@@ -43,13 +43,17 @@ export async function renderSecurity(el, ctx) {
         <h2>Two-factor sign-in <span class="badge tone-neutral">Off</span></h2>
         <p class="muted m0">Add a code from an authenticator app (Google Authenticator, Microsoft Authenticator, 1Password…) to every sign-in.
           Recommended for admins.</p>
-        <div class="btn-row"><button class="btn btn-primary" id="start-2fa">Set up</button></div>
+        <form class="grid grid-2" id="start-2fa">
+          <label class="field">Your password<input name="password" type="password" autocomplete="current-password" required /></label>
+          <div class="btn-row"><button class="btn btn-primary">Set up</button></div>
+        </form>
         <div id="enrol"></div>
       </div>`,
   );
   const start = el.querySelector('#start-2fa');
-  start.addEventListener('click', async () => {
-    const setup = await busy(start, () => api.twoFactorSetup());
+  start.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const setup = await busy(start.querySelector('button'), () => api.twoFactorSetup(start.password.value));
     if (!setup) return;
     start.hidden = true;
     const host = el.querySelector('#enrol');

@@ -40,6 +40,7 @@ export const OPERATOR_ROLES: DashboardRole[] = ['ADMIN', 'SUPPORT'];
 
 const loginBody = z.object({ email: z.string().min(3).max(320), password: z.string().min(1).max(1024), code: z.string().max(20).optional() });
 const codeBody = z.object({ code: z.string().min(1).max(20) });
+const passwordBody = z.object({ password: z.string().min(1).max(1024) });
 const disableTwoFactorBody = z.object({ password: z.string().min(1).max(1024), code: z.string().min(1).max(20) });
 const roleEnum = z.enum(['ADMIN', 'SUPPORT', 'VIEWER']);
 export const createUserBody = z.object({
@@ -111,7 +112,8 @@ export const dashboardApi = (ctx: AppContext) => async (app: FastifyInstance) =>
   });
 
   app.post('/dashboard/api/me/2fa/setup', async (req) => {
-    const { secret, otpauthUri } = await ctx.sessions.beginTwoFactor(userOf(req));
+    const { password } = passwordBody.parse(req.body);
+    const { secret, otpauthUri } = await ctx.sessions.beginTwoFactor(userOf(req), password);
     return { secret, otpauthUri, qrSvg: await QRCode.toString(otpauthUri, { type: 'svg', margin: 1 }) };
   });
 

@@ -3,6 +3,7 @@ import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
 import type { Clock } from '../clock.js';
 import type { Db } from '../db/client.js';
 import { checkoutSessions, dashboardSessions, debits, mandates, operatorSessions, paymentCases, payments, webhookOutbox } from '../db/schema.js';
+import { AppError } from '../errors.js';
 import { recordEvents, type Actor } from '../events/record.js';
 import type { OperatorService } from '../ops-console/operators.js';
 import { REDACTED } from '../security/fields.js';
@@ -47,8 +48,19 @@ const OPEN_CASE = ['NEEDS_ACTION', 'INVESTIGATING', 'VERIFICATION_PENDING', 'REV
 const LIVE_DEBIT = ['SCHEDULED', 'EXECUTING', 'PENDING_CONFIRMATION'] as const;
 
 const normVpa = (v: string) => v.trim().toLowerCase();
-/** Indian numbers compare on their last 10 digits (with or without +91 / spaces). */
-const normPhone = (p: string) => p.replace(/\D/g, '').slice(-10);
+/**
+ * A phone number as written (10 digits, or 0 / +91 / 91 and 10 digits, spaces and dashes allowed) →
+ * its 10 digits; null for anything else, so a 12-digit UPI reference ending in the same digits
+ * never matches.
+ */
+function normPhone(p: string): string | null {
+  if (!/^\+?[\d\s-]+$/.test(p.trim())) return null;
+  const d = p.replace(/\D/g, '');
+  if (d.length === 10) return d;
+  if (d.length === 11 && d.startsWith('0')) return d.slice(1);
+  if (d.length === 12 && d.startsWith('91')) return d.slice(2);
+  return null;
+}
 
 /**
  * DPDP retention and erasure. Personal fields are sealed at rest (src/security/fields.ts), so
@@ -155,10 +167,12 @@ export class PrivacyService {
   async erase(merchantId: string, who: DataPrincipal, actor: Actor): Promise<ErasureCounts> {
     const vpa = who.vpa ? normVpa(who.vpa) : null;
     const phone = who.phone ? normPhone(who.phone) : null;
+    if (who.phone !== undefined && phone === null) throw new AppError('VALIDATION', 'phone: expected 10 digits, optionally with +91');
+    // Whole values only: erasing asha@okhdfc must never touch masha@okhdfc.
     const isVpa = (v: unknown) => vpa !== null && typeof v === 'string' && normVpa(v) === vpa;
-    const isPhone = (v: unknown) => phone !== null && typeof v === 'string' && v.replace(/\D/g, '').length >= 10 && normPhone(v) === phone;
+    const isPhone = (v: unknown) => phone !== null && typeof v === 'string' && normPhone(v) === phone;
     const mentions = (v: unknown): boolean => {
-      if (typeof v === 'string') return isVpa(v) || isPhone(v) || (vpa !== null && v.toLowerCase().includes(vpa));
+      if (typeof v === 'string') return isVpa(v) || isPhone(v);
       if (Array.isArray(v)) return v.some(mentions);
       if (v && typeof v === 'object') return Object.values(v).some(mentions);
       return false;

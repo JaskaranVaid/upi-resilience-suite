@@ -35,7 +35,7 @@ const qs = (params) => {
 
 export const api = {
   login: (email, password, code) => request('POST', '/login', { email, password, ...(code ? { code } : {}) }),
-  twoFactorSetup: () => request('POST', '/me/2fa/setup'),
+  twoFactorSetup: (password) => request('POST', '/me/2fa/setup', { password }),
   twoFactorConfirm: (code) => request('POST', '/me/2fa/confirm', { code }),
   twoFactorDisable: (password, code) => request('POST', '/me/2fa/disable', { password, code }),
   logout: () => request('POST', '/logout'),

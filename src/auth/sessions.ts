@@ -120,9 +120,15 @@ export class SessionService {
     await this.deps.db.update(dashboardSessions).set({ revokedAt: this.deps.clock.now() }).where(eq(dashboardSessions.tokenHash, hashToken(token)));
   }
 
-  /** Start enrolling an authenticator: a new pending secret, shown once. Two-factor stays off until confirmed. */
-  async beginTwoFactor(user: DashboardUser): Promise<{ secret: string; otpauthUri: string }> {
+  /**
+   * Start enrolling an authenticator: a new pending secret, shown once. Two-factor stays off until
+   * confirmed. Needs the password (a stolen session alone can't bind an attacker's phone) and is
+   * refused while two-factor is on (turning it off needs a current code).
+   */
+  async beginTwoFactor(user: DashboardUser, password: string): Promise<{ secret: string; otpauthUri: string }> {
     const { db, clock, secrets } = this.deps;
+    if (!(await verifyPassword(password, user.passwordHash))) throw new AppError('UNAUTHORIZED', 'Password is wrong');
+    if (user.totpSecret) throw new AppError('CONFLICT', 'Two-factor sign-in is already on — turn it off first to change phones');
     const secret = generateSecret();
     await db.update(dashboardUsers).set({ totpPendingSecret: secrets.seal(secret), updatedAt: clock.now() }).where(eq(dashboardUsers.id, user.id));
     return { secret, otpauthUri: otpauthUri({ issuer: DASHBOARD_TOTP_ISSUER, account: user.email, secret }) };
@@ -132,6 +138,7 @@ export class SessionService {
   async confirmTwoFactor(userId: string, code: string, keepToken?: string): Promise<DashboardUser> {
     const { db, clock, secrets } = this.deps;
     const [u] = await db.select().from(dashboardUsers).where(eq(dashboardUsers.id, userId));
+    if (u?.totpSecret) throw new AppError('CONFLICT', 'Two-factor sign-in is already on');
     if (!u?.totpPendingSecret) throw new AppError('CONFLICT', 'Start two-factor setup first');
     const now = clock.now();
     const step = verifyTotp(secrets.open<string>(u.totpPendingSecret), code, now, null);

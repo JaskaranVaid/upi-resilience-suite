@@ -215,6 +215,18 @@ describe('privacy: retention and erasure', () => {
       expect(JSON.stringify(events[0])).not.toMatch(/asha|98765/i);
     });
 
+    it('matches whole identifiers only: a VPA that contains the erased one, or a reference ending in the phone digits, stays', async () => {
+      const similar = await payment(merchantA, { vpa: 'masha@okhdfc' });
+      await enqueueWebhook(ctx.db, { merchantId: merchantA, event: 'payment.succeeded', payload: { payerVpa: 'masha@okhdfc', upiRrn: '129876543210' }, now: clock.now() });
+
+      const res = await erase(keyA, { vpa: VPA, phone: PHONE });
+      expect(res.json()).toEqual({ mandates: 0, payments: 0, checkoutSessions: 0, webhookDeliveries: 0 });
+      const [p] = await ctx.db.select().from(payments).where(eq(payments.id, similar));
+      expect(p).toMatchObject({ payerVpa: 'masha@okhdfc', customerAction: { type: 'UPI_COLLECT', vpa: 'masha@okhdfc' } });
+      const [hook] = await ctx.db.select().from(webhookOutbox).where(eq(webhookOutbox.merchantId, merchantA));
+      expect(hook!.payload).toEqual({ payerVpa: 'masha@okhdfc', upiRrn: '129876543210' });
+    });
+
     it('needs a VPA or a phone number', async () => {
       expect((await erase(keyA, {})).statusCode).toBe(400);
       expect((await erase(keyB, { vpa: 'not a vpa' })).statusCode).toBe(400);

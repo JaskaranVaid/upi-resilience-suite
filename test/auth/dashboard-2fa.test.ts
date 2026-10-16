@@ -40,7 +40,7 @@ describe('dashboard two-factor sign-in (optional per user)', () => {
   /** Signs in, enrols an authenticator and returns its secret. */
   async function enrol(email: string) {
     const cookie = cookieOf(await login(email));
-    const setup = await as(cookie, 'POST', '/dashboard/api/me/2fa/setup');
+    const setup = await as(cookie, 'POST', '/dashboard/api/me/2fa/setup', { password: PW });
     expect(setup.statusCode).toBe(200);
     const { secret, otpauthUri, qrSvg } = setup.json();
     expect(otpauthUri).toContain(`secret=${secret}`);
@@ -109,6 +109,20 @@ describe('dashboard two-factor sign-in (optional per user)', () => {
 
     const types = (await ctx.db.select({ type: paymentEvents.type }).from(paymentEvents)).map((e) => e.type);
     expect(types).toEqual(expect.arrayContaining(['TWO_FACTOR_ENABLED', 'TWO_FACTOR_DISABLED']));
+  });
+
+  it('a stolen session cannot take over two-factor: setup needs the password and is refused while it is on', async () => {
+    const cookie = cookieOf(await login('agent@streamco.example'));
+    // Without (or with a wrong) password, no enrolment starts: a session thief can't lock the owner out.
+    expect((await as(cookie, 'POST', '/dashboard/api/me/2fa/setup')).statusCode).toBe(400);
+    expect((await as(cookie, 'POST', '/dashboard/api/me/2fa/setup', { password: 'wrong password!!' })).statusCode).toBe(401);
+
+    const { secret } = await enrol('agent@streamco.example');
+    const later = cookieOf(await login('agent@streamco.example', totpCode(secret, clock.now())));
+    // While on, a new authenticator can't replace the old one; turning it off first needs a current code.
+    const again = await as(later, 'POST', '/dashboard/api/me/2fa/setup', { password: PW });
+    expect(again.statusCode).toBe(409);
+    expect((await as(later, 'POST', '/dashboard/api/me/2fa/confirm', { code: '123456' })).statusCode).toBe(409);
   });
 
   it('a session started before two-factor was turned on keeps working; others end on enrolment', async () => {
