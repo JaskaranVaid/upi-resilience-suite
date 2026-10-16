@@ -148,6 +148,13 @@
       "when": 1792129023335,
       "tag": "0020_dashboard_two_factor",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1792139403400,
+      "tag": "0021_pilot",
+      "breakpoints": true
     }
   ]
 }
