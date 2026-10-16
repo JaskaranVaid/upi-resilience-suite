@@ -5,6 +5,7 @@ import { shadowDebitView } from '../../pilot/shadow.js';
 import { executionReportsBody, fromCsvRow } from '../../pilot/executions.js';
 import { parseCsv } from '../../mandates/csv.js';
 import { AppError } from '../../errors.js';
+import { periodFromQuery } from '../../analytics/period.js';
 import { merchantOf } from '../app.js';
 import { idParam } from '../schemas.js';
 
@@ -21,6 +22,12 @@ export const pilotRoutes = (ctx: AppContext) => async (app: FastifyInstance) => 
   app.addContentTypeParser('text/csv', { parseAs: 'string', bodyLimit: 5 * 1024 * 1024 }, (_req, body, done) => done(null, body));
 
   app.get('/v1/pilot', async (req) => ctx.rollout.get(merchantOf(req).id));
+
+  /** The pilot's pass criteria for a period (default: this IST month). */
+  app.get('/v1/pilot/scorecard', async (req) => ctx.scorecard.evaluate(merchantOf(req).id, periodFromQuery(req.query, ctx.clock.now())));
+
+  /** What Merchantflo would have saved on the debits your own system executed (default: this IST month). */
+  app.get('/v1/pilot/report', async (req) => ctx.shadowReport.summary(merchantOf(req).id, periodFromQuery(req.query, ctx.clock.now())));
 
   app.get('/v1/shadow-debits', async (req) => {
     const q = listShadowDebitsQuery.parse(req.query);

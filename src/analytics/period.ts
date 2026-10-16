@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { AppError } from '../errors.js';
 import { addIstDays, istDateString, istMidnight } from '../rules/time.js';
 
@@ -54,4 +55,17 @@ export function resolvePeriod(q: PeriodQuery, now: Date): Period {
   const from = istMidnight(`${month}-01`);
   const to = istMidnight(`${next}-01`);
   return { from, to, month, label: monthLabel.format(new Date(Date.UTC(year, mon - 1, 1))), days: daysBetween(from, to) };
+}
+
+/** Query parameters naming a period: `month=YYYY-MM`, or `from` and `to` (ISO instants). */
+export const periodQuery = z.object({
+  month: z.string().max(7).optional(),
+  from: z.string().max(40).optional(),
+  to: z.string().max(40).optional(),
+});
+
+/** The period a request asks for (default: the current IST billing month). */
+export function periodFromQuery(query: unknown, now: Date): Period {
+  const q = periodQuery.parse(query);
+  return resolvePeriod({ ...(q.month ? { month: q.month } : {}), ...(q.from ? { from: q.from } : {}), ...(q.to ? { to: q.to } : {}) }, now);
 }

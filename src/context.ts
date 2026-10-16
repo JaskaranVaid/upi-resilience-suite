@@ -44,6 +44,8 @@ import { DebitIntake } from './pilot/intake.js';
 import { ExecutionReports } from './pilot/executions.js';
 import { ShadowReportService } from './pilot/report.js';
 import { DuplicateDetector, type DuplicateOptions } from './pilot/duplicates.js';
+import { PilotScorecard } from './pilot/scorecard.js';
+import { pilotGates, type GateOptions } from './pilot/gates.js';
 import type { Logger } from './ops/log.js';
 import type { ConnectionAdapterFactory } from './psp/registry.js';
 
@@ -107,6 +109,8 @@ export interface AppContext {
   shadowReport: ShadowReportService;
   /** Suspected double debits for operators to review. */
   duplicates: DuplicateDetector;
+  /** The pilot's pass criteria, measured. */
+  scorecard: PilotScorecard;
 }
 
 export function buildContext(args: {
@@ -140,6 +144,8 @@ export function buildContext(args: {
   /** Retention periods (docs/legal/retention-policy.md). */
   retention?: Partial<RetentionConfig>;
   duplicates?: Partial<DuplicateOptions>;
+  /** Pilot gate thresholds (days and debits in canary before FULL). */
+  pilotGates?: Partial<GateOptions>;
   /** Structured logger for background failures (console.error when omitted). */
   log?: Logger;
 }): AppContext {
@@ -168,6 +174,9 @@ export function buildContext(args: {
   const customerTokenSecret = args.customerTokenSecret ?? 'dev-customer-token-secret-not-for-production';
   const scheduler = new SchedulerService({ db: args.db, clock, router, opts: args.scheduler });
   const shadow = new ShadowService({ db: args.db, clock, router, ...(args.scheduler ? { opts: args.scheduler } : {}) });
+  const scorecard = new PilotScorecard({ db: args.db, clock, value });
+  const rollout = new RolloutService({ db: args.db, clock, operators });
+  rollout.addGate(pilotGates({ db: args.db, clock, scorecard, ...(args.pilotGates ? { opts: args.pilotGates } : {}) }));
   const logError = args.log ? (msg: string, err?: unknown) => args.log!.error(msg, err) : undefined;
   const worker = new DebitWorker({ db: args.db, clock, router, tracking, pauses, opts: args.worker, ...(logError ? { log: logError } : {}) });
   return {
@@ -215,11 +224,12 @@ export function buildContext(args: {
     operators,
     pauses,
     privacy: new PrivacyService({ db: args.db, clock, operators, ...(args.retention ? { cfg: args.retention } : {}) }),
-    rollout: new RolloutService({ db: args.db, clock, operators }),
+    rollout,
     shadow,
     intake: new DebitIntake({ db: args.db, scheduler, shadow }),
     executionReports: new ExecutionReports({ db: args.db, clock, shadow, worker }),
     shadowReport: new ShadowReportService({ db: args.db }),
+    scorecard,
     duplicates: new DuplicateDetector({ db: args.db, clock, operators, ...(args.duplicates ? { opts: args.duplicates } : {}) }),
   };
 }

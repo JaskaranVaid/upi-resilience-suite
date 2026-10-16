@@ -1,24 +1,14 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { eq } from 'drizzle-orm';
-import { z } from 'zod';
 import { slug } from '../../analytics/csv.js';
-import { resolvePeriod, type Period } from '../../analytics/period.js';
+import { periodFromQuery, type Period } from '../../analytics/period.js';
 import type { AppContext } from '../../context.js';
 import { merchants } from '../../db/schema.js';
 import { userOf } from './plugin.js';
 
-const periodQuery = z.object({
-  month: z.string().max(7).optional(),
-  from: z.string().max(40).optional(),
-  to: z.string().max(40).optional(),
-});
-
 /** Read-only analytics for every dashboard role, always scoped to the user's merchant. */
 export const analyticsRoutes = (ctx: AppContext) => async (app: FastifyInstance) => {
-  const period = (req: FastifyRequest): Period => {
-    const q = periodQuery.parse(req.query);
-    return resolvePeriod({ ...(q.month ? { month: q.month } : {}), ...(q.from ? { from: q.from } : {}), ...(q.to ? { to: q.to } : {}) }, ctx.clock.now());
-  };
+  const period = (req: FastifyRequest): Period => periodFromQuery(req.query, ctx.clock.now());
 
   app.get('/dashboard/api/analytics/value', async (req) => {
     const merchantId = userOf(req).merchantId;

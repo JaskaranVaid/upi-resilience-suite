@@ -84,9 +84,18 @@ export function rolloutChangeView(c: RolloutChange) {
 async function recordChange(
   tx: DbOrTx,
   operators: OperatorService,
-  args: { merchant: Merchant; to: { stage: RolloutStage; canaryPercent: number | null }; reason: string; operatorId: string | null; override: boolean; now: Date },
+  args: {
+    merchant: Merchant;
+    to: { stage: RolloutStage; canaryPercent: number | null };
+    reason: string;
+    operatorId: string | null;
+    /** Failed gates an owner overrode (empty: no override). */
+    overridden: string[];
+    now: Date;
+  },
 ): Promise<Merchant> {
   const { merchant: m, to, now } = args;
+  const override = args.overridden.length > 0;
   const [updated] = await tx.update(merchants).set({ rolloutStage: to.stage, canaryPercent: to.canaryPercent }).where(eq(merchants.id, m.id)).returning();
   await tx.insert(rolloutChanges).values({
     id: newId('rlc'),
@@ -97,7 +106,7 @@ async function recordChange(
     toPercent: to.canaryPercent,
     reason: args.reason,
     operatorId: args.operatorId,
-    override: args.override,
+    override,
     createdAt: now,
   });
   await operators.audit(tx, args.operatorId, 'ROLLOUT_CHANGED', m.id, {
@@ -105,7 +114,7 @@ async function recordChange(
     to: to.stage,
     canaryPercent: to.canaryPercent,
     reason: args.reason,
-    ...(args.override ? { override: true } : {}),
+    ...(override ? { override: true, overridden: args.overridden } : {}),
   });
   // The merchant's integration needs no change (every response says who executes the debit); this
   // tells their team the split moved. Reasons are internal and stay out of it.
@@ -132,7 +141,7 @@ export async function startShadowOnFirstLive(tx: DbOrTx, operators: OperatorServ
     to: { stage: 'SHADOW', canaryPercent: null },
     reason: 'First switch to live mode: real money starts in shadow',
     operatorId: null,
-    override: false,
+    overridden: [],
     now,
   });
 }
@@ -184,10 +193,9 @@ export class RolloutService {
     if (current.rolloutStage === to.stage && current.canaryPercent === to.canaryPercent) {
       throw new AppError('CONFLICT', `Merchant is already ${to.stage}${to.canaryPercent ? ` at ${to.canaryPercent}%` : ''}`);
     }
-    if (isForward(current, to) && !override) {
-      const problems = (await Promise.all(this.gates.map((g) => g(current, to)))).flat();
-      if (problems.length > 0) throw new AppError('CONFLICT', `Not ready for ${to.stage}${to.canaryPercent ? ` ${to.canaryPercent}%` : ''}: ${problems.join('; ')}`);
-    }
+    // Gates are always evaluated for a forward move, so an override records exactly what it overrode.
+    const problems = isForward(current, to) ? (await Promise.all(this.gates.map((g) => g(current, to)))).flat() : [];
+    if (problems.length > 0 && !override) throw new AppError('CONFLICT', `Not ready for ${to.stage}${to.canaryPercent ? ` ${to.canaryPercent}%` : ''}: ${problems.join('; ')}`);
 
     return db.transaction(async (tx) => {
       const [locked] = await tx.select().from(merchants).where(eq(merchants.id, merchantId)).for('update');
@@ -195,7 +203,7 @@ export class RolloutService {
       if (!locked || locked.rolloutStage !== current.rolloutStage || locked.canaryPercent !== current.canaryPercent) {
         throw new AppError('CONFLICT', 'The rollout stage changed meanwhile; reload and try again');
       }
-      return recordChange(tx, operators, { merchant: locked, to, reason, operatorId: actor.operatorId, override, now: clock.now() });
+      return recordChange(tx, operators, { merchant: locked, to, reason, operatorId: actor.operatorId, overridden: problems, now: clock.now() });
     });
   }
 }

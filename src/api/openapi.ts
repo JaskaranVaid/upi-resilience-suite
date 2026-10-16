@@ -9,6 +9,7 @@ import { payBody } from './routes/public-checkout.js';
 import { settlementsQuery } from './routes/settlements.js';
 import { erasureRequest, erasureResponse } from './routes/privacy.js';
 import { listShadowDebitsQuery } from './routes/pilot.js';
+import { periodQuery } from '../analytics/period.js';
 import { CSV_HEADER, executionReport, executionReportsResponse, MAX_EXECUTION_REPORTS } from '../pilot/executions.js';
 import { listDeliveriesQuery } from './routes/webhook-deliveries.js';
 import {
@@ -93,6 +94,14 @@ export const ROUTE_DOCS: RouteDoc[] = [
   {
     method: 'get', path: '/v1/pilot', tag: 'Pilot', auth: 'apiKey', response: pilotResponse, summary: 'Your pilot rollout stage',
     description: 'Who executes your AutoPay debits during a pilot. Every debit response also says so in `executedBy`, so your integration never needs to read this.',
+  },
+  {
+    method: 'get', path: '/v1/pilot/scorecard', tag: 'Pilot', auth: 'apiKey', query: periodQuery, summary: 'Pilot pass criteria for a period',
+    description: 'Zero double debits, zero restricted-window executions, measurable AutoPay uplift (canary vs control, 95% interval), ≥ 99.9% of webhooks within 5 minutes, statement reconciled to settlement. Each criterion is PASS, FAIL, PENDING or NO_DATA with its numbers and method note. Default period: this IST month; or `month=YYYY-MM`, or `from` and `to`.',
+  },
+  {
+    method: 'get', path: '/v1/pilot/report', tag: 'Pilot', auth: 'apiKey', query: periodQuery, summary: 'What Merchantflo would have saved (shadow report)',
+    description: 'Your reported executions in the period, each classified by what Merchantflo would have done: certain value (technical failures inside NPCI restricted windows), potential value (other technical failures — an upper bound), and what it would not have changed. Same period parameters as the scorecard.',
   },
   { method: 'get', path: '/v1/shadow-debits', tag: 'Pilot', auth: 'apiKey', query: listShadowDebitsQuery, response: z.object({ data: z.array(shadowDebitResponse), nextBefore: z.string().nullable() }), summary: 'List shadow debits', description: 'Newest first; page with `before` = the previous `nextBefore`. `reported=false` lists the ones still waiting for your outcome report.' },
   { method: 'get', path: '/v1/shadow-debits/:id', tag: 'Pilot', auth: 'apiKey', response: shadowDebitResponse, summary: 'Retrieve a shadow debit' },

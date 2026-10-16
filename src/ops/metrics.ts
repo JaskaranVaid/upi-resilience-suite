@@ -78,10 +78,12 @@ async function countWhere(db: Db, table: typeof debits | typeof paymentTracking 
 }
 
 /**
- * Execute attempts are recorded when the routing call returns, all with the same created_at; each
- * one started its own latency, plus that of every later attempt in the call, earlier.
+ * AutoPay executions *started* inside an NPCI peak or blackout window, among attempts recorded in
+ * [from, to] (for one merchant, or all). Execute attempts are recorded when the routing call
+ * returns, all with the same created_at; each one started its own latency, plus that of every later
+ * attempt in the call, earlier.
  */
-async function restrictedWindowExecutions(db: Db, now: Date): Promise<number> {
+export async function restrictedWindowExecutions(db: Db, range: { from: Date; to: Date; merchantId?: string }): Promise<number> {
   const rows = await db
     .select({ debitId: paymentAttempts.debitId, createdAt: paymentAttempts.createdAt, seq: paymentAttempts.seq, latencyMs: paymentAttempts.latencyMs })
     .from(paymentAttempts)
@@ -89,8 +91,9 @@ async function restrictedWindowExecutions(db: Db, now: Date): Promise<number> {
       and(
         eq(paymentAttempts.op, 'execute'),
         isNotNull(paymentAttempts.debitId),
-        gte(paymentAttempts.createdAt, new Date(now.getTime() - OPS_WINDOWS.restrictedLookbackMs)),
-        lte(paymentAttempts.createdAt, now),
+        range.merchantId ? eq(paymentAttempts.merchantId, range.merchantId) : undefined,
+        gte(paymentAttempts.createdAt, range.from),
+        lte(paymentAttempts.createdAt, range.to),
       ),
     );
   const calls = new Map<string, typeof rows>();
@@ -125,7 +128,7 @@ export async function collectOpsMetrics({ db, clock, health }: Deps): Promise<Op
     .sort();
 
   return {
-    restrictedWindowExecutions: await restrictedWindowExecutions(db, now),
+    restrictedWindowExecutions: await restrictedWindowExecutions(db, { from: before(OPS_WINDOWS.restrictedLookbackMs), to: now }),
     noticeFailures: await countWhere(db, debits, and(eq(debits.lastErrorCode, 'NOTICE_FAILED'), gte(debits.updatedAt, before(OPS_WINDOWS.noticeFailureLookbackMs)))),
     debitBacklog: await countWhere(
       db,
