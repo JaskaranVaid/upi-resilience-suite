@@ -25,10 +25,10 @@ export const DEFAULT_STEERING: SteeringConfig = {
 };
 
 /**
- * Methods an offer may steer to: ones whose choice holds at payment. RuPay debit is paid through the
- * PSP's card checkout, which takes any card, so a RuPay-debit discount would go to whatever card the
- * customer uses (a credit card costs the merchant more) and the saving could never be confirmed.
- * It is still quoted, at full price.
+ * Methods an offer may steer to. Not RuPay debit: it is paid through the PSP's card checkout, which
+ * takes any card, so a RuPay-debit discount would go to whatever card the customer uses (a credit
+ * card costs the merchant more) and the payment comes back as CARD, so the saving is never booked.
+ * RuPay debit is still quoted, at full price.
  */
 const STEERABLE: ReadonlySet<AltMethod> = new Set(['NETBANKING', 'CARD']);
 
