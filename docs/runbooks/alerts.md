@@ -83,7 +83,7 @@ Contact the merchant; deliveries retry with backoff and are kept (`GET /v1/webho
 redeliver later).
 
 ### dead-webhooks
-**Medium.** A webhook exhausted its 8 retries (or its URL was refused) in the last 24 hours, so a
+**Medium.** A webhook exhausted its retries (about 3 days of them) or its URL was refused in the last 24 hours, so a
 merchant missed an event. The alarm stays in ALARM while the 24-hour count is above the threshold;
 the notification fires once. Tell the merchant; once their endpoint is fixed they (or you)
 redeliver from the Developers page or `POST /v1/webhook-deliveries/:id/redeliver`.
@@ -172,7 +172,7 @@ Confirm an ALARM and an OK e-mail for every alarm and record the date below.
 | Drill | How | Expect |
 |---|---|---|
 | Worker down | Worker service desired count 0 for 8 minutes, then back to 1 | `worker-heartbeat` ALARM after ~6 min, `tasks-below-desired` (worker); OK after restart |
-| Dead webhook | Test merchant whose `webhookUrl` answers 500 (e.g. `https://httpstat.us/500`); create a payment; its 8 attempts run out after about 45 minutes | `dead-webhooks` ALARM |
+| Dead webhook | Test merchant whose `webhookUrl` answers 500 (e.g. `https://httpstat.us/500`); create a payment. Retries run for about 3 days, so mark that delivery given up: `update webhook_outbox set dead_at = now(), last_error = 'drill' where merchant_id = '<merchant id>' and delivered_at is null and dead_at is null` | `dead-webhooks` ALARM |
 | API down | API service desired count 0 for 3 minutes | `api-no-healthy-targets`, `lb-5xx` (if probed) |
 | PSP circuit | In dev, set `MOCK_PSP_RATES={"pspA":{"bankUnavailable":1}}` (every pspA call is a technical decline) and send test-mode payments | `psp-circuit-open` after 10 min |
 

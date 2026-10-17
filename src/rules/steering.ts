@@ -24,6 +24,14 @@ export const DEFAULT_STEERING: SteeringConfig = {
   maxDiscountPaise: 100_00,
 };
 
+/**
+ * Methods an offer may steer to. Not RuPay debit: it is paid through the PSP's card checkout, which
+ * takes any card, so a RuPay-debit discount would go to whatever card the customer uses (a credit
+ * card costs the merchant more) and the payment comes back as CARD, so the saving is never booked.
+ * RuPay debit is still quoted, at full price.
+ */
+const STEERABLE: ReadonlySet<AltMethod> = new Set(['NETBANKING', 'CARD']);
+
 export interface MethodQuote {
   method: PaymentMethod;
   merchantCostPaise: number;
@@ -70,7 +78,7 @@ export function quoteMethods(args: {
   }));
 
   let offer: SteeringOffer | undefined;
-  const best = alts.reduce<(typeof alts)[number] | undefined>((b, a) => (!b || a.cost < b.cost ? a : b), undefined);
+  const best = alts.filter((a) => STEERABLE.has(a.method)).reduce<(typeof alts)[number] | undefined>((b, a) => (!b || a.cost < b.cost ? a : b), undefined);
   if (steering.enabled && best) {
     const savings = upiCost - best.cost;
     if (savings >= steering.minSavingsPaise && savings > 0) {

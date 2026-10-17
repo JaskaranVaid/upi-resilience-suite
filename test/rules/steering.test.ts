@@ -47,6 +47,27 @@ describe('quoteMethods', () => {
     expect(q.offer?.discountPaise).toBe(rs(50));
   });
 
+  it('never steers to RuPay debit — the card checkout takes any card — and steers to the next cheapest method', () => {
+    const q = quoteMethods({
+      amountPaise: rs(5000), profile: general, mdr: reform, steering: DEFAULT_STEERING,
+      methodCosts: { ...costs, RUPAY_DEBIT: { percentBps: 0, flatPaise: 0 } }, // cheapest, but not enforceable
+    });
+    // NetBanking as in the first case: savings ₹20 − ₹8 = ₹12, 25% share = ₹3 discount, merchant nets ₹9.
+    expect(q.offer).toEqual({ method: 'NETBANKING', discountPaise: rs(3), merchantNetSavingsPaise: rs(9) });
+    expect(q.methods.find((m) => m.method === 'RUPAY_DEBIT')).toEqual({
+      method: 'RUPAY_DEBIT', merchantCostPaise: 0, customerDiscountPaise: 0, customerPayablePaise: rs(5000), merchantNetPaise: rs(5000),
+    });
+  });
+
+  it('makes no offer when RuPay debit is the only method cheaper than UPI', () => {
+    const q = quoteMethods({
+      amountPaise: rs(5000), profile: general, mdr: reform, steering: DEFAULT_STEERING,
+      methodCosts: { RUPAY_DEBIT: { percentBps: 0, flatPaise: 0 }, CARD: { percentBps: 180, flatPaise: 0 } },
+    });
+    expect(q.offer).toBeUndefined();
+    expect(q.methods.every((m) => m.customerPayablePaise === rs(5000))).toBe(true);
+  });
+
   it('respects steering disabled', () => {
     const q = quoteMethods({ amountPaise: rs(5000), profile: general, mdr: reform, methodCosts: costs, steering: { ...DEFAULT_STEERING, enabled: false } });
     expect(q.offer).toBeUndefined();

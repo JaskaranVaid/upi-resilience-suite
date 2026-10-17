@@ -53,7 +53,7 @@ export const ROUTE_DOCS: RouteDoc[] = [
   { method: 'post', path: '/v1/checkout/quote', tag: 'Checkout', auth: 'apiKey', body: quoteRequest, status: 201, summary: 'Quote payment methods for an amount (Engine B)', description: 'Costs each method and, where worthwhile, offers a discount-only steering incentive. Checkout sessions do this for you.' },
   { method: 'post', path: '/v1/checkout/quotes/:id/accept', tag: 'Checkout', auth: 'apiKey', body: acceptQuote, summary: 'Record the method the customer chose' },
   { method: 'post', path: '/v1/checkout/quotes/:id/paid', tag: 'Checkout', auth: 'apiKey', body: quotePaid, summary: 'Report a quote paid outside Merchantflo', description: 'Books the steering saving when the offered method was used. Not needed for checkout sessions or /v1/payments.' },
-  { method: 'post', path: '/v1/checkout/split', tag: 'Checkout', auth: 'apiKey', body: splitRequest, summary: 'Split a marketplace cart into one leg per vendor' },
+  { method: 'post', path: '/v1/checkout/split', tag: 'Checkout', auth: 'apiKey', body: splitRequest, summary: 'Estimate per-vendor legs and their MDR for a marketplace cart (creates no payments)' },
 
   // Customer-side checkout (checkout.js)
   { method: 'get', path: '/public/checkout/sessions/:id', tag: 'Checkout (browser)', auth: 'checkoutToken', response: checkoutSessionResponse, summary: 'Session as the customer sees it' },

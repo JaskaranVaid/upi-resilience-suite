@@ -13,3 +13,4 @@ consequences. Supersede a record with a new one rather than editing history.
 | [0006](0006-delivery-workflow.md) | Branch per change, CI on every PR, conventional commits | Accepted |
 | [0007](0007-expand-contract-migrations.md) | Migrations run once per deploy (advisory lock) and only expand the schema | Accepted |
 | [0008](0008-pilot-rollout-by-mandate.md) | Pilots roll out by mandate; intake decides who executes each debit | Accepted |
+| [0009](0009-engine-a-notice-timing.md) | Engine A sends the pre-debit notice, so a debit runs at least a day after hand-over | Accepted |

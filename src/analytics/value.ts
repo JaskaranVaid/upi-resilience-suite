@@ -28,7 +28,7 @@ export const VALUE_LINES: Record<ValueKey, { type: SavingsType; label: string; m
     type: 'PEAK_DEFERRAL_RESCUED',
     label: 'Protected from the peak-hour AutoPay embargo',
     methodNote:
-      'AutoPay debits your billing system requested during NPCI peak windows, executed off-peak and captured. Counted at full amount, assuming a peak-window attempt would have been declined.',
+      'AutoPay debits your billing system requested during NPCI peak windows to run right away (no due date, or a due date of that same day), executed off-peak and captured. Counted at full amount, assuming a peak-window attempt would have been declined. A debit requested for a later due date is not counted here.',
     inTotal: true,
   },
   mdrSaved: {

@@ -42,7 +42,8 @@ curl -s http://localhost:3000/v1/merchants \
 - `sk_test_…` keys only ever reach sandbox or simulated PSPs.
 - `methodCosts` is what each non-UPI method costs you. Checkout offers UPI plus the methods
   listed here, and Merchantflo uses the costs to steer customers to a cheaper method with a discount
-  when that saves you money (see §3).
+  when that saves you money (see §3). Only `NETBANKING` and `CARD` are ever discounted: `RUPAY_DEBIT`
+  is paid through the PSP's card checkout, which accepts any card, so it is offered at full price.
 - In development, webhook URLs may be `http://localhost`. In production they must be public `https`.
 
 From here on, `$KEY` is your `sk_test_…` key:
@@ -153,6 +154,12 @@ retried in later slots, and every outcome arrives as a webhook (`debit.succeeded
 the customer to authenticate. Mandates that already exist at your PSP can be bulk-imported with
 `POST /v1/mandates/import`.
 
+**Send debits at least 2 days before they are due, with `dueDate`.** The customer must be notified
+at least 24 hours before a debit (25 on Cashfree), and Merchantflo sends that notice when it
+receives the debit. A debit sent 2 or more days ahead with `"dueDate": "2026-11-01"` runs off-peak
+on 1 November. A debit sent on its due date, or without one (the example above, sent at 10:30 on
+15 October), runs the next day. See [ADR 0009](decisions/0009-engine-a-notice-timing.md).
+
 ## 5. Webhooks
 
 Merchantflo POSTs JSON to your `webhookUrl`:
@@ -187,7 +194,8 @@ Without the SDK, recompute the HMAC over the raw bytes, compare in constant time
 timestamps more than 5 minutes old.
 
 **Delivery.** Respond with any 2xx within 10 seconds. Failures are retried with exponential backoff
-(8 attempts over about 45 minutes), after which the webhook is marked failed and can be redelivered.
+(waits double from 20 seconds to an hour, then hourly, for about 3 days), after which the webhook is
+marked failed and can be redelivered. An endpoint that comes back gets every pending event within an hour.
 A webhook can arrive more than once, so de-duplicate on `id`.
 Redirects are not followed.
 

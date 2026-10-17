@@ -73,6 +73,31 @@ describe('checkout sessions', () => {
     expect((await pub('POST', `${s.id}/pay`, s.clientToken, { method: 'UPI' })).statusCode).toBe(409);
   });
 
+  it('gives no discount for RuPay debit, which is paid through the card checkout that accepts any card', async () => {
+    const rupayKey = (
+      await app.inject({
+        method: 'POST',
+        url: '/v1/merchants',
+        headers: { authorization: `Bearer ${ADMIN}` },
+        payload: {
+          name: 'RuPay shop',
+          methodCosts: { NETBANKING: { percentBps: 0, flatPaise: rs(8) }, RUPAY_DEBIT: { percentBps: 0, flatPaise: 0 }, CARD: { percentBps: 180, flatPaise: 0 } },
+        },
+      })
+    ).json().apiKey;
+    const s = (
+      await app.inject({ method: 'POST', url: '/v1/checkout/sessions', headers: { authorization: `Bearer ${rupayKey}` }, payload: { amountPaise: rs(5000), customer: { phone: '9876543210' } } })
+    ).json();
+    expect(s.methods).toEqual([
+      { method: 'UPI', payablePaise: rs(5000), discountPaise: 0, recommended: false, upiFlows: ['INTENT', 'QR', 'COLLECT'] },
+      { method: 'NETBANKING', payablePaise: rs(4997), discountPaise: rs(3), recommended: true },
+      { method: 'CARD', payablePaise: rs(5000), discountPaise: 0, recommended: false },
+      { method: 'RUPAY_DEBIT', payablePaise: rs(5000), discountPaise: 0, recommended: false },
+    ]);
+    const paid = (await pub('POST', `${s.id}/pay`, s.clientToken, { method: 'RUPAY_DEBIT' })).json().payment;
+    expect(paid).toMatchObject({ channel: 'CARD', amountPaise: rs(5000) });
+  });
+
   it('never starts a second payment while one is live — including two clicks at once', async () => {
     const s = (await createSession()).json();
     const [a, b] = await Promise.all([pub('POST', `${s.id}/pay`, s.clientToken, { method: 'UPI' }), pub('POST', `${s.id}/pay`, s.clientToken, { method: 'UPI' })]);

@@ -6,6 +6,26 @@ export interface WorkerLoop {
   stop(): Promise<void>;
 }
 
+/** One step of the worker's tick: due debits, the status poller, webhook delivery, … */
+export interface WorkerJob {
+  name: string;
+  run: () => Promise<void>;
+}
+
+/**
+ * Run the jobs in order, each on its own: one that throws is logged and the rest still run, so a
+ * fault in one (say the duplicate scan) never holds up another (say webhook delivery).
+ */
+export async function runJobs(jobs: WorkerJob[], log: Logger): Promise<void> {
+  for (const job of jobs) {
+    try {
+      await job.run();
+    } catch (e) {
+      log.error('worker job failed', e, { job: job.name });
+    }
+  }
+}
+
 /**
  * Run `tick` repeatedly, `pollMs` apart. The heartbeat file is written when the loop starts and
  * after every tick, so the container health check sees a live worker even while a long first

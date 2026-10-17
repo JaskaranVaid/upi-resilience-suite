@@ -45,8 +45,8 @@ export const checkoutRoutes = (ctx: AppContext) => async (app: FastifyInstance) 
   });
 
   /**
-   * Marketplace split: one payment leg per vendor, where each vendor is the merchant of
-   * record for its own items. Never splits a single vendor's amount.
+   * Marketplace split estimate: one leg per vendor, where each vendor is the merchant of record for
+   * its own items, with each leg's MDR. Creates no payments. Never splits a single vendor's amount.
    */
   app.post('/v1/checkout/split', async (req) => {
     const merchant = merchantOf(req);
