@@ -317,7 +317,7 @@ custom ranges up to 366 days are also supported.
 | Line | Counted from | Notes |
 |---|---|---|
 | **Recovered by smart routing & safe retries** (headline) | `TD_RECOVERED` | First attempt failed technically, payment later captured via failover / safe retry / status verification |
-| Protected from the peak-hour AutoPay embargo | `PEAK_DEFERRAL_RESCUED` | Counted at full amount, assuming a peak-window attempt would have been declined — stated on screen |
+| Protected from the peak-hour AutoPay embargo | `PEAK_DEFERRAL_RESCUED` | Debits requested in a peak window to run right away (no `dueDate`, or `dueDate` = that day); counted at full amount, assuming a peak-window attempt would have been declined — stated on screen |
 | MDR saved through payment-method steering | `MDR_STEERING_ACCEPTED` | Net of the customer discount |
 | Further MDR savings offered but not taken | offered − accepted | Context only, not in totals |
 
@@ -346,6 +346,9 @@ API: `GET /dashboard/api/analytics/{value,psps,issues}?month=YYYY-MM | from&to`,
   non-bank entities can't query the NPCI switch.
 - **Merchant-initiated refunds** are out of scope for Phase 3 (bank auto-reversals are tracked).
 - **Savings attribution** for peak rescues assumes the debit would otherwise have fired in the
-  embargo window (it was *requested* during one). That's the brief's model; confirm it matches
-  how you'll bill customers.
+  embargo window: it was *requested* during one, to run right away (no `dueDate`, or a `dueDate`
+  of that same day). A debit requested for a later due date earns no peak credit (a recovered
+  technical decline on it still counts as routing recovery). Steering savings reported through
+  `POST /v1/checkout/quotes/:id/paid` for a payment Merchantflo did not process are shown but not
+  verified; billing (Phase 8) must count only verified value.
 - **Invoicing / pricing** from the value delivered is not built (Phase 4 reports value only).

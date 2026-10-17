@@ -332,8 +332,11 @@ export class DebitWorker {
         .where(eq(debits.id, d.id))
         .returning();
       await enqueueWebhook(tx, { merchantId: d.merchantId, event: 'debit.succeeded', payload: debitView(row!), now });
-      // One attribution per rescued debit so revenue-protected totals never double count.
-      const type = d.requestedInPeak ? 'PEAK_DEFERRAL_RESCUED' : hadTechnicalDecline ? 'TD_RECOVERED' : null;
+      // One attribution per rescued debit so revenue-protected totals never double count. The peak
+      // window only threatened a debit meant to run when it was requested: one asked for a later due
+      // date was never going to execute in the window its request happened to arrive in.
+      const meantToRunAtRequest = d.dueDate === null || d.dueDate <= istDateString(d.requestedAt);
+      const type = d.requestedInPeak && meantToRunAtRequest ? 'PEAK_DEFERRAL_RESCUED' : hadTechnicalDecline ? 'TD_RECOVERED' : null;
       if (type) await recordSavings(tx, { merchantId: d.merchantId, type, amountPaise: d.amountPaise, refId: d.id, now });
       await this.afterOutcome(tx, d, 'SUCCEEDED', { kind: 'SUCCEEDED', ...(upiRrn ? { upiRrn } : {}) }, pspId, txnRef, now);
     });

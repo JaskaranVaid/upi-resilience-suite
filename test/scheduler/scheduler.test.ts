@@ -156,6 +156,31 @@ describe('Engine A — peak-aware AutoPay scheduler', () => {
       expect(savings.map((s) => [s.type, s.amountPaise])).toEqual([['TD_RECOVERED', rs(499)]]);
     });
 
+    it('credits no peak-hour rescue to a debit requested in a peak window for a later due date', async () => {
+      await setup({ script: [OK] });
+      const { debit } = await create({ dueDate: '2026-10-20' }); // requested 15 Oct 10:30, inside the morning peak
+      expect(debit.requestedInPeak).toBe(true);
+      await runAt(debit.scheduledAt);
+      expect((await load(debit.id)).state).toBe('SUCCEEDED');
+      expect(await h.db.select().from(savingsEvents)).toEqual([]);
+    });
+
+    it('still credits routing for a technical decline recovered on such a future-dated debit', async () => {
+      await setup({ script: [BANK_DOWN] }, { script: [OK] });
+      const { debit } = await create({ dueDate: '2026-10-20' });
+      await runAt(debit.scheduledAt);
+      const savings = await h.db.select().from(savingsEvents);
+      expect(savings.map((s) => [s.type, s.amountPaise])).toEqual([['TD_RECOVERED', rs(499)]]);
+    });
+
+    it('keeps the peak-hour rescue when the due date is the day the debit was requested', async () => {
+      await setup({ script: [OK] });
+      const { debit } = await create({ dueDate: '2026-10-15' }); // billing day: the cron fired at 10:30
+      await runAt(debit.scheduledAt);
+      const savings = await h.db.select().from(savingsEvents);
+      expect(savings.map((s) => [s.type, s.amountPaise])).toEqual([['PEAK_DEFERRAL_RESCUED', rs(499)]]);
+    });
+
     it('reschedules technical declines into a later off-peak slot and fails after maxAttempts', async () => {
       await setup({ script: [BANK_DOWN, BANK_DOWN, BANK_DOWN] }, {}, ['pspA']);
       const { debit } = await create();
