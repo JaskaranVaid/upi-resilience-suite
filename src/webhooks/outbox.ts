@@ -69,7 +69,10 @@ export class WebhookDispatcher {
     opts: DispatcherOptions = {},
   ) {
     const { targetGuard, ...rest } = opts;
-    this.opts = { batchSize: 50, maxAttempts: 8, leaseMs: 60_000, requestTimeoutMs: 10_000, ...rest };
+    // 80 attempts: retries double from 20 s to the 1-hour cap (about 85 minutes), then run hourly —
+    // about 3 days in all, so a merchant endpoint that is down for a day still gets every event,
+    // within an hour of coming back.
+    this.opts = { batchSize: 50, maxAttempts: 80, leaseMs: 60_000, requestTimeoutMs: 10_000, ...rest };
     this.targetGuard = targetGuard;
   }
 

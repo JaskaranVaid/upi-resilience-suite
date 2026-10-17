@@ -232,7 +232,8 @@ Payment-issue events carry `paymentType`, `paymentId`, `orderId`, `amountPaise`,
 `customerDebit`, `capture`, `reversal` and, when relevant, `case` — never internal PSP codes.
 Headers: `x-resilience-event`, `x-resilience-delivery`, `x-resilience-timestamp`,
 `x-resilience-signature: sha256=HMAC_SHA256(webhookSecret, "<timestamp>.<raw body>")`.
-Written in the same transaction as the state change (outbox), retried with exponential backoff.
+Written in the same transaction as the state change (outbox), retried with exponential backoff
+(20 s doubling to an hourly cap, for about 3 days), then marked failed for redelivery.
 
 ## Debit lifecycle
 

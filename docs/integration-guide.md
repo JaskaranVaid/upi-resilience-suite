@@ -188,7 +188,8 @@ Without the SDK, recompute the HMAC over the raw bytes, compare in constant time
 timestamps more than 5 minutes old.
 
 **Delivery.** Respond with any 2xx within 10 seconds. Failures are retried with exponential backoff
-(8 attempts over about 45 minutes), after which the webhook is marked failed and can be redelivered.
+(waits double from 20 seconds to an hour, then hourly, for about 3 days), after which the webhook is
+marked failed and can be redelivered. An endpoint that comes back gets every pending event within an hour.
 A webhook can arrive more than once, so de-duplicate on `id`.
 Redirects are not followed.
 

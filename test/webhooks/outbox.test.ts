@@ -101,6 +101,39 @@ describe('webhook outbox', () => {
     expect(row!.deadAt).not.toBeNull();
     expect(row!.lastError).toContain('500');
   });
+
+  /** Run the dispatcher at each retry time until the webhook is delivered or given up. */
+  async function driveUntilSettled(d: WebhookDispatcher, clock: FakeClock, id: string) {
+    for (let i = 0; i < 500; i++) {
+      await d.runOnce();
+      const [row] = await h.db.select().from(webhookOutbox).where(eq(webhookOutbox.id, id));
+      if (row!.deliveredAt || row!.deadAt) return row!;
+      clock.set(row!.nextAttemptAt);
+    }
+    throw new Error('webhook never settled');
+  }
+
+  it("keeps retrying through a day-long outage of the merchant's endpoint and delivers within an hour of it coming back", async () => {
+    const clock = new FakeClock('2026-10-15T08:00:00Z');
+    const m = await seedMerchant(h.db);
+    const backUp = new Date('2026-10-16T08:00:00Z');
+    const fetchImpl = async () => (clock.now() >= backUp ? { ok: true, status: 200 } : { ok: false, status: 503 });
+    const id = await enqueueWebhook(h.db, { merchantId: m.id, event: 'debit.succeeded', payload: {}, now: clock.now() });
+    const row = await driveUntilSettled(new WebhookDispatcher(h.db, clock, fetchImpl), clock, id);
+    expect(row.deadAt).toBeNull();
+    expect(row.deliveredAt!.getTime() - backUp.getTime()).toBeLessThanOrEqual(3_600_000);
+  });
+
+  it('gives up about three days after the webhook was raised, not sooner', async () => {
+    const clock = new FakeClock('2026-10-15T08:00:00Z');
+    const m = await seedMerchant(h.db);
+    const id = await enqueueWebhook(h.db, { merchantId: m.id, event: 'debit.failed', payload: {}, now: clock.now() });
+    const row = await driveUntilSettled(new WebhookDispatcher(h.db, clock, async () => ({ ok: false, status: 500 })), clock, id);
+    expect(row.deliveredAt).toBeNull();
+    const retriedForMs = row.deadAt!.getTime() - row.createdAt.getTime();
+    expect(retriedForMs).toBeGreaterThanOrEqual(72 * 3_600_000);
+    expect(retriedForMs).toBeLessThan(73 * 3_600_000);
+  });
 });
 
 describe('savings ledger', () => {
