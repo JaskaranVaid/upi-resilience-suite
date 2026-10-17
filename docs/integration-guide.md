@@ -154,6 +154,12 @@ retried in later slots, and every outcome arrives as a webhook (`debit.succeeded
 the customer to authenticate. Mandates that already exist at your PSP can be bulk-imported with
 `POST /v1/mandates/import`.
 
+**Send debits at least 2 days before they are due, with `dueDate`.** The customer must be notified
+at least 24 hours before a debit (25 on Cashfree), and Merchantflo sends that notice when it
+receives the debit. A debit sent 2 or more days ahead with `"dueDate": "2026-11-01"` runs off-peak
+on 1 November. A debit sent on its due date, or without one (the example above, sent at 10:30 on
+15 October), runs the next day. See [ADR 0009](decisions/0009-engine-a-notice-timing.md).
+
 ## 5. Webhooks
 
 Merchantflo POSTs JSON to your `webhookUrl`:

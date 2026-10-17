@@ -13,8 +13,8 @@ there is a typed [Node SDK](sdk/node/README.md) with a webhook verifier.
 
 | Module | Problem | What it does |
 |---|---|---|
-| **Engine A — Peak-aware AutoPay scheduler** | NPCI blocks AutoPay execution 10:00–13:00 and 17:00–21:30 IST; RBI requires a pre-debit notice ≥ 24h ahead | Accepts debits whenever the merchant's cron fires, sends the notice, executes in an off-peak slot (spread, not a 13:01 spike), never on an un-notified date, never burning the retry budget on doomed attempts |
-| **Engine B — MDR-aware checkout** | 0.4% MDR (cap ₹300) on P2M UPI > ₹2,000 — announced for 15 Oct 2026, **postponed by NPCI**; starts when `MDR_EFFECTIVE_FROM` is set | Costs every accepted method, offers a **discount-only** incentive toward cheaper methods, splits marketplace carts by vendor ownership |
+| **Engine A — Peak-aware AutoPay scheduler** | NPCI blocks AutoPay execution 10:00–13:00 and 17:00–21:30 IST; RBI requires a pre-debit notice ≥ 24h ahead | Accepts debits whenever the merchant's cron fires, sends the notice, executes in an off-peak slot (spread, not a 13:01 spike) at least 24h later — on the due date when sent 2+ days ahead ([ADR 0009](docs/decisions/0009-engine-a-notice-timing.md)) — never on an un-notified date, never burning the retry budget on doomed attempts |
+| **Engine B — MDR-aware checkout** | 0.4% MDR (cap ₹300) on P2M UPI > ₹2,000 — announced for 15 Oct 2026, **postponed by NPCI**; starts when `MDR_EFFECTIVE_FROM` is set | Costs every accepted method, offers a **discount-only** incentive toward cheaper methods, estimates a vendor-ownership split of marketplace carts (no payments created) |
 | **Smart Router (Phase 2)** | Bank/PSP technical declines | Health-scored PSP selection (time-weighted, with low-rate probing so no provider is starved after a bad patch) with circuit breakers, failover, and timeout handling that checks status before any retry |
 | **Savings ledger** | Proving ROI | Every rescued payment and saved fee is recorded once, exposed at `/v1/savings` |
 | **Status poller (Phase 3)** | Payments stuck "pending", or failed after the customer was debited | Backend poller checks unresolved payments on a configurable schedule (5s/15s/30s/45s → every minute to 15 min → every 15 min to 48h), tracks debit / capture / bank auto-reversal, then hands over to manual investigation |
@@ -195,7 +195,7 @@ or session cookies — checked before any lookup); over a limit → `429 RATE_LI
 | `POST /v1/checkout/quote` | **Engine B** — per-method cost + optional steering `offer` |
 | `POST /v1/checkout/quotes/:id/accept` | Record the method the customer chose (books nothing) |
 | `POST /v1/checkout/quotes/:id/paid` | `{ method, paymentReference }` — the payment succeeded; books the steering saving once |
-| `POST /v1/checkout/split` | Vendor-ownership split with per-leg MDR |
+| `POST /v1/checkout/split` | Estimate only: vendor-ownership split with per-leg MDR; creates no payments and pays nothing out |
 | `POST /v1/payments`, `GET /v1/payments/:id` | One-off payment via the smart router: `channel`, `payerVpa?`, `netbankingBankCode?`, `client?`; returns `customerAction` |
 | `GET /v1/settlements?from&to&match=` | Settlement report lines from the merchant's PSPs, matched to payments where possible |
 | `GET /v1/savings?from&to` | Revenue protected and fees saved |
@@ -213,6 +213,10 @@ Idempotency-Key: inv-2026-10-0042
 { "state": "SCHEDULED", "requestedInPeak": true, "noticeDate": "2026-10-16",
   "scheduledAt": "2026-10-16T08:47:13.000Z", "attempts": 0, "maxAttempts": 3 }
 ```
+
+Sent at 10:30 on 15 Oct without a due date, it runs on the 16th: the customer must be notified
+24 hours ahead. Sent 2 or more days before its `dueDate`, a debit runs on that date
+([ADR 0009](docs/decisions/0009-engine-a-notice-timing.md)).
 
 ### Webhooks
 
@@ -352,4 +356,16 @@ API: `GET /dashboard/api/analytics/{value,psps,issues}?month=YYYY-MM | from&to`,
   technical decline on it still counts as routing recovery). Steering savings reported through
   `POST /v1/checkout/quotes/:id/paid` for a payment Merchantflo did not process are shown but not
   verified; billing (Phase 8) must count only verified value.
+- **What real PSPs allow today.** AutoPay mandates at Cashfree and Razorpay run only through the PSP
+  they were registered with (not portable: [fact sheet §4](docs/regulatory/fact-sheet.md)), so
+  failover between PSPs covers checkout payments; an AutoPay debit is retried at its own PSP.
+  Neither PSP has an API for merchant-raised UDIR complaints (above). Razorpay connections take
+  one-off payments only, so Engine A needs a Cashfree account. PayU, the third aggregator in the
+  founding brief, is not built (Phase 9, when a design partner needs it). AutoPay failover across
+  PSPs and API-raised UDIR complaints work end to end only against mock PSPs today.
+- **Marketplace split is an estimate.** `POST /v1/checkout/split` returns one leg per vendor with
+  its MDR; it creates no payment and pays nothing out. Splitting the *payout* of one customer
+  payment would not avoid MDR either: MDR is charged on the customer's payment, so only separate
+  payments to each vendor (each its own merchant of record, with its own PSP account) are charged
+  per leg. Marketplace payouts are Phase 9, after counsel question 3.
 - **Invoicing / pricing** from the value delivered is not built (Phase 4 reports value only).

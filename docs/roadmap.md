@@ -94,7 +94,14 @@ overrides; ops console Pilots and Duplicates views; the dashboard Pilot tab; Ope
 ## Phase 8 — Commercial launch
 Pricing; billing from the value ledger with GST invoices; self-serve signup (test mode instant, live
 after review); public docs and case study; support process. → **M3**
+Billing counts verified value only: steering savings on payments Merchantflo processed (savings a
+merchant reports through `POST /v1/checkout/quotes/:id/paid` for its own payments are shown, never
+billed), and peak-hour rescues only for debits meant to run when requested
+([ADR 0009](decisions/0009-engine-a-notice-timing.md)).
 
 ## Phase 9 — Scale and expansion (demand-driven)
-More PSPs; bank-handle-aware routing; live push (SSE/websockets); warehouse; marketplace payouts;
-multi-region; SOC 2. Parked: offline UPI Lite X and CBDC.
+More PSPs (PayU, the founding brief's third aggregator); bank-handle-aware routing; live push
+(SSE/websockets); warehouse; marketplace payouts (today `POST /v1/checkout/split` only estimates; MDR
+falls on the customer's payment, so savings need one payment per vendor); AutoPay failover across
+PSPs once mandates are portable (NPCI OC-163/163A, founder action #9); multi-region; SOC 2. Parked:
+offline UPI Lite X and CBDC.
