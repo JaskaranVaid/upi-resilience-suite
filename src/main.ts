@@ -8,7 +8,7 @@ import { assertSchemaCurrent, schemaStatus } from './db/migrate.js';
 import { DEFAULT_HEARTBEAT_FILE } from './ops/lifecycle.js';
 import { jsonLogger } from './ops/log.js';
 import { emitOpsMetrics } from './ops/metrics.js';
-import { startWorkerLoop } from './ops/worker-loop.js';
+import { runJobs, startWorkerLoop } from './ops/worker-loop.js';
 import { buildAdapters } from './psp/factory.js';
 import { connectionAdapterFactory } from './psp/connections.js';
 import { SecretBox } from './security/secrets.js';
@@ -62,16 +62,30 @@ async function main() {
 
   if (env.ROLE !== 'api') {
     const worker = startWorkerLoop({
-      tick: async () => {
-        await ctx.worker.runOnce();
-        await ctx.poller.runOnce();
-        await ctx.reconciler.runDue(); // throttled internally (daily settlement reports)
-        const suspects = await ctx.duplicates.runDue(); // pilot double-debit check, every 10 minutes
-        if (suspects > 0) log.warn('suspected double debits', { suspects });
-        await ctx.dispatcher.runOnce();
-        const purged = await ctx.privacy.runDue(); // daily retention purge
-        if (purged && Object.values(purged).some((n) => n > 0)) log.info('retention purge', { ...purged });
-      },
+      tick: () =>
+        runJobs(
+          [
+            { name: 'debits', run: async () => void (await ctx.worker.runOnce()) },
+            { name: 'status-poller', run: async () => void (await ctx.poller.runOnce()) },
+            { name: 'settlement-recon', run: async () => void (await ctx.reconciler.runDue()) }, // throttled internally (daily settlement reports)
+            {
+              name: 'double-debit-check', // pilot double-debit check, every 10 minutes
+              run: async () => {
+                const suspects = await ctx.duplicates.runDue();
+                if (suspects > 0) log.warn('suspected double debits', { suspects });
+              },
+            },
+            { name: 'webhooks', run: async () => void (await ctx.dispatcher.runOnce()) },
+            {
+              name: 'retention-purge', // daily
+              run: async () => {
+                const purged = await ctx.privacy.runDue();
+                if (purged && Object.values(purged).some((n) => n > 0)) log.info('retention purge', { ...purged });
+              },
+            },
+          ],
+          log,
+        ),
       heartbeatFile: env.HEARTBEAT_FILE ?? DEFAULT_HEARTBEAT_FILE,
       pollMs: env.WORKER_POLL_MS,
       log,
