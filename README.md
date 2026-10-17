@@ -20,6 +20,7 @@ there is a typed [Node SDK](sdk/node/README.md) with a webhook verifier.
 | **Status poller (Phase 3)** | Payments stuck "pending", or failed after the customer was debited | Backend poller checks unresolved payments on a configurable schedule (5s/15s/30s/45s → every minute to 15 min → every 15 min to 48h), tracks debit / capture / bank auto-reversal, then hands over to manual investigation |
 | **Cashfree integration** | Running on a real PSP | UPI AutoPay via Cashfree's controlled notify → execute flow (Engine A keeps timing control), UPI collect, status/inquiry with auto-refund reversal facts, signed webhooks — see the [runbook](docs/runbooks/cashfree.md) |
 | **Value analytics (Phase 4)** | Proving ROI every billing cycle | Value delivered per source (each with a method note), success uplift vs a no-recovery baseline, PSP performance, payment-issue outcomes, monthly statement (printable + CSV line items) |
+| **Pilot (Phase 7)** | Moving a merchant's live AutoPay without betting its collections on day one | Shadow (plan only) → canary by mandate → full, decided at intake and stated in every response (`executedBy`); "what you would have saved" report, double-debit detector, a scorecard of the five pass criteria that gates full rollout — see the [pilot runbook](docs/runbooks/pilot.md) |
 | **Payment Resolution Console (Phase 3)** | "I was charged but my order failed" | Merchant dashboard at `/dashboard`: search by 12-digit UPI reference, see what happened to the customer's money, Dispute Desk queues, recheck, notes, raise UDIR complaints, audit timeline |
 
 Source brief: *UPI Taxation Business Gap Analysis* (Section 5, Phases 1–3).
@@ -113,6 +114,9 @@ See [`.env.example`](.env.example).
   only ever printed encrypted to the operator's public key ([operators runbook](docs/runbooks/operators.md)).
 - **Kill switch**: pause new money movement globally, per merchant or per PSP in seconds; nothing is
   cancelled and status checks, reconciliation and webhooks carry on ([runbook](docs/runbooks/kill-switch.md)).
+- **Pilots and duplicates** in the ops console: each pilot's stage, gates, scorecard and shadow report,
+  stage changes (rollback never gated; an owner override records what it overrode), and the queue of
+  suspected double debits to confirm or dismiss ([pilot runbook](docs/runbooks/pilot.md)).
 - **Dashboard two-factor sign-in**, optional per user (Security page); admins can reset a member's.
 - **Customer data encrypted at rest**: VPAs, phone numbers, payment links/QR and webhook payloads are
   sealed by the application (AES-256-GCM, key derived from `CREDENTIALS_KEYS`); `npm run privacy:backfill`
@@ -182,6 +186,9 @@ or session cookies — checked before any lookup); over a limit → `429 RATE_LI
 | `POST /v1/mandates/:id/revoke` | Stop future debits |
 | `POST /v1/mandates/:id/debits` | **Engine A intake** — `{ amountPaise, dueDate? }` + `Idempotency-Key` |
 | `GET /v1/debits/:id`, `GET /v1/debits?state=` | Debit status |
+| `GET /v1/pilot`, `GET /v1/pilot/scorecard`, `GET /v1/pilot/report` | Pilot stage; the five pass criteria and the shadow report for `month` or `from`/`to` |
+| `POST /v1/pilot/executions` | What the merchant's own system did with its debits (JSON or `text/csv`); also takes a history export for a backtest |
+| `GET /v1/shadow-debits?reported&before`, `GET /v1/shadow-debits/:id` | Debits the merchant's system executes during a pilot (`executedBy: MERCHANT`) |
 | `POST /v1/checkout/sessions`, `GET /v1/checkout/sessions/:id` | Checkout session for checkout.js: methods with payable amounts and steering discount, `clientToken`; savings booked when the steered payment succeeds |
 | `GET /v1/webhook-deliveries?status&event&before`, `POST /v1/webhook-deliveries/:id/redeliver` | Webhook delivery log; redeliver a delivered or failed webhook (same id, signed afresh) |
 | `GET /openapi.json`, `GET /docs` *(no auth)* | OpenAPI 3.1 document and the API reference page |
@@ -219,6 +226,7 @@ Idempotency-Key: inv-2026-10-0042
 | `payment.reversal_initiated`, `payment.reversed` | The customer's bank is reversing / has reversed an uncaptured debit |
 | `payment.captured_after_failure` | The PSP captured a payment after it was reported failed — fulfil or refund |
 | `case.needs_action`, `case.resolved` | A payment issue needs the merchant / was resolved |
+| `pilot.stage_changed` | The merchant's pilot moved between shadow, canary and full |
 
 Payment-issue events carry `paymentType`, `paymentId`, `orderId`, `amountPaise`, `upiRrn`,
 `customerDebit`, `capture`, `reversal` and, when relevant, `case` — never internal PSP codes.
@@ -257,6 +265,7 @@ src/auth/        Phase 3: dashboard users, passwords, sessions
 src/query/       Phase 3: unified Collect + AutoPay read model
 src/events/      Phase 3: audit log + merchant-safe timeline
 src/ops/         Phase 5: JSON logs, health probes, heartbeat, ops metrics, database verifier
+src/pilot/       Phase 7: rollout stages, debit intake, shadow debits, execution reports, shadow report, duplicates, scorecard
 dashboard/       Phase 3: static vanilla-JS console (no build step)
 infra/           Phase 5: Terraform (AWS Mumbai)
 scripts/deploy/  Phase 5: ECS deploy (migrate, roll, verify)

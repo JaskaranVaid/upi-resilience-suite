@@ -2,7 +2,7 @@ import { and, count, eq, gte, inArray, isNotNull, isNull, lt, lte, min, or, type
 import type { Clock } from '../clock.js';
 import { getRuleSet } from '../config/rules.js';
 import type { Db } from '../db/client.js';
-import { debits, executionPauses, paymentAttempts, paymentTracking, reconRuns, webhookOutbox } from '../db/schema.js';
+import { debits, duplicateSuspects, executionPauses, paymentAttempts, paymentTracking, reconRuns, webhookOutbox } from '../db/schema.js';
 import type { HealthTracker } from '../routing/health.js';
 import { isRestricted } from '../rules/windows.js';
 import type { Logger } from './log.js';
@@ -44,6 +44,8 @@ export interface OpsMetrics {
   openCircuits: string[];
   /** Kill-switch pauses in force (global, merchant or PSP). */
   executionPausesActive: number;
+  /** Suspected double debits (pilot) no operator has reviewed yet. Must be 0. */
+  duplicateDebitsOpen: number;
   /** Always 1: its absence means no worker is reporting. */
   workerHeartbeat: 1;
 }
@@ -60,6 +62,7 @@ export const OPS_METRIC_NAMES = [
   'reconFailures24h',
   'pspCircuitsOpen',
   'executionPausesActive',
+  'duplicateDebitsOpen',
   'workerHeartbeat',
 ] as const satisfies ReadonlyArray<keyof OpsMetrics>;
 
@@ -69,16 +72,18 @@ interface Deps {
   health: HealthTracker;
 }
 
-async function countWhere(db: Db, table: typeof debits | typeof paymentTracking | typeof webhookOutbox | typeof reconRuns | typeof executionPauses, where: SQL | undefined): Promise<number> {
+async function countWhere(db: Db, table: typeof debits | typeof paymentTracking | typeof webhookOutbox | typeof reconRuns | typeof executionPauses | typeof duplicateSuspects, where: SQL | undefined): Promise<number> {
   const [row] = await db.select({ n: count() }).from(table).where(where);
   return row?.n ?? 0;
 }
 
 /**
- * Execute attempts are recorded when the routing call returns, all with the same created_at; each
- * one started its own latency, plus that of every later attempt in the call, earlier.
+ * AutoPay executions *started* inside an NPCI peak or blackout window, among attempts recorded in
+ * [from, to] (for one merchant, or all). Execute attempts are recorded when the routing call
+ * returns, all with the same created_at; each one started its own latency, plus that of every later
+ * attempt in the call, earlier.
  */
-async function restrictedWindowExecutions(db: Db, now: Date): Promise<number> {
+export async function restrictedWindowExecutions(db: Db, range: { from: Date; to: Date; merchantId?: string }): Promise<number> {
   const rows = await db
     .select({ debitId: paymentAttempts.debitId, createdAt: paymentAttempts.createdAt, seq: paymentAttempts.seq, latencyMs: paymentAttempts.latencyMs })
     .from(paymentAttempts)
@@ -86,8 +91,9 @@ async function restrictedWindowExecutions(db: Db, now: Date): Promise<number> {
       and(
         eq(paymentAttempts.op, 'execute'),
         isNotNull(paymentAttempts.debitId),
-        gte(paymentAttempts.createdAt, new Date(now.getTime() - OPS_WINDOWS.restrictedLookbackMs)),
-        lte(paymentAttempts.createdAt, now),
+        range.merchantId ? eq(paymentAttempts.merchantId, range.merchantId) : undefined,
+        gte(paymentAttempts.createdAt, range.from),
+        lte(paymentAttempts.createdAt, range.to),
       ),
     );
   const calls = new Map<string, typeof rows>();
@@ -122,7 +128,7 @@ export async function collectOpsMetrics({ db, clock, health }: Deps): Promise<Op
     .sort();
 
   return {
-    restrictedWindowExecutions: await restrictedWindowExecutions(db, now),
+    restrictedWindowExecutions: await restrictedWindowExecutions(db, { from: before(OPS_WINDOWS.restrictedLookbackMs), to: now }),
     noticeFailures: await countWhere(db, debits, and(eq(debits.lastErrorCode, 'NOTICE_FAILED'), gte(debits.updatedAt, before(OPS_WINDOWS.noticeFailureLookbackMs)))),
     debitBacklog: await countWhere(
       db,
@@ -140,6 +146,7 @@ export async function collectOpsMetrics({ db, clock, health }: Deps): Promise<Op
     pspCircuitsOpen: openCircuits.length,
     openCircuits,
     executionPausesActive: await countWhere(db, executionPauses, isNull(executionPauses.liftedAt)),
+    duplicateDebitsOpen: await countWhere(db, duplicateSuspects, eq(duplicateSuspects.status, 'OPEN')),
     workerHeartbeat: 1,
   };
 }

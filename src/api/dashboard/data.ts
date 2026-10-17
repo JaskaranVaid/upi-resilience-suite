@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { merchants } from '../../db/schema.js';
+import { merchants, shadowDebits } from '../../db/schema.js';
 import type { AppContext } from '../../context.js';
 import { recordEvents } from '../../events/record.js';
 import { CASE_REASON_LABELS, CASE_RESOLUTION_LABELS, CASE_STATUS_LABELS, COMPLAINT_STATUS_LABELS } from '../../events/timeline.js';
@@ -54,8 +54,12 @@ export const dashboardDataRoutes = (ctx: AppContext) => async (app: FastifyInsta
   app.get('/dashboard/api/meta', async (req) => {
     const merchantId = userOf(req).merchantId;
     const [m] = await ctx.db.select({ mode: merchants.mode }).from(merchants).where(eq(merchants.id, merchantId));
+    const rollout = await ctx.rollout.get(merchantId);
+    const [shadow] = await ctx.db.select({ id: shadowDebits.id }).from(shadowDebits).where(eq(shadowDebits.merchantId, merchantId)).limit(1);
     return {
       merchantMode: m?.mode ?? 'TEST',
+      /** The Pilot tab shows for a merchant in a pilot, after one, or with shadow data (e.g. a backtest). */
+      pilot: { ...rollout, show: rollout.stage !== 'FULL' || rollout.since !== null || Boolean(shadow) },
       merchantStatuses: Object.entries(MERCHANT_STATUS_LABELS).map(([code, label]) => ({ code, label })),
       caseStatuses: Object.entries(CASE_STATUS_LABELS).map(([code, label]) => ({ code, label })),
       paymentTypes: [

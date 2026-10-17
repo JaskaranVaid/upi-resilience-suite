@@ -17,6 +17,14 @@
 .btn-danger { background: var(--bad); color: var(--surface); border-color: var(--bad); }
 .btn-danger:hover { background: var(--bad); filter: brightness(1.08); }
 .kpi.alert .value { color: var(--bad); }
+label.field.inline { flex-direction: row; align-items: center; gap: 8px; }
+label.check { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.stage-form .muted { font-size: 12.5px; }
+td.wrap { white-space: normal; min-width: 220px; }
+td.wrap.narrow { min-width: 120px; max-width: 220px; }
+.mono.small { font-size: 11.5px; }
+details summary { cursor: pointer; color: var(--text-2); }
+.callout ul { padding-left: 18px; }
 pre.details { margin: 0; min-width: 280px; white-space: pre-wrap; word-break: break-word; font-size: 12px; }
 @media (max-width: 760px) {
   .pause-form { grid-template-columns: 1fr; }

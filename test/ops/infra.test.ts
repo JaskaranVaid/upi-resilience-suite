@@ -19,6 +19,16 @@ describe('infrastructure stays in step with the code', () => {
     for (const m of alarmed) expect(OPS_METRIC_NAMES as readonly string[]).toContain(m);
   });
 
+  it('has a runbook section for every business alarm, and pages on a suspected double debit', () => {
+    const runbook = read('docs/runbooks/alerts.md');
+    const block = /ops_alarms = \{([\s\S]*?)\n {2}\}\n/.exec(monitoring)?.[1] ?? '';
+    const keys = [...block.matchAll(/^ {4}"([a-z0-9-]+)" = \{/gm)].map((m) => m[1]!);
+    expect(keys.length).toBeGreaterThanOrEqual(11);
+    expect(keys).toContain('duplicate-debit-suspected');
+    for (const k of keys) expect(runbook, k).toContain(`### ${k}`);
+    expect(monitoring).toMatch(/"duplicate-debit-suspected" = \{\s+metric\s+= "duplicateDebitsOpen"/);
+  });
+
   it('matches the log line the worker writes', () => {
     expect(monitoring).toContain('pattern        = "{ $.msg = \\"ops.metrics\\" }"');
   });

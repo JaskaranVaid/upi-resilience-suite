@@ -8,6 +8,7 @@ import { AppError } from '../../errors.js';
 import { newId } from '../../ids.js';
 import { DEFAULT_STEERING } from '../../rules/steering.js';
 import { checkWebhookUrl } from '../../webhooks/url.js';
+import { startShadowOnFirstLive } from '../../pilot/rollout.js';
 import { userView } from '../../auth/users.js';
 import { merchantOf, requireAdmin, type Merchant } from '../app.js';
 import { apiKeyView } from '../../auth/api-keys.js';
@@ -24,6 +25,9 @@ export function merchantView(m: Merchant) {
     smallMerchant: m.smallMerchant,
     methodCosts: m.methodCosts,
     steering: m.steering,
+    /** Pilot rollout: who executes AutoPay debits (see GET /v1/pilot). */
+    rolloutStage: m.rolloutStage,
+    canaryPercent: m.canaryPercent,
     createdAt: m.createdAt,
   };
 }
@@ -56,7 +60,7 @@ export const merchantRoutes = (ctx: AppContext) => async (app: FastifyInstance) 
         })
         .returning();
       const { key } = await ctx.apiKeys.issue(tx, m!.id, m!.mode, 'Initial key');
-      return { m: m!, apiKey: key };
+      return { m: await startShadowOnFirstLive(tx, ctx.operators, m!, ctx.clock.now()), apiKey: key };
     });
     return reply.status(201).send({ merchant: merchantView(m), apiKey, webhookSecret });
   });
@@ -91,9 +95,10 @@ export const merchantRoutes = (ctx: AppContext) => async (app: FastifyInstance) 
       const [current] = await tx.select().from(merchants).where(eq(merchants.id, id)).for('update');
       if (!current) throw new AppError('NOT_FOUND', `Merchant ${id} not found`);
       if (current.mode === mode) throw new AppError('CONFLICT', `Merchant is already ${mode}`);
-      const [m] = await tx.update(merchants).set({ mode }).where(eq(merchants.id, id)).returning();
+      const [updated] = await tx.update(merchants).set({ mode }).where(eq(merchants.id, id)).returning();
+      const m = await startShadowOnFirstLive(tx, ctx.operators, updated!, ctx.clock.now());
       const apiKey = await ctx.apiKeys.replaceAll(tx, id, mode);
-      return { merchant: merchantView(m!), apiKey };
+      return { merchant: merchantView(m), apiKey };
     });
   });
 

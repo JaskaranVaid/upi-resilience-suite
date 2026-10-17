@@ -13,6 +13,12 @@ const createdAt = () => ts('created_at').notNull().defaultNow();
 /** TEST merchants use sandbox/mock PSPs only; LIVE merchants only their own production PSP accounts. */
 export type MerchantMode = 'TEST' | 'LIVE';
 
+/**
+ * Who executes a merchant's AutoPay debits during a pilot (Phase 7): SHADOW — the merchant's own
+ * system, we only plan; CANARY — Merchantflo for a share of mandates; FULL — Merchantflo for all.
+ */
+export type RolloutStage = 'SHADOW' | 'CANARY' | 'FULL';
+
 export const merchants = pgTable('merchants', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
@@ -23,6 +29,10 @@ export const merchants = pgTable('merchants', {
   smallMerchant: boolean('small_merchant').notNull().default(false),
   methodCosts: jsonb('method_costs').$type<MethodCosts>().notNull(),
   steering: jsonb('steering').$type<SteeringConfig>().notNull(),
+  /** Pilot rollout (src/pilot/rollout.ts). Merchants outside a pilot are FULL. */
+  rolloutStage: text('rollout_stage').$type<RolloutStage>().notNull().default('FULL'),
+  /** Share of mandates (1–99) Merchantflo executes while CANARY; null otherwise. */
+  canaryPercent: integer('canary_percent'),
   createdAt: createdAt(),
 });
 
@@ -192,6 +202,8 @@ export const debits = pgTable(
     pspTxnId: text('psp_txn_id'),
     executingSince: ts('executing_since'),
     completedAt: ts('completed_at'),
+    /** The merchant's rollout stage when the debit was requested (null before Phase 7). */
+    rolloutStage: text('rollout_stage').$type<RolloutStage>(),
     createdAt: createdAt(),
     updatedAt: ts('updated_at').notNull().defaultNow(),
   },
@@ -595,6 +607,115 @@ export const executionPauses = pgTable(
     liftedBy: text('lifted_by'),
   },
   (t) => [index('execution_pauses_active').on(t.liftedAt)],
+);
+
+// ─── Phase 7: pilot rollout, shadow debits, double-debit review ──────────────────────────
+
+/** Every change of a merchant's rollout stage, oldest first: the pilot's timeline. */
+export const rolloutChanges = pgTable(
+  'rollout_changes',
+  {
+    id: text('id').primaryKey(),
+    merchantId: text('merchant_id').notNull().references(() => merchants.id),
+    fromStage: text('from_stage').$type<RolloutStage>().notNull(),
+    fromPercent: integer('from_percent'),
+    toStage: text('to_stage').$type<RolloutStage>().notNull(),
+    toPercent: integer('to_percent'),
+    reason: text('reason').notNull(),
+    /** Operator id; null for a change the system made (first switch to LIVE mode). */
+    operatorId: text('operator_id'),
+    /** A failed gate was overridden by an OWNER. */
+    override: boolean('override').notNull().default(false),
+    createdAt: createdAt(),
+  },
+  (t) => [index('rollout_changes_merchant').on(t.merchantId, t.createdAt)],
+);
+
+/** MIRRORED: sent to debit intake and handed to the merchant to execute; REPORTED: known only from an execution report (backtest). */
+export type ShadowSource = 'MIRRORED' | 'REPORTED';
+export type ShadowOutcome = 'SUCCEEDED' | 'FAILED';
+export type FailureKind = 'TECHNICAL' | 'BUSINESS' | 'UNKNOWN';
+/** What live intake would have refused (the merchant's own system executes it regardless). */
+export type WouldRefuse = 'MANDATE_INACTIVE' | 'AMOUNT_EXCEEDS_MANDATE' | 'AFA_REQUIRED';
+
+/**
+ * A debit the merchant's own system executes, as Merchantflo would have planned it, with the
+ * outcome the merchant reported. Never executed, notified or routed by Merchantflo: nothing that
+ * moves money reads this table.
+ */
+export const shadowDebits = pgTable(
+  'shadow_debits',
+  {
+    id: text('id').primaryKey(),
+    merchantId: text('merchant_id').notNull().references(() => merchants.id),
+    /** Our mandate record, when the mandate is registered with us. */
+    mandateId: text('mandate_id').references(() => mandates.id),
+    mandateRef: text('mandate_ref').notNull(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    orderId: text('order_id'),
+    amountPaise: money('amount_paise').notNull(),
+    source: text('source').$type<ShadowSource>().notNull(),
+    /** Rollout stage at intake; null for reported (historical) rows. */
+    rolloutStage: text('rollout_stage').$type<RolloutStage>(),
+    requestedAt: ts('requested_at').notNull(),
+    requestedInPeak: boolean('requested_in_peak').notNull(),
+    dueDate: text('due_date'),
+    /** When Merchantflo would have executed it, and the IST date its notice would have named. */
+    plannedAt: ts('planned_at').notNull(),
+    plannedNoticeDate: text('planned_notice_date').notNull(),
+    wouldRefuse: text('would_refuse').$type<WouldRefuse>(),
+    /** Set when the report's key belongs to a debit Merchantflo owns (a misrouted execution). */
+    liveDebitId: text('live_debit_id'),
+    // What the merchant's system did, as reported.
+    executedAt: ts('executed_at'),
+    outcome: text('outcome').$type<ShadowOutcome>(),
+    failureKind: text('failure_kind').$type<FailureKind>(),
+    failureCode: text('failure_code'),
+    pspTxnId: text('psp_txn_id'),
+    legacyAttempts: integer('legacy_attempts'),
+    reportedAt: ts('reported_at'),
+    createdAt: createdAt(),
+    updatedAt: ts('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('shadow_debits_merchant_idem').on(t.merchantId, t.idempotencyKey),
+    index('shadow_debits_merchant_executed').on(t.merchantId, t.executedAt),
+    index('shadow_debits_mandate_executed').on(t.merchantId, t.mandateRef, t.executedAt),
+    index('shadow_debits_merchant_created').on(t.merchantId, t.createdAt),
+  ],
+);
+
+export type DuplicateSide = 'DEBIT' | 'SHADOW';
+export type DuplicateStatus = 'OPEN' | 'CONFIRMED' | 'DISMISSED';
+
+/** Two successful executions of one mandate close together, at least one by Merchantflo: an operator decides. */
+export const duplicateSuspects = pgTable(
+  'duplicate_suspects',
+  {
+    id: text('id').primaryKey(),
+    merchantId: text('merchant_id').notNull().references(() => merchants.id),
+    mandateRef: text('mandate_ref').notNull(),
+    amountPaise: money('amount_paise').notNull(),
+    /** The earlier execution. */
+    firstKind: text('first_kind').$type<DuplicateSide>().notNull(),
+    firstId: text('first_id').notNull(),
+    firstAt: ts('first_at').notNull(),
+    secondKind: text('second_kind').$type<DuplicateSide>().notNull(),
+    secondId: text('second_id').notNull(),
+    secondAt: ts('second_at').notNull(),
+    /** Both carry the same merchant order id: almost certainly one invoice paid twice. */
+    sameOrder: boolean('same_order').notNull(),
+    status: text('status').$type<DuplicateStatus>().notNull().default('OPEN'),
+    detectedAt: ts('detected_at').notNull(),
+    resolvedAt: ts('resolved_at'),
+    resolvedBy: text('resolved_by'),
+    resolutionNote: text('resolution_note'),
+  },
+  (t) => [
+    uniqueIndex('duplicate_suspects_pair').on(t.firstId, t.secondId),
+    index('duplicate_suspects_merchant').on(t.merchantId, t.detectedAt),
+    index('duplicate_suspects_status').on(t.status),
+  ],
 );
 
 /**

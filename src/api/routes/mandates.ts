@@ -11,6 +11,14 @@ import { createDebit, createMandate, idParam, positivePaise } from '../schemas.j
 import { resolveEligiblePsps } from '../../mandates/eligibility.js';
 import { parseCsv } from '../../mandates/csv.js';
 import { fromCsvRow } from '../../mandates/import.js';
+import { executorFor } from '../../pilot/rollout.js';
+import { shadowDebitView } from '../../pilot/shadow.js';
+import type { Merchant } from '../app.js';
+
+/** A mandate as the API returns it, with who executes its new debits under the merchant's pilot stage. */
+export function mandateView(m: typeof mandates.$inferSelect, merchant: Pick<Merchant, 'rolloutStage' | 'canaryPercent'>) {
+  return { ...m, executedBy: executorFor(merchant, m.id) };
+}
 
 /** Accept the idempotency key from the body or the conventional Idempotency-Key header. */
 export function withIdempotencyKey(req: FastifyRequest): unknown {
@@ -78,7 +86,7 @@ export const mandateRoutes = (ctx: AppContext) => async (app: FastifyInstance) =
         .where(and(eq(mandates.merchantId, merchant.id), eq(mandates.mandateRef, body.mandateRef)));
       throw new AppError('CONFLICT', `Mandate ${body.mandateRef} is already registered as ${existing?.id}`);
     }
-    return reply.status(201).send(m);
+    return reply.status(201).send(mandateView(m, merchant));
   });
 
   /** Change which of the merchant's PSPs may execute a mandate, or its limits. */
@@ -90,7 +98,7 @@ export const mandateRoutes = (ctx: AppContext) => async (app: FastifyInstance) =
     const patch = { ...body, ...(body.eligiblePsps ? { eligiblePsps: resolveEligiblePsps(available, body.eligiblePsps) } : {}) };
     const [m] = await ctx.db.update(mandates).set(patch).where(and(eq(mandates.id, id), eq(mandates.merchantId, merchant.id))).returning();
     if (!m) throw new AppError('NOT_FOUND', `Mandate ${id} not found`);
-    return m;
+    return mandateView(m, merchant);
   });
 
   /**
@@ -124,7 +132,7 @@ export const mandateRoutes = (ctx: AppContext) => async (app: FastifyInstance) =
     const { id } = idParam.parse(req.params);
     const [m] = await ctx.db.select().from(mandates).where(and(eq(mandates.id, id), eq(mandates.merchantId, merchant.id)));
     if (!m) throw new AppError('NOT_FOUND', `Mandate ${id} not found`);
-    return m;
+    return mandateView(m, merchant);
   });
 
   app.post('/v1/mandates/:id/revoke', async (req) => {
@@ -136,19 +144,20 @@ export const mandateRoutes = (ctx: AppContext) => async (app: FastifyInstance) =
       .where(and(eq(mandates.id, id), eq(mandates.merchantId, merchant.id)))
       .returning();
     if (!m) throw new AppError('NOT_FOUND', `Mandate ${id} not found`);
-    return m;
+    return mandateView(m, merchant);
   });
 
   /**
    * Engine A intake. Point your billing system here instead of at the PSP: we pick a
-   * compliant off-peak slot, send the pre-debit notice, and execute it for you.
+   * compliant off-peak slot, send the pre-debit notice, and execute it for you — or, during a
+   * pilot, plan it and hand it back to your system (executedBy: MERCHANT).
    */
   app.post('/v1/mandates/:id/debits', async (req, reply) => {
     const merchant = merchantOf(req);
     const { id } = idParam.parse(req.params);
     const body = createDebit.parse(withIdempotencyKey(req));
-    const { debit, created } = await ctx.scheduler.createDebit(merchant.id, id, body);
-    return reply.status(created ? 201 : 200).send(debitView(debit));
+    const r = await ctx.intake.request(merchant, id, body);
+    return reply.status(r.created ? 201 : 200).send(r.kind === 'LIVE' ? debitView(r.debit) : shadowDebitView(r.shadow));
   });
 
   app.get('/v1/debits/:id', async (req) => {

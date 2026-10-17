@@ -36,6 +36,20 @@ this means a bug, a clock problem, or rule-set misconfiguration.
 3. Check the task clock (`/health` returns `time`) and `GET /v1/rules` (windows in force).
 4. Lift the pause (or restore the worker count) once the cause is fixed. Tell affected merchants; NPCI may ask the PSP.
 
+### duplicate-debit-suspected
+**Critical.** The double-debit detector found two successful executions of one mandate, for the same
+amount, less than 24 hours apart, at least one by Merchantflo. During a pilot the usual cause is a
+misroute: the merchant's own system executed a debit whose intake response said
+`executedBy: MERCHANTFLO`. A customer may have paid twice.
+1. Ops console → **Duplicates**: open the suspect, look at both executions (times, order ids, PSP ids).
+2. If the merchant's integration is misrouting, roll that merchant back to SHADOW at once (ops console
+   → Pilots → stage) and, if more debits are at risk, pause the merchant ([kill switch](kill-switch.md)).
+3. Call the merchant: confirm with their PSP report whether the customer was debited twice; the
+   merchant refunds the customer from their own PSP account (we never hold funds).
+4. Resolve the suspect: **Confirmed** (a real double debit — note the refund reference) or
+   **Dismissed** (legitimate, e.g. two invoices on a daily mandate — note why). The alarm clears when
+   none is open. Every confirmed one goes in the pilot's weekly review ([pilot runbook](pilot.md)).
+
 ### execution-paused
 **Medium.** A kill-switch pause has been in force for 30 minutes. Intentional pauses are fine, but
 a forgotten one silently delays every debit and payment in its scope. Ops console → Kill switch:

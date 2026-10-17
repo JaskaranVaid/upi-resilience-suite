@@ -44,6 +44,12 @@ export const DEFAULT_WINDOWS: WindowConfig = {
 };
 
 /**
+ * When NPCI's AutoPay peak-hour rule took effect (fact sheet §2). The windows above apply to every
+ * rule set; history before this date (a pilot backtest) is never judged against them.
+ */
+export const AUTOPAY_PEAK_RULE_FROM = new Date('2025-08-01T00:00:00+05:30');
+
+/**
  * Largest recurring debit that may run without the customer authenticating it (RBI e-mandate
  * framework, June 2022). Above it AutoPay needs the customer's PIN, so it can't run silently.
  */

@@ -19,7 +19,9 @@ export type WebhookEvent =
   /** The PSP captured a payment after it had been reported failed: fulfil or refund. */
   | 'payment.captured_after_failure'
   | 'case.needs_action'
-  | 'case.resolved';
+  | 'case.resolved'
+  /** An operator moved the merchant's pilot rollout (shadow, canary, full). */
+  | 'pilot.stage_changed';
 
 /** Write a webhook in the caller's transaction so it is emitted iff the state change commits. */
 export async function enqueueWebhook(

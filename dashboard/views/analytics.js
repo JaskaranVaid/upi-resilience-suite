@@ -4,12 +4,14 @@ import { errorBox, loading } from '../components/panels.js';
 import { istDayEnd, istDayStart, money, when } from '../lib/format.js';
 import { html, mount } from '../lib/html.js';
 
-const TABS = [
+const BASE_TABS = [
   ['value', 'Value delivered'],
   ['psps', 'PSP performance'],
   ['issues', 'Payment issues'],
   ['statement', 'Monthly statement'],
 ];
+// Shown to merchants in a pilot (or with shadow data, e.g. a backtest).
+const PILOT_TAB = ['pilot', 'Pilot'];
 
 const compactInr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', notation: 'compact', maximumFractionDigits: 1 });
 const pct = (r, digits = 1) => (r === null || r === undefined ? '—' : `${(r * 100).toFixed(digits)}%`);
@@ -34,7 +36,8 @@ function recentMonths() {
   return out;
 }
 
-export async function renderAnalytics(el, { query, me }) {
+export async function renderAnalytics(el, { query, me, meta }) {
+  const TABS = meta.pilot?.show ? [...BASE_TABS, PILOT_TAB] : BASE_TABS;
   const tab = TABS.some(([t]) => t === query.get('tab')) ? query.get('tab') : 'value';
   const month = query.get('month') ?? '';
   const fromDay = query.get('fromDay') ?? '';
@@ -81,6 +84,7 @@ export async function renderAnalytics(el, { query, me }) {
     if (tab === 'value') await valueTab(body, params);
     else if (tab === 'psps') await pspTab(body, params);
     else if (tab === 'issues') await issuesTab(body, params);
+    else if (tab === 'pilot') await pilotTab(body, params);
     else await statementTab(body, custom ? {} : params, me);
   } catch (e) {
     mount(body, errorBox(e.message));
@@ -207,6 +211,87 @@ async function issuesTab(el, params) {
         <section class="card"><h3>Resolved, by outcome</h3>${list(s.resolved.byResolution)}</section>
         <section class="card"><h3>UDIR complaints, by status</h3>${list(s.complaints.byStatus)}</section>
       </div>`,
+  );
+}
+
+const STAGE_TEXT = {
+  SHADOW: () => 'Your billing system executes every AutoPay debit, as before. Merchantflo plans each one and shows below what it would have done differently.',
+  CANARY: (p) => `Merchantflo executes the debits of ${p}% of your mandates, chosen at random by mandate; your system executes the rest. Every debit response says which in executedBy.`,
+  FULL: () => 'Merchantflo executes all your AutoPay debits.',
+};
+const STATUS_TONE = { PASS: 'good', FAIL: 'bad', PENDING: 'warn', NO_DATA: 'neutral' };
+const STATUS_LABEL = { PASS: 'Pass', FAIL: 'Fail', PENDING: 'Not yet measurable', NO_DATA: 'No data yet' };
+/** A difference of two rates, in percentage points. */
+const pp = (x) => (x === null || x === undefined ? '—' : `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(x * 100).toFixed(1)} pts`);
+/** A projected rate: one value when its bounds agree, else "a to b". */
+const range = ({ atLeast, atMost }) => (pct(atLeast) === pct(atMost) ? pct(atLeast) : `${pct(atLeast)} to ${pct(atMost)}`);
+
+function criterionFigures(c) {
+  const d = c.details;
+  switch (c.key) {
+    case 'doubleDebits':
+      return `${plural(d.open + d.confirmed, 'suspected double debit', 'suspected double debits')}${d.dismissed ? ` (${d.dismissed} checked and legitimate)` : ''}`;
+    case 'restrictedWindowExecutions':
+      return plural(d.count, 'execution', 'executions');
+    case 'autopayUplift':
+      return d.canary.n && d.control.n
+        ? `Merchantflo ${pct(d.canary.rate)} (${d.canary.succeeded}/${d.canary.n}) vs your system ${pct(d.control.rate)} (${d.control.succeeded}/${d.control.n}): ${pp(d.difference)}, 95% interval ${pp(d.low)} to ${pp(d.high)}`
+        : `${plural(d.canary.n, 'Merchantflo debit', 'Merchantflo debits')} and ${plural(d.control.n, 'debit', 'debits')} of your system with a final outcome`;
+    case 'webhooksOnTime':
+      return d.judged ? `${d.onTime.toLocaleString('en-IN')} of ${d.judged.toLocaleString('en-IN')} on time (${pct(d.share, 2)})` : 'No webhooks yet';
+    case 'statementReconciles':
+      return `${d.reconciled}/${d.payments} settled${d.awaiting ? ` · ${d.awaiting} within the 3-day grace` : ''}${d.overdue ? ` · ${d.overdue} overdue` : ''}${d.mismatched ? ` · ${d.mismatched} amount mismatches` : ''}${d.unverifiable ? ` · ${d.unverifiable} value lines with no payment to check` : ''}`;
+    default:
+      return '';
+  }
+}
+
+async function pilotTab(el, params) {
+  const { rollout, scorecard: card, report: r } = await api.pilot(params);
+  const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v));
+  const csv = `/dashboard/api/pilot/report.csv${q.toString() ? `?${q}` : ''}`;
+  mount(
+    el,
+    html`<div class="pilot"><section class="card mb">
+        <div class="label muted">Pilot stage</div>
+        <div class="stat"><div class="value">${rollout.stage === 'CANARY' ? `Canary · ${rollout.canaryPercent}% of mandates` : rollout.stage === 'SHADOW' ? 'Shadow' : 'Full'}</div></div>
+        <p class="m0">${STAGE_TEXT[rollout.stage](rollout.canaryPercent)}</p>
+        <p class="method">Merchantflo changes the stage with you, after reviewing the numbers below; you get a pilot.stage_changed webhook each time.${rollout.since ? ` Current stage since ${when(rollout.since)}.` : ''}</p>
+      </section>
+
+      <section class="card mb">
+        <h2>Pass criteria · ${card.period.label}</h2>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Criterion</th><th>Bar</th><th>Status</th><th>Figures</th></tr></thead>
+          <tbody>${card.criteria.map(
+            (c) => html`<tr>
+              <td>${c.label}${c.gated ? '' : html`<span class="tag">reported</span>`}</td>
+              <td class="note">${c.target}</td>
+              <td><span class="badge tone-${STATUS_TONE[c.status]}">${STATUS_LABEL[c.status]}</span></td>
+              <td class="note">${criterionFigures(c)}</td>
+            </tr>`,
+          )}</tbody>
+        </table></div>
+        ${card.criteria.map((c) => html`<p class="method"><strong>${c.label}.</strong> ${c.methodNote}</p>`)}
+      </section>
+
+      <section class="card mb">
+        <div class="page-head tight"><h2 class="m0">What Merchantflo would have saved</h2><a class="btn" href="${csv}" download>Download rows (CSV)</a></div>
+        <p class="method m0">On the debits your own system executed and reported (POST /v1/pilot/executions), by when they ran.</p>
+        <div class="grid grid-3 mt">
+          <div class="stat"><div class="label">Certain</div><div class="value">${money(r.certainPaise)}</div><div class="sub">Technical failures inside NPCI restricted windows</div></div>
+          <div class="stat"><div class="label">Potential (upper bound)</div><div class="value">${money(r.potentialPaise)}</div><div class="sub">${r.estimate ? `Estimate ${money(r.estimate.amountPaise)} at your ${pct(r.estimate.recoveryRate, 0)} recovery rate` : 'Not added to the certain value'}</div></div>
+          <div class="stat"><div class="label">Success rate</div><div class="value">${pct(r.observed.successRate)}</div><div class="sub">${r.observed.count ? `${range(r.projectedSuccessRate)} with Merchantflo` : 'No reported executions in this period'}</div></div>
+        </div>
+        <div class="table-wrap mt"><table>
+          <thead><tr><th>What Merchantflo would have done</th><th class="right">Executions</th><th class="right">Amount</th></tr></thead>
+          <tbody>${r.classes.map(
+            (c) => html`<tr><td>${c.label}${c.value === 'NONE' ? '' : html`<span class="tag">${c.value === 'CERTAIN' ? 'certain' : 'potential'}</span>`}</td><td class="right num">${c.count.toLocaleString('en-IN')}</td><td class="right num">${money(c.amountPaise)}</td></tr>`,
+          )}</tbody>
+        </table></div>
+        <p class="method">${r.awaitingOutcome ? `${plural(r.awaitingOutcome, 'debit', 'debits')} of this period still await your outcome report (coverage ${pct(r.outcomeCoverage, 0)}). ` : ''}${r.coverageNote}</p>
+        <p class="method">${r.estimateNote}</p>
+      </section></div>`,
   );
 }
 

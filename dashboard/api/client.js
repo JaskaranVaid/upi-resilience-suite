@@ -57,6 +57,7 @@ export const api = {
   analyticsPsps: (period) => request('GET', `/analytics/psps${qs(period)}`),
   analyticsIssues: (period) => request('GET', `/analytics/issues${qs(period)}`),
   analyticsSettlements: (period) => request('GET', `/analytics/settlements${qs(period)}`),
+  pilot: (period) => request('GET', `/pilot${qs(period)}`),
   users: () => request('GET', '/users'),
   createUser: (u) => request('POST', '/users', u),
   updateUser: (id, patch) => request('PATCH', `/users/${encodeURIComponent(id)}`, patch),

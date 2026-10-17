@@ -2,12 +2,19 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { z } from 'zod';
 import { buildApp } from '../../src/api/app.js';
-import type { checkoutSessionResponse, debitResponse, mandateResponse, paymentResponse, webhookDeliveryResponse } from '../../src/api/responses.js';
+import type {
+  checkoutSessionResponse, debitResponse, mandateResponse, paymentResponse, pilotResponse, pilotScorecardResponse, shadowDebitResponse, shadowReportResponse, webhookDeliveryResponse,
+} from '../../src/api/responses.js';
+import type { executionReport, executionReportsResponse } from '../../src/pilot/executions.js';
+import type { WebhookEvent as ServerWebhookEvent } from '../../src/webhooks/outbox.js';
 import { FakeClock } from '../../src/clock.js';
 import { buildContext, type AppContext } from '../../src/context.js';
 import { MockPsp } from '../../src/psp/mock.js';
 import { sign } from '../../src/webhooks/sign.js';
-import { Merchantflo, MerchantfloError, type CheckoutSession, type Debit, type Mandate, type Payment, type WebhookDelivery } from '../../sdk/node/src/index.js';
+import {
+  Merchantflo, MerchantfloError, type CheckoutSession, type Debit, type ExecutionReport, type ExecutionReportResult, type Mandate, type Payment, type Pilot, type PilotScorecard,
+  type ShadowDebit, type ShadowReport, type WebhookDelivery, type WebhookEventType,
+} from '../../sdk/node/src/index.js';
 import { verifyWebhook, WebhookVerificationError } from '../../sdk/node/src/webhooks.js';
 import { freshDb, ist, rs } from '../helpers/fixtures.js';
 
@@ -19,6 +26,15 @@ export type SdkContract = [
   Assignable<Mandate, z.output<typeof mandateResponse>>,
   Assignable<Debit, z.output<typeof debitResponse>>,
   Assignable<WebhookDelivery, z.output<typeof webhookDeliveryResponse>>,
+  Assignable<Pilot, z.output<typeof pilotResponse>>,
+  Assignable<ShadowDebit, z.output<typeof shadowDebitResponse>>,
+  Assignable<PilotScorecard, z.output<typeof pilotScorecardResponse>>,
+  Assignable<ShadowReport, z.output<typeof shadowReportResponse>>,
+  Assignable<ExecutionReportResult, z.output<typeof executionReportsResponse>>,
+  Assignable<ExecutionReport, z.output<typeof executionReport>>,
+  // The SDK lists exactly the events the server sends.
+  Assignable<WebhookEventType, ServerWebhookEvent>,
+  Assignable<ServerWebhookEvent, WebhookEventType>,
 ];
 
 const ADMIN = 'test-admin-token';
@@ -88,11 +104,39 @@ describe('Node SDK', () => {
   it('covers AutoPay: mandate, debit request, retrieve and list', async () => {
     const mandate = await sdk.mandates.create({ mandateRef: 'UMN-1', customerVpa: 'ravi@okicici', maxAmountPaise: rs(1000) });
     const debit = await sdk.debits.create(mandate.id, { amountPaise: rs(499) }, { idempotencyKey: 'inv-1' });
+    if (debit.executedBy !== 'MERCHANTFLO') throw new Error('a merchant outside a pilot gets Debits');
     expect(debit.state).toBe('SCHEDULED');
     expect((await sdk.debits.retrieve(debit.id)).id).toBe(debit.id);
     expect((await sdk.debits.list({ state: 'SCHEDULED' })).data.map((d) => d.id)).toEqual([debit.id]);
     expect((await sdk.mandates.revoke(mandate.id)).status).toBe('REVOKED');
     expect(log.find((l) => l.url.startsWith('/v1/debits?'))!.url).toBe('/v1/debits?state=SCHEDULED');
+  });
+
+  it('covers the pilot: shadow debits, execution reports, report and scorecard', async () => {
+    const merchantId = (await app.inject({ method: 'GET', url: '/v1/merchants/me', headers: { authorization: `Bearer ${apiKey}` } })).json().id;
+    await ctx.rollout.change(merchantId, { stage: 'SHADOW', reason: 'pilot' }, { operatorId: null, role: 'OWNER' });
+    expect(await sdk.pilot.get()).toMatchObject({ stage: 'SHADOW', canaryPercent: null });
+
+    const mandate = await sdk.mandates.create({ mandateRef: 'UMN-P', customerVpa: 'ravi@okicici', maxAmountPaise: rs(1000) });
+    expect(mandate.executedBy).toBe('MERCHANT');
+    const shadow = await sdk.debits.create(mandate.id, { amountPaise: rs(499) }, { idempotencyKey: 'inv-p1' });
+    if (shadow.executedBy !== 'MERCHANT') throw new Error('expected a shadow debit in SHADOW');
+    expect(shadow).toMatchObject({ object: 'shadow_debit', outcome: null });
+    expect((await sdk.shadowDebits.list({ reported: false })).data.map((d) => d.id)).toEqual([shadow.id]);
+    expect(log.at(-1)!.url).toBe('/v1/shadow-debits?reported=false');
+
+    const result = await sdk.pilot.reportExecutions([
+      { idempotencyKey: 'inv-p1', executedAt: '2026-10-20T11:00:00+05:30', outcome: 'FAILED', failureKind: 'TECHNICAL' },
+    ]);
+    expect(result.summary).toMatchObject({ recorded: 1 });
+    expect((await sdk.shadowDebits.retrieve(shadow.id)).outcome).toMatchObject({ status: 'FAILED', failureKind: 'TECHNICAL' });
+
+    const report = await sdk.pilot.report({ from: '2026-10-20T00:00:00+05:30', to: '2026-10-23T00:00:00+05:30' });
+    expect(report.certainPaise).toBe(rs(499));
+    const card = await sdk.pilot.scorecard({ month: '2026-10' });
+    const uplift = card.criteria.find((c) => c.key === 'autopayUplift');
+    expect(uplift?.status).toBe('NO_DATA');
+    expect(log.at(-1)!.url).toBe('/v1/pilot/scorecard?month=2026-10');
   });
 
   it('throws MerchantfloError with the API error code and HTTP status', async () => {

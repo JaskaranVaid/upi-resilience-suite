@@ -74,10 +74,21 @@ runbooks ([kill switch](runbooks/kill-switch.md), [incident response](runbooks/i
 [operators](runbooks/operators.md)).
 **Exit:** no open high pen-test findings; kill switch tested.
 
-## Phase 7 — Pilot
+## Phase 7 — Pilot ✅ code (2026-10-16; the agreement, history export, reviews, rollback drill and second partner are founder actions #25–#30)
 Shadow mode (plan, never execute; "what you would have saved" report) → live canary (5–10% of
 mandates) → 100% → second design partner. Pass: zero double debits, zero restricted-window executions,
 measurable AutoPay uplift, ≥ 99.9% webhooks delivered within 5 min, statement reconciles to settlement.
+Built: a rollout stage per merchant (SHADOW / CANARY p% / FULL; a first switch to live starts in
+SHADOW) with canary assignment by mandate hash; debit intake that decides and states who executes each
+debit (`executedBy`), shadow debits in their own table that nothing executes, one idempotency key →
+one debit across both; execution reports and backtests (`POST /v1/pilot/executions`, JSON or CSV)
+with automatic hand-back of misrouted debits; a conservative shadow report (certain vs potential);
+a double-debit detector with an ops review queue and a critical alarm; a scorecard of the five
+criteria (canary vs control uplift with a Newcombe 95% interval) that gates FULL, with recorded owner
+overrides; ops console Pilots and Duplicates views; the dashboard Pilot tab; OpenAPI and SDK
+([ADR 0008](decisions/0008-pilot-rollout-by-mandate.md), [pilot runbook](runbooks/pilot.md),
+[pilot terms draft](legal/pilot-terms.md)).
+**Exit:** one design partner at FULL with every gated criterion passing; a second partner in shadow or later.
 → **M2 (working model)**
 
 ## Phase 8 — Commercial launch

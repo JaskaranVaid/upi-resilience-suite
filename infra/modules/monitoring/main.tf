@@ -18,6 +18,7 @@ locals {
     "reconFailures24h",
     "pspCircuitsOpen",
     "executionPausesActive",
+    "duplicateDebitsOpen",
     "workerHeartbeat",
   ]
 
@@ -66,6 +67,11 @@ locals {
       metric      = "executionPausesActive", comparison = "GreaterThanOrEqualToThreshold", threshold = 1
       period      = 300, evaluations = 6, missing = "notBreaching", severity = "medium"
       description = "A kill-switch pause has been in force for 30 minutes. Make sure it is still meant to be (ops console → Kill switch)."
+    }
+    "duplicate-debit-suspected" = {
+      metric      = "duplicateDebitsOpen", comparison = "GreaterThanOrEqualToThreshold", threshold = 1
+      period      = 300, evaluations = 1, missing = "notBreaching", severity = "critical"
+      description = "A customer may have been debited twice for one mandate (pilot: Merchantflo and the merchant's own system, or Merchantflo twice). Review it in the ops console now."
     }
     "worker-heartbeat" = {
       metric      = "workerHeartbeat", comparison = "LessThanThreshold", threshold = 1
