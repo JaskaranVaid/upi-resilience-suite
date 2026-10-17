@@ -42,7 +42,8 @@ curl -s http://localhost:3000/v1/merchants \
 - `sk_test_…` keys only ever reach sandbox or simulated PSPs.
 - `methodCosts` is what each non-UPI method costs you. Checkout offers UPI plus the methods
   listed here, and Merchantflo uses the costs to steer customers to a cheaper method with a discount
-  when that saves you money (see §3).
+  when that saves you money (see §3). Only `NETBANKING` and `CARD` are ever discounted: `RUPAY_DEBIT`
+  is paid through the PSP's card checkout, which accepts any card, so it is offered at full price.
 - In development, webhook URLs may be `http://localhost`. In production they must be public `https`.
 
 From here on, `$KEY` is your `sk_test_…` key:
