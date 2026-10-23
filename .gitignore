@@ -5,3 +5,6 @@ dist/
 .env
 .claude/
 .playwright-mcp/
+
+# Founders' private action checklist (local only, never committed)
+Founderaction.md
